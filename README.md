@@ -4,7 +4,7 @@ Personal **portfolio + blog** for [destroyrebuild.xyz](https://destroyrebuild.xy
 
 This is **not** Super Notch / supernotch.ai. Separate site, separate work, separate voice.
 
-Bespoke Three.js. Custom procedural structure, shaders, and a destroy → rebuild idle loop. Not a blog theme, Notion export, or generic Tailwind marketing page.
+Bespoke Three.js with a ground-up industrial editorial direction. A 144-fragment, procedurally textured monument destroys and rebuilds beside oversized typography. Olive-black, warm paper, safety orange, and custom geometric illustrations form one visual system.
 
 ## Stack
 
@@ -15,12 +15,13 @@ Bespoke Three.js. Custom procedural structure, shaders, and a destroy → rebuil
 
 ## Destinations
 
-Navigation lives in the WebGL world as clickable slabs (keyboard `1` `2` `3` and Esc also work):
+Navigation uses real, keyboard-accessible links with History API transitions, active states, document titles, and focus management. Reading pages stop the WebGL loop.
 
 | Path | Surface |
 | --- | --- |
-| `/` | Living world — procedural tower + idle crack / reform cycle |
+| `/` | Editorial workshop + interactive reconstruction monument |
 | `/portfolio` | Work showcase (markdown in `content/work/`) |
+| `/portfolio/:slug` | Individual project write-up |
 | `/blog` | Ship-log list (`content/logs/`) |
 | `/blog/:slug` | Single log |
 | `/tutorials` | Tutorial list (`content/tutorials/`) |
@@ -33,7 +34,19 @@ YouTube and Patreon use tokens, not invented handles:
 - `PLACEHOLDER_YOUTUBE_URL`
 - `PLACEHOLDER_PATREON_URL`
 
-Defined in `src/config.ts`. Replace those strings when the real URLs exist.
+Defined in `src/config.ts`. The local placeholder pages intentionally don’t link out. When real destinations exist, update the tokens **and** wire external anchors; tutorial embeds likewise require a real video URL and implementation.
+
+## Artwork & accessibility
+
+- Click **Break the structure** to interrupt the idle cycle.
+- **Pause motion** holds a static composition; `prefers-reduced-motion` starts paused.
+- Rendering sleeps on reading routes, offscreen, and in hidden tabs.
+- WebGL failure leaves the complete HTML navigation and content usable.
+- Native links support opening in a new tab; a skip link and visible focus indicators support keyboard navigation.
+- Desktop, tablet, and mobile layouts give the sculpture its own space.
+- Sample archive/project entries are explicitly labeled. The tutorial describes the current renderer.
+
+The Google Fonts stylesheet loads Barlow, Barlow Condensed, and IBM Plex Mono, with local CSS fallbacks. All geometry and texture data are generated in the app; there are no downloaded models.
 
 ## Scripts
 
@@ -44,6 +57,16 @@ npm run build     # tsc --noEmit && vite build
 npm run preview   # serve the production build
 ```
 
+## Verification
+
+```bash
+npx playwright install chromium
+npm run build
+npm run test:e2e
+```
+
+The browser suite runs against the production preview. It covers collection/article navigation and refresh, history, placeholders, missing entries, reduced motion and sleeping render loops, WebGL failure, keyboard focus, axe accessibility checks, and overflow at five viewport widths.
+
 ## Project layout
 
 ```
@@ -52,9 +75,9 @@ content/
   tutorials/     lessons; each pairs with a YouTube video URL
   work/          portfolio entries
 src/
-  world/         Three.js scene, procedural core, destinations, shaders
+  world/         Three.js lifecycle, lighting, procedural fragments and concrete
   content/       markdown catalog
-  ui/            industrial HUD plates (world stays the primary surface)
+  ui/            editorial homepage, collection indexes, article and placeholder pages
   router.ts      History API routes
 ```
 

@@ -1,164 +1,104 @@
 import * as THREE from 'three';
-import { COLORS, CYCLE_SECONDS, type DestinationId } from '../config';
-import { cycleState } from '../math';
-import { Atmosphere } from './Atmosphere';
-import { Destinations } from './Destinations';
 import { RebuildCore } from './RebuildCore';
 
-export type CycleHud = {
-  label: string;
-  phase: number;
-};
-
 export class World {
-  readonly renderer: THREE.WebGLRenderer;
-  readonly scene = new THREE.Scene();
-  readonly camera: THREE.PerspectiveCamera;
-  readonly core: RebuildCore;
-  readonly destinations: Destinations;
-  readonly atmosphere: Atmosphere;
-
-  private readonly clock = new THREE.Clock();
-  private readonly raycaster = new THREE.Raycaster();
-  private readonly pointer = new THREE.Vector2(-10, -10);
-  private readonly camHome = new THREE.Vector3(1.1, 4.4, 12.8);
-  private readonly lookHome = new THREE.Vector3(0, 2.15, 0);
-  private readonly camPos = new THREE.Vector3();
-  private readonly camLook = new THREE.Vector3();
-  private readonly camPosTarget = new THREE.Vector3();
-  private readonly camLookTarget = new THREE.Vector3();
-  private readonly parallax = new THREE.Vector2();
-  private readonly focus: Record<DestinationId, { pos: THREE.Vector3; look: THREE.Vector3 }> = {
-    portfolio: { pos: new THREE.Vector3(-1.8, 3.4, 8.4), look: new THREE.Vector3(-3.6, 1.8, 1.2) },
-    blog: { pos: new THREE.Vector3(2.8, 3.2, 9.4), look: new THREE.Vector3(0.1, 1.6, 4.2) },
-    tutorials: { pos: new THREE.Vector3(1.6, 3.4, 8.4), look: new THREE.Vector3(3.8, 1.8, 1.1) },
-    youtube: { pos: new THREE.Vector3(-2.4, 2.8, 7.2), look: new THREE.Vector3(-5.4, 1.1, -2.2) },
-    patreon: { pos: new THREE.Vector3(2.4, 2.8, 7.2), look: new THREE.Vector3(5.4, 1.1, -2.2) },
-  };
-
-  private running = false;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+  private readonly core = new RebuildCore();
+  private readonly pointer = new THREE.Vector2();
+  private readonly displayPointer = new THREE.Vector2();
+  private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   private reading = false;
-  lastCycle: CycleHud = { label: 'HOLD', phase: 0 };
-  onPick: ((id: DestinationId) => void) | null = null;
-  onCycle: ((cycle: CycleHud) => void) | null = null;
+  private visible = true;
+  private frame = 0;
+  private time = 3;
+  private lastTime = 0;
+  private impulse = 0;
+  private spread = 0.15;
+  paused = this.reducedMotion.matches;
+  onCycle: ((label: string) => void) | null = null;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
-    this.renderer.setClearColor(COLORS.void, 1);
-
-    this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 80);
-    this.camPos.copy(this.camHome);
-    this.camLook.copy(this.lookHome);
-    this.camPosTarget.copy(this.camHome);
-    this.camLookTarget.copy(this.lookHome);
-    this.camera.position.copy(this.camHome);
-    this.camera.lookAt(this.lookHome);
-
-    this.scene.fog = new THREE.FogExp2(COLORS.void, 0.028);
-    this.scene.background = new THREE.Color(COLORS.void);
-
-    const hemi = new THREE.HemisphereLight(0x8a9aaa, 0x1a100c, 0.7);
-    const key = new THREE.DirectionalLight(0xf2ebe0, 1.15);
-    key.position.set(6, 10, 4);
-    const fill = new THREE.DirectionalLight(0x4a2a1c, 0.35);
-    fill.position.set(-8, 2, -4);
-    this.scene.add(hemi, key, fill);
-
-    this.core = new RebuildCore();
-    this.destinations = new Destinations();
-    this.atmosphere = new Atmosphere();
-    this.scene.add(this.core.group, this.destinations.group, this.atmosphere.group);
-    void document.fonts?.ready.then(() => this.destinations.refreshLabels());
-
-    window.addEventListener('resize', this.onResize);
-    canvas.addEventListener('pointermove', this.onPointerMove);
-    canvas.addEventListener('pointerleave', this.onPointerLeave);
-    canvas.addEventListener('click', this.onClick);
+    this.renderer.toneMappingExposure = 1.5;
+    this.camera.position.set(8, 6, 12);
+    this.camera.lookAt(0, 0, 0);
+    const key = new THREE.DirectionalLight(0xffead7, 5);
+    key.position.set(-3, 8, 6);
+    const rim = new THREE.DirectionalLight(0x98b5c8, 3);
+    rim.position.set(6, 2, -4);
+    const ember = new THREE.PointLight(0xff4a16, 28, 12);
+    ember.position.set(-2, -1, 3);
+    this.scene.add(new THREE.HemisphereLight(0xa6b2bb, 0x151110, 2), key, rim, ember, this.core.group);
+    new ResizeObserver(this.resize).observe(canvas);
+    new IntersectionObserver(([entry]) => { this.visible = entry.isIntersecting; this.wake(); }).observe(canvas);
+    window.addEventListener('pointermove', this.move, { passive: true });
+    document.addEventListener('visibilitychange', this.wake);
+    this.reducedMotion.addEventListener('change', () => {
+      this.paused = this.reducedMotion.matches;
+      document.querySelector('[data-motion]')?.setAttribute('aria-pressed', String(this.paused));
+      const button = document.querySelector('[data-motion]');
+      if (button) button.textContent = this.paused ? '↻ Resume motion' : 'Ⅱ Pause motion';
+      this.wake();
+    });
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      document.body.classList.add('no-webgl');
+      this.onCycle?.('WEBGL CONTEXT LOST');
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    });
+    canvas.addEventListener('webglcontextrestored', () => { document.body.classList.remove('no-webgl'); this.wake(); });
+    this.resize();
   }
 
-  start(): void {
-    if (this.running) return;
-    this.running = true;
-    this.tick();
+  start(): void { this.wake(); }
+  setReading(reading: boolean): void { this.reading = reading; this.wake(); }
+  toggleMotion(): void { this.paused = !this.paused; this.wake(); }
+  fracture(): void {
+    this.impulse = 1;
+    if (this.paused) this.spread = 1;
+    this.wake();
   }
 
-  setReading(id: DestinationId | null): void {
-    this.reading = id !== null;
-    this.destinations.setActive(id);
-    if (id) {
-      const focus = this.focus[id];
-      this.camPosTarget.copy(focus.pos);
-      this.camLookTarget.copy(focus.look);
-    } else {
-      this.camPosTarget.copy(this.camHome);
-      this.camLookTarget.copy(this.lookHome);
-    }
-  }
-
-  private tick = (): void => {
-    if (!this.running) return;
-    requestAnimationFrame(this.tick);
-
-    const time = this.clock.getElapsedTime();
-    const cycle = cycleState(time, CYCLE_SECONDS);
-    this.lastCycle = { label: cycle.label, phase: cycle.phase };
-    this.onCycle?.(this.lastCycle);
-
-    this.core.update(time, cycle.crack, cycle.explode, cycle.weld);
-    this.atmosphere.update(time, cycle.crack, cycle.explode, cycle.weld);
-    this.destinations.update(time);
-
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObjects(this.destinations.pickables, false);
-    const hoverId = hits[0] ? this.destinations.idFromObject(hits[0].object) : null;
-    this.destinations.setHovered(hoverId);
-    this.renderer.domElement.style.cursor = hoverId ? 'pointer' : 'default';
-
-    const idleOrbit = this.reading ? 0.04 : 0.12;
-    const ox = Math.sin(time * 0.12) * idleOrbit + this.parallax.x;
-    const oy = Math.cos(time * 0.09) * 0.08 + this.parallax.y;
-
-    this.camPos.lerp(this.camPosTarget, 0.045);
-    this.camLook.lerp(this.camLookTarget, 0.05);
-    this.camera.position.set(this.camPos.x + ox, this.camPos.y + oy, this.camPos.z);
-    this.camera.lookAt(this.camLook);
-
-    this.renderer.render(this.scene, this.camera);
-  };
-
-  private onResize = (): void => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    this.camera.aspect = w / h;
+  private resize = (): void => {
+    const { width, height } = this.canvas.getBoundingClientRect();
+    this.renderer.setSize(width, height, false);
+    this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h);
+    this.wake();
   };
 
-  private onPointerMove = (event: PointerEvent): void => {
-    this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-    this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    this.parallax.set((event.clientX / window.innerWidth - 0.5) * 0.7, (event.clientY / window.innerHeight - 0.5) * -0.4);
+  private move = (event: PointerEvent): void => {
+    this.pointer.set(event.clientX / innerWidth - 0.5, event.clientY / innerHeight - 0.5);
   };
 
-  private onPointerLeave = (): void => {
-    this.pointer.set(-10, -10);
-    this.parallax.set(0, 0);
+  private wake = (): void => {
+    if (this.frame) cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.lastTime = performance.now();
+    if (!this.reading && this.visible && !document.hidden) this.frame = requestAnimationFrame(this.tick);
   };
 
-  private onClick = (): void => {
-    this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObjects(this.destinations.pickables, false);
-    const id = hits[0] ? this.destinations.idFromObject(hits[0].object) : null;
-    if (id) this.onPick?.(id);
+  private tick = (now: number): void => {
+    this.frame = 0;
+    const delta = Math.min((now - this.lastTime) / 1000, 0.05);
+    this.lastTime = now;
+    if (!this.paused) this.advance(delta);
+    this.core.update(this.time, this.spread, this.displayPointer);
+    this.onCycle?.(this.paused ? 'STILL / MOTION PAUSED' : this.spread > 0.55 ? 'DECONSTRUCTING' : 'REBUILDING');
+    this.renderer.render(this.scene, this.camera);
+    if (!this.paused) this.frame = requestAnimationFrame(this.tick);
   };
+
+  private advance(delta: number): void {
+    this.time += delta;
+    const cycle = (Math.sin(this.time * 0.36) + 1) / 2;
+    this.spread = Math.max(Math.pow(cycle, 3) * 0.85, this.impulse);
+    this.displayPointer.lerp(this.pointer, 1 - Math.exp(-delta * 3));
+    this.impulse *= Math.exp(-delta * 0.9);
+  }
 }
