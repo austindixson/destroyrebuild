@@ -1,175 +1,81 @@
 import * as THREE from 'three';
-import { COLORS } from '../config';
-import { hash3 } from '../math';
-import { coreFragment, coreVertex } from './shaders';
 
-type Voxel = {
-  x: number;
-  y: number;
-  z: number;
-  kind: number;
-};
+type Fragment = { mesh: THREE.Mesh; home: THREE.Vector3; drift: THREE.Vector3; spin: THREE.Vector3 };
 
-type Bounds = {
-  w: number;
-  d: number;
-  h: number;
-};
-
-const TOWER: Bounds = { w: 7, d: 7, h: 12 };
-
-function isCorner(ax: number, az: number, bounds: Bounds): boolean {
-  return ax >= bounds.w - 1 && az >= bounds.d - 1;
-}
-
-function isRing(y: number, ax: number, az: number, bounds: Bounds): boolean {
-  if (y % 3 !== 0) return false;
-  return ax === bounds.w || az === bounds.d;
-}
-
-function isColumn(ax: number, az: number, bounds: Bounds): boolean {
-  if (ax === bounds.w && az <= 1) return true;
-  if (az === bounds.d && ax <= 1) return true;
-  return isCorner(ax, az, bounds);
-}
-
-function isCap(y: number, bounds: Bounds): boolean {
-  return y === 0 || y === bounds.h - 1;
-}
-
-function isScaffold(x: number, y: number, z: number, bounds: Bounds): boolean {
-  const ax = Math.abs(x);
-  const az = Math.abs(z);
-  if (isColumn(ax, az, bounds)) return true;
-  if (isRing(y, ax, az, bounds)) return true;
-  if (!isCap(y, bounds)) return false;
-  if (ax === bounds.w) return true;
-  if (az === bounds.d) return true;
-  return isCorner(ax, az, bounds);
-}
-
-function isHollowCore(ax: number, az: number, y: number, n: number, bounds: Bounds): boolean {
-  if (ax > 1 || az > 1) return false;
-  if (y <= 3 || y >= bounds.h - 4) return false;
-  return n < 0.72;
-}
-
-function isInner(x: number, y: number, z: number, bounds: Bounds): boolean {
-  const radial = Math.hypot(x / bounds.w, z / bounds.d);
-  if (radial >= 0.62) return false;
-  if (y <= 1 || y >= bounds.h - 2) return false;
-  const n = hash3(x + 3, y + 11, z + 7);
-  if (n <= 0.28) return false;
-  return !isHollowCore(Math.abs(x), Math.abs(z), y, n, bounds);
-}
-
-function voxelAt(x: number, y: number, z: number, bounds: Bounds): Voxel | null {
-  if (isScaffold(x, y, z, bounds)) return { x, y, z, kind: 1 };
-  if (isInner(x, y, z, bounds)) return { x, y, z, kind: 0 };
-  return null;
-}
-
-function burstDirection(vox: Voxel, index: number): THREE.Vector3 {
-  const dir = new THREE.Vector3(
-    vox.x + (hash3(index, 1, 2) - 0.5) * 2.4,
-    vox.y * 0.35 + hash3(index, 3, 4) * 6.5 + 1.2,
-    vox.z + (hash3(index, 5, 6) - 0.5) * 2.4,
-  );
-  if (dir.lengthSq() < 0.001) dir.set(0.2, 1.4, -0.1);
-  dir.normalize().multiplyScalar(3.4 + hash3(index, 7, 8) * 4.8);
-  if (vox.kind > 0.5) dir.multiplyScalar(0.28);
-  return dir;
-}
-
-function plantInstance(
-  mesh: THREE.InstancedMesh,
-  dummy: THREE.Object3D,
-  vox: Voxel,
-  index: number,
-  burst: Float32Array,
-  seed: Float32Array,
-  kind: Float32Array,
-): void {
-  dummy.position.set(vox.x * 0.5, vox.y * 0.5 + 0.35, vox.z * 0.5);
-  dummy.rotation.set(0, 0, 0);
-  dummy.scale.setScalar(vox.kind > 0.5 ? 0.72 : 1);
-  dummy.updateMatrix();
-  mesh.setMatrixAt(index, dummy.matrix);
-
-  const dir = burstDirection(vox, index);
-  burst[index * 3] = dir.x;
-  burst[index * 3 + 1] = dir.y;
-  burst[index * 3 + 2] = dir.z;
-  seed[index] = hash3(index, vox.x, vox.z);
-  kind[index] = vox.kind;
-}
-
-function carveVoxels(): Voxel[] {
-  const voxels: Voxel[] = [];
-  const { w, d, h } = TOWER;
-  for (let y = 0; y < h; y++) {
-    for (let x = -w; x <= w; x++) {
-      for (let z = -d; z <= d; z++) {
-        const voxel = voxelAt(x, y, z, TOWER);
-        if (voxel) voxels.push(voxel);
-      }
-    }
-  }
-  return voxels;
-}
-
+/** A machined, hollow monument: 12 courses × 12 individually cut fragments. */
 export class RebuildCore {
   readonly group = new THREE.Group();
-  readonly mesh: THREE.InstancedMesh;
-  readonly material: THREE.ShaderMaterial;
-  readonly count: number;
+  private readonly fragments: Fragment[] = [];
+  private readonly assembly = new THREE.Group();
 
   constructor() {
-    const voxels = carveVoxels();
-    this.count = voxels.length;
-
-    const geo = new THREE.BoxGeometry(0.42, 0.42, 0.42);
-    const burst = new Float32Array(this.count * 3);
-    const seed = new Float32Array(this.count);
-    const kind = new Float32Array(this.count);
-
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uCrack: { value: 0.1 },
-        uExplode: { value: 0 },
-        uWeld: { value: 0 },
-        uSteel: { value: new THREE.Color(COLORS.steel) },
-        uEmber: { value: new THREE.Color(COLORS.ember) },
-        uWeldColor: { value: new THREE.Color(COLORS.weld) },
-        uLightDir: { value: new THREE.Vector3(0.42, 0.86, 0.28).normalize() },
-      },
-      vertexShader: coreVertex,
-      fragmentShader: coreFragment,
-    });
-
-    this.mesh = new THREE.InstancedMesh(geo, this.material, this.count);
-    this.mesh.castShadow = false;
-    this.mesh.receiveShadow = false;
-    this.mesh.frustumCulled = false;
-
-    const dummy = new THREE.Object3D();
-    voxels.forEach((vox, i) => {
-      plantInstance(this.mesh, dummy, vox, i, burst, seed, kind);
-    });
-
-    this.mesh.instanceMatrix.needsUpdate = true;
-    geo.setAttribute('aBurst', new THREE.InstancedBufferAttribute(burst, 3));
-    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 1));
-    geo.setAttribute('aKind', new THREE.InstancedBufferAttribute(kind, 1));
-
-    this.group.add(this.mesh);
+    const concrete = this.material();
+    const dark = new THREE.MeshStandardMaterial({ color: 0x272a28, roughness: 0.64, metalness: 0.65 });
+    const orange = new THREE.MeshStandardMaterial({ color: 0xff541d, roughness: 0.45, metalness: 0.3, emissive: 0xaa2100, emissiveIntensity: 0.25 });
+    for (let layer = 0; layer < 12; layer++) {
+      for (let segment = 0; segment < 12; segment++) {
+        this.addFragment(layer, segment, layer === 7 ? orange : segment % 5 === 0 ? dark : concrete);
+      }
+    }
+    this.group.add(this.assembly);
+    this.addGuides();
+    this.assembly.rotation.set(0.12, -0.3, -0.16);
   }
 
-  update(time: number, crack: number, explode: number, weld: number): void {
-    this.material.uniforms.uTime.value = time;
-    this.material.uniforms.uCrack.value = crack;
-    this.material.uniforms.uExplode.value = explode;
-    this.material.uniforms.uWeld.value = weld;
+  private material(): THREE.MeshStandardMaterial {
+    const size = 128;
+    const data = new Uint8Array(size * size * 4);
+    for (let i = 0; i < size * size; i++) {
+      const noise = Math.sin(i * 127.1) * 43758.5453;
+      const shade = 125 + Math.floor((noise - Math.floor(noise)) * 65);
+      data.set([shade, shade, shade, 255], i * 4);
+    }
+    const texture = new THREE.DataTexture(data, size, size);
+    texture.needsUpdate = true;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    return new THREE.MeshStandardMaterial({ color: 0xb7b4a9, map: texture, bumpMap: texture, bumpScale: 0.045, roughness: 0.84, metalness: 0.22 });
+  }
+
+  private addFragment(layer: number, segment: number, material: THREE.Material): void {
+    const angle = segment / 12 * Math.PI * 2;
+    const geometry = new THREE.BoxGeometry(0.66, 0.34, 0.64, 1, 1, 1);
+    const vertices = geometry.attributes.position;
+    for (let i = 0; i < vertices.count; i++) {
+      const x = vertices.getX(i), y = vertices.getY(i), z = vertices.getZ(i);
+      vertices.setXYZ(i, x + Math.sin(y * 20 + layer) * 0.035, y + Math.sin(x * 9 + z * 8 + segment) * 0.035, z);
+    }
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, material);
+    const home = new THREE.Vector3(Math.cos(angle) * 1.3, (layer - 5.5) * 0.375, Math.sin(angle) * 1.3);
+    mesh.position.copy(home);
+    mesh.rotation.y = -angle;
+    const drift = new THREE.Vector3(Math.cos(angle) * (1 + layer * 0.07), (layer - 5.5) * 0.17, Math.sin(angle) * (1 + layer * 0.07));
+    const spin = new THREE.Vector3(Math.sin(layer + segment) * 0.5, -angle, Math.cos(segment * 4) * 0.5);
+    this.fragments.push({ mesh, home, drift, spin });
+    this.assembly.add(mesh);
+  }
+
+  private addGuides(): void {
+    const material = new THREE.LineBasicMaterial({ color: 0x6c756c, transparent: true, opacity: 0.23 });
+    for (const radius of [2.8, 3.1]) {
+      const points = Array.from({ length: 129 }, (_, i) => new THREE.Vector3(Math.cos(i / 128 * Math.PI * 2) * radius, -3, Math.sin(i / 128 * Math.PI * 2) * radius));
+      this.group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+    }
+    const grid = new THREE.GridHelper(10, 20, 0x414840, 0x272d29);
+    grid.position.y = -3.05;
+    (grid.material as THREE.Material).transparent = true;
+    (grid.material as THREE.Material).opacity = 0.3;
+    this.group.add(grid);
+    const axis = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -3.5, 0), new THREE.Vector3(0, 3.5, 0)]);
+    this.group.add(new THREE.Line(axis, new THREE.LineDashedMaterial({ color: 0xfe5624, dashSize: 0.08, gapSize: 0.12, transparent: true, opacity: 0.45 })).computeLineDistances());
+  }
+
+  update(time: number, spread: number, pointer: THREE.Vector2): void {
+    this.assembly.rotation.y = -0.3 + time * 0.065 + pointer.x * 0.18;
+    this.assembly.rotation.x = 0.12 + pointer.y * 0.12;
+    for (const { mesh, home, drift, spin } of this.fragments) {
+      mesh.position.copy(home).addScaledVector(drift, spread);
+      mesh.rotation.set(spin.x * spread, spin.y + spread * 0.3, spin.z * spread);
+    }
   }
 }
