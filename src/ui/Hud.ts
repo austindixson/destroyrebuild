@@ -1,6 +1,7 @@
 import { marked } from 'marked';
 import { PLACEHOLDER_PATREON_URL, PLACEHOLDER_YOUTUBE_URL } from '../config';
 import { logs, tutorials, work } from '../content/catalog';
+import { contributions } from '../content/contributions';
 import type { Route } from '../router';
 
 type Entry = { slug: string; title: string; body: string };
@@ -26,7 +27,7 @@ export class Hud {
       <a class="skip" href="#main">Skip to content</a>
       <header class="site-header">
         ${link('/', '<span class="brand-symbol" aria-hidden="true">d/r<span>↗</span></span><span class="brand-name">DESTROY<br>REBUILD</span><span class="sr-only">Destroy / Rebuild home</span>', 'brand')}
-        <nav aria-label="Main navigation">${link('/portfolio', 'Portfolio')}${link('/blog', 'Blog')}${link('/tutorials', 'Tutorials')}</nav>
+        <nav aria-label="Main navigation">${link('/portfolio', 'Portfolio')}${link('/blog', 'Blog')}${link('/tutorials', 'Tutorials')}<a href="https://github.com/austindixson">GitHub ↗</a></nav>
         <span class="header-note"><i></i> INDEPENDENT BY DESIGN</span>
       </header>
       <main id="main" tabindex="-1"></main>
@@ -84,7 +85,8 @@ export class Hud {
     </section>
     <section class="floor" id="floor"><div class="section-label"><span>01 / ON THE FLOOR</span><span>IDEAS ARE CHEAP. BUILD SOMETHING.</span></div><div class="floor-heading"><h2>Less pitch.<br>More proof.</h2><p>A personal corner of the internet for the things I make, the lessons I learn, and everything that has to break along the way.</p></div><div class="destination-grid">${this.destination('/portfolio', '01', 'The work', 'Products & experiments', 'From first prototype to the next iteration.', 'block-art')}${this.destination('/blog', '02', 'The process', 'Build-in-public journal', 'Field notes from the good days and the grind.', 'line-art')}${this.destination('/tutorials', '03', 'The knowledge', 'Practical tutorials', 'Take it apart. Understand it. Make it yours.', 'step-art')}</div></section>
      <section class="featured-work" aria-label="Featured work">${this.featuredProject()}</section>
-     <section class="latest"><div class="section-label"><span>02 / RECENT TRANSMISSIONS</span>${link('/blog', 'ALL ENTRIES ↗')}</div>${logs.slice(0, 2).map((entry, index) => this.row('blog', entry, index)).join('')}</section>
+     <div class="github-work"><div class="section-label"><span>02 / OUT IN THE OPEN</span><span>CODE. REVIEW. CONTRIBUTE.</span></div>${this.githubWork()}</div>
+     <section class="latest"><div class="section-label"><span>03 / RECENT TRANSMISSIONS</span>${link('/blog', 'ALL ENTRIES ↗')}</div>${logs.slice(0, 2).map((entry, index) => this.row('blog', entry, index)).join('')}</section>
     <section class="manifesto"><span class="eyebrow">THE OPERATING PRINCIPLE</span><p>Nothing good comes<br>from <em>standing still.</em></p><span>BUILD IT. QUESTION IT. START AGAIN.</span></section>`;
   }
 
@@ -96,13 +98,17 @@ export class Hud {
     return `<aside class="featured-project" aria-label="Super Notch featured project"><div><span class="eyebrow">FEATURED PROJECT / MACOS APP</span><h2>Super Notch<span>↗</span></h2><p>Your agents. Your voice. Right in your notch. A Mac app by Austin Dixson for finding agent sessions, talking through ideas, and keeping a floating HUD beside your work.</p></div><div class="featured-actions"><a href="https://www.supernotch.ai" class="button-primary">Visit supernotch.ai <span>↗</span></a>${link('/portfolio/supernotch', 'Inside the project ↗', 'text-link')}</div></aside>`;
   }
 
+  private githubWork(): string {
+    return `<section class="contributions" aria-labelledby="github-title"><header class="contributions-heading"><div><span class="eyebrow">AUSTIN DIXSON / ON GITHUB</span><h2 id="github-title">Built here.<br>Shared out there.</h2><p>Independent products, published plugins, and contributions to the tools I use. Follow the work all the way to the source.</p></div><a class="button-primary" href="https://github.com/austindixson">Explore my GitHub <span>↗</span></a></header><div class="contribution-grid">${contributions.map((item) => `<article class="contribution-card"><div class="card-top"><span>${escape(item.project)}</span><span class="contribution-status">${item.status}</span></div><h3>${escape(item.title)}</h3><p>${escape(item.summary)}</p><div class="contribution-record"><time datetime="${item.date}">${item.dateLabel}</time><a href="${item.url}" class="text-link">${item.reference} ↗</a></div></article>`).join('')}</div><p class="contributions-note">Selected contributions · Status checked <time datetime="2026-09-10">10 Sep 2026</time>. Follow each record for the latest.</p></section>`;
+  }
+
   private collection(view: Collection, slug?: string): string {
     const entries: Entry[] = collections[view];
     const entry = entries.find((item) => item.slug === slug);
     if (slug && entry) return this.article(view, entry);
     const title = slug ? 'This piece is missing.' : labels[view];
     const description = slug ? 'That entry doesn’t exist. Pick up another thread below.' : descriptions[view];
-     return `<section class="collection-page">${link('/', '← BACK TO THE WORKSHOP', 'eyebrow back-link')}<header class="page-heading"><span class="eyebrow">${view.toUpperCase()} / ${String(entries.length).padStart(2, '0')} ENTRIES</span><h1>${title}</h1><p>${description}</p></header>${view === 'portfolio' ? this.featuredProject() : ''}<div class="entry-list">${entries.map((item, index) => this.row(view, item, index)).join('')}</div></section>`;
+     return `<section class="collection-page">${link('/', '← BACK TO THE WORKSHOP', 'eyebrow back-link')}<header class="page-heading"><span class="eyebrow">${view.toUpperCase()} / ${String(entries.length).padStart(2, '0')} ENTRIES</span><h1>${title}</h1><p>${description}</p></header>${view === 'portfolio' ? this.featuredProject() : ''}<div class="entry-list">${entries.map((item, index) => this.row(view, item, index)).join('')}</div>${view === 'portfolio' ? this.githubWork() : ''}</section>`;
   }
 
   private metadata(view: Collection, entry: Entry): string {
