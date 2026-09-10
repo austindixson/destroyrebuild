@@ -49,6 +49,11 @@ export class Hud {
     if (status && status.textContent !== label) status.textContent = label;
   }
 
+  setForm(label: string): void {
+    const specimen = this.root.querySelector('[data-form]');
+    if (specimen && specimen.textContent !== label) specimen.textContent = label;
+  }
+
   setMotion(paused: boolean): void {
     const button = this.root.querySelector('[data-motion]');
     button?.setAttribute('aria-pressed', String(paused));
@@ -73,7 +78,7 @@ export class Hud {
     return `<section class="hero" aria-labelledby="hero-title">
       <div class="hero-top"><span><i class="live-dot"></i> THE SOLOFOUNDER WORKSHOP</span><span>EST. 2026 &nbsp; / &nbsp; ALWAYS IN PROGRESS</span></div>
        <div class="hero-copy"><p class="eyebrow">AUSTIN DIXSON / FOUNDER & BUILDER</p><h1 id="hero-title">DESTROY<span class="title-slash">/</span><br><span class="outline">REBUILD</span><span class="title-dot">.</span></h1><p class="hero-description">I’m Austin Dixson, founder of Super Notch.<br>Products, experiments, and the messy process<br class="desktop-break"> of turning <em>what if</em> into <em>what’s next.</em></p><div class="hero-actions">${link('/portfolio', 'Explore the work <span>↗</span>', 'button-primary')}${link('/blog', 'Read the build log <span>↗</span>', 'text-link')}</div></div>
-      <div class="specimen-label"><span>FIG. 001 — THE RECONSTRUCTION ENGINE</span><span>144 FRAGMENTS / ONE WORK IN PROGRESS</span></div>
+      <div class="specimen-label"><span>FIG. 001 — THE RECONSTRUCTION ENGINE</span><span>144 FRAGMENTS / <span data-form>MONUMENT</span></span></div>
       <div class="engine-controls"><span class="engine-state"><i class="live-dot"></i> <span data-cycle>ASSEMBLING</span></span><button type="button" data-fracture>↯ Break the structure</button><button type="button" data-motion aria-pressed="false">Ⅱ Pause motion</button></div>
       <div class="hero-bottom"><span>NOT A FINISHED PRODUCT. A CONTINUOUS PRACTICE.</span><a href="#floor">SCROLL TO THE FLOOR ↓</a></div>
     </section>

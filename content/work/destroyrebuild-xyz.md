@@ -9,7 +9,7 @@ summary: A personal workshop on the web. Procedural sculpture, independent work,
 
 An independent founder’s portfolio should show how they think, not just what they’ve finished. This site is a place for the work and the work behind the work.
 
-The homepage centers on a hollow, machined structure made from 144 individual fragments. The pieces pull apart, drift, and find their way home. A single orange course runs through the concrete: a visible thread through an ongoing reconstruction.
+The homepage centers on 144 individual fragments that rebuild into three different forms: a hollow Monument, a ring-shaped Orbit, and a half-twisted Möbius loop. The pieces pull apart, drift, and find a new arrangement. The same orange pieces carry through each form: a visible thread through an ongoing reconstruction.
 
 ## The design constraint
 
@@ -24,7 +24,7 @@ Make the site feel alive without making the writing difficult to reach. The artw
 
 ## Where the craft lives
 
-The geometry is generated locally. There’s no downloaded scene or stock 3D model. Each fragment gets a slightly irregular cut; the assembly is lit with warm and cool directional light and an orange fill.
+The geometry is generated locally. There’s no downloaded scene or stock 3D model. Each fragment gets a slightly irregular cut; warm fracture edges appear as the structure breaks apart, then cool as the pieces settle. A moving rim light and an orange fill reveal the changing surfaces, while the camera eases back to give the scattered pieces room.
 
 The quieter details matter too: reduced-motion support, a pause control, real links, readable article widths, and a renderer that stops while you’re reading.
 

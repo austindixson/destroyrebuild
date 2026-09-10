@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import { RebuildCore } from './RebuildCore';
+import { RebuildCycle } from './RebuildCycle';
 
 export class World {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
   private readonly core = new RebuildCore();
+  private readonly cycle = new RebuildCycle();
+  private readonly rim = new THREE.DirectionalLight(0x98b5c8, 3);
+  private readonly ember = new THREE.PointLight(0xff4a16, 20, 12);
   private readonly pointer = new THREE.Vector2();
   private readonly displayPointer = new THREE.Vector2();
   private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -14,10 +18,9 @@ export class World {
   private frame = 0;
   private time = 3;
   private lastTime = 0;
-  private impulse = 0;
-  private spread = 0.15;
   paused = this.reducedMotion.matches;
   onCycle: ((label: string) => void) | null = null;
+  onForm: ((label: string) => void) | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
@@ -28,11 +31,9 @@ export class World {
     this.camera.lookAt(0, 0, 0);
     const key = new THREE.DirectionalLight(0xffead7, 5);
     key.position.set(-3, 8, 6);
-    const rim = new THREE.DirectionalLight(0x98b5c8, 3);
-    rim.position.set(6, 2, -4);
-    const ember = new THREE.PointLight(0xff4a16, 28, 12);
-    ember.position.set(-2, -1, 3);
-    this.scene.add(new THREE.HemisphereLight(0xa6b2bb, 0x151110, 2), key, rim, ember, this.core.group);
+    this.rim.position.set(6, 2, -4);
+    this.ember.position.set(-2, -1, 3);
+    this.scene.add(new THREE.HemisphereLight(0xa6b2bb, 0x151110, 1.6), key, this.rim, this.ember, this.core.group);
     new ResizeObserver(this.resize).observe(canvas);
     new IntersectionObserver(([entry]) => { this.visible = entry.isIntersecting; this.wake(); }).observe(canvas);
     window.addEventListener('pointermove', this.move, { passive: true });
@@ -59,8 +60,7 @@ export class World {
   setReading(reading: boolean): void { this.reading = reading; this.wake(); }
   toggleMotion(): void { this.paused = !this.paused; this.wake(); }
   fracture(): void {
-    this.impulse = 1;
-    if (this.paused) this.spread = 1;
+    this.cycle.fracture(this.paused);
     this.wake();
   }
 
@@ -85,20 +85,28 @@ export class World {
 
   private tick = (now: number): void => {
     this.frame = 0;
-    const delta = Math.min((now - this.lastTime) / 1000, 0.05);
+    const delta = Math.max(0, Math.min((now - this.lastTime) / 1000, 0.05));
     this.lastTime = now;
     if (!this.paused) this.advance(delta);
-    this.core.update(this.time, this.spread, this.displayPointer);
-    this.onCycle?.(this.paused ? 'STILL / MOTION PAUSED' : this.spread > 0.55 ? 'DECONSTRUCTING' : 'REBUILDING');
+    this.core.update(this.time, this.cycle, this.displayPointer);
+    this.lightAndFrame();
+    this.onCycle?.(this.paused ? 'STILL / MOTION PAUSED' : this.cycle.label);
+    this.onForm?.(this.cycle.specimen);
     this.renderer.render(this.scene, this.camera);
     if (!this.paused) this.frame = requestAnimationFrame(this.tick);
   };
 
   private advance(delta: number): void {
     this.time += delta;
-    const cycle = (Math.sin(this.time * 0.36) + 1) / 2;
-    this.spread = Math.max(Math.pow(cycle, 3) * 0.85, this.impulse);
+    this.cycle.advance(delta);
     this.displayPointer.lerp(this.pointer, 1 - Math.exp(-delta * 3));
-    this.impulse *= Math.exp(-delta * 0.9);
+  }
+
+  private lightAndFrame(): void {
+    this.ember.intensity = 20 + this.cycle.spread * 32;
+    this.ember.position.set(Math.cos(this.time * 0.18) * 3, -0.6 + this.cycle.spread, Math.sin(this.time * 0.18) * 3);
+    this.rim.position.set(6 * Math.cos(this.time * 0.09), 3, -4 + Math.sin(this.time * 0.09) * 2);
+    // Give the scattered pieces breathing room without changing their size or shape.
+    this.camera.position.set(8, 6, 12).multiplyScalar(this.cycle.framing * (1 + this.cycle.spread * 0.18));
   }
 }

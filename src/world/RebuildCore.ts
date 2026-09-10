@@ -1,17 +1,23 @@
 import * as THREE from 'three';
+import { fragmentForms, type Pose } from './forms';
+import { fractureMaterial, type FractureUniforms } from './fractureMaterial';
+import type { RebuildCycle } from './RebuildCycle';
 
-type Fragment = { mesh: THREE.Mesh; home: THREE.Vector3; drift: THREE.Vector3; spin: THREE.Vector3 };
+type Fragment = { mesh: THREE.Mesh; forms: Pose[]; drift: THREE.Vector3; tumble: THREE.Quaternion };
 
 /** A machined, hollow monument: 12 courses × 12 individually cut fragments. */
 export class RebuildCore {
   readonly group = new THREE.Group();
   private readonly fragments: Fragment[] = [];
   private readonly assembly = new THREE.Group();
+  private readonly heat: FractureUniforms = { heat: { value: 0 }, time: { value: 0 } };
+  private readonly rotation = new THREE.Quaternion();
+  private readonly identity = new THREE.Quaternion();
 
   constructor() {
-    const concrete = this.material();
-    const dark = new THREE.MeshStandardMaterial({ color: 0x272a28, roughness: 0.64, metalness: 0.65 });
-    const orange = new THREE.MeshStandardMaterial({ color: 0xff541d, roughness: 0.45, metalness: 0.3, emissive: 0xaa2100, emissiveIntensity: 0.25 });
+    const concrete = fractureMaterial(this.material(), this.heat);
+    const dark = fractureMaterial(new THREE.MeshStandardMaterial({ color: 0x272a28, roughness: 0.64, metalness: 0.65 }), this.heat);
+    const orange = fractureMaterial(new THREE.MeshStandardMaterial({ color: 0xff541d, roughness: 0.45, metalness: 0.3, emissive: 0xaa2100, emissiveIntensity: 0.25 }), this.heat);
     for (let layer = 0; layer < 12; layer++) {
       for (let segment = 0; segment < 12; segment++) {
         this.addFragment(layer, segment, layer === 7 ? orange : segment % 5 === 0 ? dark : concrete);
@@ -46,12 +52,12 @@ export class RebuildCore {
     }
     geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, material);
-    const home = new THREE.Vector3(Math.cos(angle) * 1.3, (layer - 5.5) * 0.375, Math.sin(angle) * 1.3);
-    mesh.position.copy(home);
-    mesh.rotation.y = -angle;
-    const drift = new THREE.Vector3(Math.cos(angle) * (1 + layer * 0.07), (layer - 5.5) * 0.17, Math.sin(angle) * (1 + layer * 0.07));
-    const spin = new THREE.Vector3(Math.sin(layer + segment) * 0.5, -angle, Math.cos(segment * 4) * 0.5);
-    this.fragments.push({ mesh, home, drift, spin });
+    const forms = fragmentForms(layer * 12 + segment);
+    mesh.position.copy(forms[0].position);
+    mesh.quaternion.copy(forms[0].rotation);
+    const drift = new THREE.Vector3(Math.cos(angle + layer * 0.45) * 1.8, (layer - 5.5) * 0.23, Math.sin(angle + layer * 0.45) * 1.8);
+    const tumble = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(layer + segment) * 1.4, Math.cos(layer * 3 + segment) * 1.2, Math.cos(segment * 4) * 1.4));
+    this.fragments.push({ mesh, forms, drift, tumble });
     this.assembly.add(mesh);
   }
 
@@ -70,12 +76,17 @@ export class RebuildCore {
     this.group.add(new THREE.Line(axis, new THREE.LineDashedMaterial({ color: 0xfe5624, dashSize: 0.08, gapSize: 0.12, transparent: true, opacity: 0.45 })).computeLineDistances());
   }
 
-  update(time: number, spread: number, pointer: THREE.Vector2): void {
+  update(time: number, cycle: RebuildCycle, pointer: THREE.Vector2): void {
+    const { source, target, blend, spread } = cycle;
+    this.heat.heat.value = spread;
+    this.heat.time.value = time;
     this.assembly.rotation.y = -0.3 + time * 0.065 + pointer.x * 0.18;
     this.assembly.rotation.x = 0.12 + pointer.y * 0.12;
-    for (const { mesh, home, drift, spin } of this.fragments) {
-      mesh.position.copy(home).addScaledVector(drift, spread);
-      mesh.rotation.set(spin.x * spread, spin.y + spread * 0.3, spin.z * spread);
+    for (const { mesh, forms, drift, tumble } of this.fragments) {
+      mesh.position.lerpVectors(forms[source].position, forms[target].position, blend).addScaledVector(drift, spread);
+      mesh.quaternion.slerpQuaternions(forms[source].rotation, forms[target].rotation, blend);
+      this.rotation.slerpQuaternions(this.identity, tumble, spread);
+      mesh.quaternion.multiply(this.rotation);
     }
   }
 }

@@ -23,6 +23,7 @@ export class App {
     try {
       this.world = new World(canvas);
       this.world.onCycle = (label) => this.hud.setCycle(label);
+      this.world.onForm = (label) => this.hud.setForm(label);
     } catch (error) {
       document.body.classList.add('no-webgl');
       console.error('WebGL sculpture unavailable:', error);
