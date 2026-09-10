@@ -1,0 +1,370 @@
+:root {
+  --void: #060708;
+  --steel: #12151a;
+  --plate: #1c2026;
+  --edge: #3a3f47;
+  --ash: #8a8680;
+  --bone: #e6e1d6;
+  --ember: #ff4d1a;
+  --weld: #ffb347;
+  --cool: #7a8b96;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--void);
+  color: var(--bone);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+body {
+  overflow: hidden;
+}
+
+#world {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+#hud button,
+#hud a,
+#hud .surface {
+  pointer-events: auto;
+}
+
+.boot-fail {
+  margin: 5rem 1.2rem;
+  color: var(--ember);
+  max-width: 36rem;
+}
+
+.chrome {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.1rem 1.2rem 0;
+}
+
+.brand {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.mark {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ember);
+  color: var(--ember);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.brand-copy strong {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.brand-copy small {
+  color: var(--ash);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.pill {
+  border: 1px solid var(--edge);
+  background: #0b0d10cc;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  color: var(--weld);
+}
+
+.hint {
+  margin: 0.7rem 1.2rem 0;
+  color: var(--ash);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+}
+
+.radar {
+  position: absolute;
+  left: 1.2rem;
+  bottom: 1.1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  max-width: min(520px, 92vw);
+}
+
+.radar button {
+  background: #0b0d10d0;
+  border: 1px solid var(--edge);
+  color: var(--bone);
+  font: inherit;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+}
+
+.radar button span {
+  color: var(--ember);
+  margin-right: 0.4rem;
+}
+
+.radar button.is-on,
+.radar button:hover {
+  border-color: var(--ember);
+  color: var(--weld);
+}
+
+.surface {
+  position: absolute;
+  top: 4.4rem;
+  right: 1.15rem;
+  bottom: 1.15rem;
+  width: min(560px, 94vw);
+  overflow: auto;
+  background: linear-gradient(180deg, #12151af0, #0a0c0ff5);
+  border: 1px solid var(--edge);
+  box-shadow:
+    0 0 0 1px #ff4d1a22,
+    -24px 0 80px #000a;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%);
+  padding: 1.15rem 1.2rem 1.6rem;
+}
+
+.surface-head {
+  border-bottom: 1px solid #2a3038;
+  padding-bottom: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.back {
+  background: transparent;
+  border: 1px solid var(--edge);
+  color: var(--cool);
+  font: inherit;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.back:hover {
+  border-color: var(--ember);
+  color: var(--bone);
+}
+
+.kicker {
+  margin: 0.85rem 0 0.2rem;
+  color: var(--ember);
+  letter-spacing: 0.16em;
+  font-size: 0.68rem;
+}
+
+.surface h1 {
+  margin: 0;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: clamp(2rem, 4vw, 2.7rem);
+  letter-spacing: 0.03em;
+  line-height: 0.95;
+}
+
+.meta {
+  color: var(--ash);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  margin: 0.55rem 0 0;
+}
+
+.index {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  text-align: left;
+  background: #10141acc;
+  border: 1px solid #2a3038;
+  color: inherit;
+  font: inherit;
+  padding: 0.8rem 0.85rem;
+  cursor: pointer;
+}
+
+.row:hover {
+  border-color: var(--ember);
+}
+
+.row strong {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.04em;
+}
+
+.row span {
+  color: var(--weld);
+  font-size: 0.7rem;
+}
+
+.row em {
+  color: var(--ash);
+  font-style: normal;
+  font-size: 0.78rem;
+}
+
+.prose {
+  font-size: 0.86rem;
+  line-height: 1.65;
+  color: #d5d0c6;
+}
+
+.prose h1,
+.prose h2,
+.prose h3 {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.03em;
+  color: var(--bone);
+  margin: 1.2rem 0 0.4rem;
+}
+
+.prose p {
+  margin: 0.7rem 0;
+}
+
+.prose a {
+  color: var(--ember);
+}
+
+.prose code {
+  font-family: inherit;
+  background: #0b0d10;
+  border: 1px solid #2a3038;
+  padding: 0.05rem 0.25rem;
+}
+
+.prose pre {
+  background: #0b0d10;
+  border: 1px solid #2a3038;
+  padding: 0.8rem;
+  overflow: auto;
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px solid #3a241c;
+  margin: 1.2rem 0;
+}
+
+.prose ul {
+  padding-left: 1.1rem;
+}
+
+.video-slot,
+.placeholder-url {
+  border: 1px dashed var(--cool);
+  background: repeating-linear-gradient(
+    -45deg,
+    #101318,
+    #101318 8px,
+    #161b21 8px,
+    #161b21 16px
+  );
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.todo-label {
+  margin: 0 0 0.5rem;
+  color: var(--weld);
+  letter-spacing: 0.14em;
+  font-size: 0.68rem;
+}
+
+.video-ghost {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 2rem;
+  margin: 0.4rem 0 0.7rem;
+  color: var(--bone);
+}
+
+.placeholder-url code,
+.video-slot code {
+  display: block;
+  color: var(--ember);
+  font-size: 0.92rem;
+  margin: 0.4rem 0;
+  word-break: break-all;
+}
+
+.is-reading .hint {
+  opacity: 0.35;
+}
+
+@media (max-width: 780px) {
+  .surface {
+    left: 0.7rem;
+    right: 0.7rem;
+    width: auto;
+    top: 4.2rem;
+    bottom: 4.4rem;
+  }
+
+  .radar {
+    left: 0.7rem;
+    right: 0.7rem;
+    max-width: none;
+  }
+
+  .hint {
+    display: none;
+  }
+}
