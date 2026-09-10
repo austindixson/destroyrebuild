@@ -23,21 +23,27 @@ export function parsePath(pathname: string): Route {
   return { view: 'world' };
 }
 
+const VIEW_PATH: Record<Route['view'], string> = {
+  world: '/',
+  portfolio: '/portfolio',
+  blog: '/blog',
+  tutorials: '/tutorials',
+  youtube: '/youtube',
+  patreon: '/patreon',
+};
+
+function routeSlug(route: Route): string | undefined {
+  if (route.view === 'portfolio') return route.slug;
+  if (route.view === 'blog') return route.slug;
+  if (route.view === 'tutorials') return route.slug;
+  return undefined;
+}
+
 export function pathFor(route: Route): string {
-  switch (route.view) {
-    case 'world':
-      return '/';
-    case 'portfolio':
-      return route.slug ? `/portfolio/${route.slug}` : '/portfolio';
-    case 'blog':
-      return route.slug ? `/blog/${route.slug}` : '/blog';
-    case 'tutorials':
-      return route.slug ? `/tutorials/${route.slug}` : '/tutorials';
-    case 'youtube':
-      return '/youtube';
-    case 'patreon':
-      return '/patreon';
-  }
+  const root = VIEW_PATH[route.view];
+  const slug = routeSlug(route);
+  if (!slug) return root;
+  return `${root}/${slug}`;
 }
 
 export function routeFromDestination(id: DestinationId): Route {
