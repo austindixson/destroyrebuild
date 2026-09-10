@@ -68,4 +68,10 @@ src/
 
 ## Domain / deploy
 
-DNS and production hosting for destroyrebuild.xyz are out of scope for this first slice. `npm run build` emits static files in `dist/`.
+`npm run build` emits the static SPA in `dist/`.
+
+**Railway** (Railpack, default): connect this repo. Railpack runs `npm ci` / install, then `npm run build`, then serves `dist/` with [Caddy](https://caddyserver.com/). `Caddyfile` rewrites unknown paths to `index.html` so client-side routes (`/portfolio`, `/blog`, `/tutorials`, …) work on refresh. `railway.toml` pins the Railpack builder and build command. Do not add a `start` script — Railpack would then skip Caddy SPA mode.
+
+**Nixpacks** (if the service builder is switched): `nixpacks.toml` adds Caddy and starts the same `Caddyfile`.
+
+DNS for destroyrebuild.xyz is out of scope here — attach a Railway domain in the dashboard when you deploy.

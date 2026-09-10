@@ -1,0 +1,13 @@
+# Railway hosting for this Vite SPA.
+#
+# Railpack installs npm deps, runs `npm run build` (emits dist/), then
+# serves dist/ with Caddy. The Caddyfile falls unknown paths back to
+# index.html so History API routes (/portfolio, /blog, /tutorials, …) work.
+# Do not add a package.json "start" script — that disables Railpack SPA/Caddy.
+
+[build]
+builder = "RAILPACK"
+buildCommand = "npm run build"
+
+[deploy]
+healthcheckPath = "/"
