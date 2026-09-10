@@ -26,7 +26,7 @@ test('external destinations are explicit placeholders without invented outbound 
     await page.goto('/');
     await page.locator(`footer a[href="/${channel}"]`).click();
     await expect(page.locator('.placeholder-token code')).toHaveText(`PLACEHOLDER_${channel.toUpperCase()}_URL`);
-    await expect(page.locator('a[href^="https://"]')).toHaveCount(0);
+    await expect(page.locator('main a[href^="https://"]')).toHaveCount(0);
   }
 });
 

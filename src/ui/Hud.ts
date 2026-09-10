@@ -30,7 +30,7 @@ export class Hud {
         <span class="header-note"><i></i> INDEPENDENT BY DESIGN</span>
       </header>
       <main id="main" tabindex="-1"></main>
-      <footer class="site-footer"><span>DESTROY / REBUILD <span class="muted">© ${new Date().getFullYear()}</span></span><span>ONE PERSON. MANY ITERATIONS.</span><div>${link('/youtube', 'YouTube ↗ <small>PLACEHOLDER</small>')}${link('/patreon', 'Patreon ↗ <small>PLACEHOLDER</small>')}</div></footer>`;
+       <footer class="site-footer"><span>DESTROY / REBUILD<br>AUSTIN DIXSON <span class="muted">© ${new Date().getFullYear()}</span></span><span>ONE PERSON. MANY ITERATIONS.</span><div><a href="https://github.com/austindixson">GitHub ↗</a>${link('/youtube', 'YouTube ↗ <small>PLACEHOLDER</small>')}${link('/patreon', 'Patreon ↗ <small>PLACEHOLDER</small>')}</div></footer>`;
     this.main = root.querySelector('main')!;
     root.addEventListener('click', this.onClick);
   }
@@ -72,18 +72,23 @@ export class Hud {
   private home(): string {
     return `<section class="hero" aria-labelledby="hero-title">
       <div class="hero-top"><span><i class="live-dot"></i> THE SOLOFOUNDER WORKSHOP</span><span>EST. 2026 &nbsp; / &nbsp; ALWAYS IN PROGRESS</span></div>
-      <div class="hero-copy"><p class="eyebrow">MAKE. BREAK. MAKE BETTER.</p><h1 id="hero-title">DESTROY<span class="title-slash">/</span><br><span class="outline">REBUILD</span><span class="title-dot">.</span></h1><p class="hero-description">One founder. An unreasonable urge to build.<br>Products, experiments, and the messy process<br class="desktop-break"> of turning <em>what if</em> into <em>what’s next.</em></p><div class="hero-actions">${link('/portfolio', 'Explore the work <span>↗</span>', 'button-primary')}${link('/blog', 'Read the build log <span>↗</span>', 'text-link')}</div></div>
+       <div class="hero-copy"><p class="eyebrow">AUSTIN DIXSON / FOUNDER & BUILDER</p><h1 id="hero-title">DESTROY<span class="title-slash">/</span><br><span class="outline">REBUILD</span><span class="title-dot">.</span></h1><p class="hero-description">I’m Austin Dixson, founder of Super Notch.<br>Products, experiments, and the messy process<br class="desktop-break"> of turning <em>what if</em> into <em>what’s next.</em></p><div class="hero-actions">${link('/portfolio', 'Explore the work <span>↗</span>', 'button-primary')}${link('/blog', 'Read the build log <span>↗</span>', 'text-link')}</div></div>
       <div class="specimen-label"><span>FIG. 001 — THE RECONSTRUCTION ENGINE</span><span>144 FRAGMENTS / ONE WORK IN PROGRESS</span></div>
       <div class="engine-controls"><span class="engine-state"><i class="live-dot"></i> <span data-cycle>ASSEMBLING</span></span><button type="button" data-fracture>↯ Break the structure</button><button type="button" data-motion aria-pressed="false">Ⅱ Pause motion</button></div>
       <div class="hero-bottom"><span>NOT A FINISHED PRODUCT. A CONTINUOUS PRACTICE.</span><a href="#floor">SCROLL TO THE FLOOR ↓</a></div>
     </section>
     <section class="floor" id="floor"><div class="section-label"><span>01 / ON THE FLOOR</span><span>IDEAS ARE CHEAP. BUILD SOMETHING.</span></div><div class="floor-heading"><h2>Less pitch.<br>More proof.</h2><p>A personal corner of the internet for the things I make, the lessons I learn, and everything that has to break along the way.</p></div><div class="destination-grid">${this.destination('/portfolio', '01', 'The work', 'Products & experiments', 'From first prototype to the next iteration.', 'block-art')}${this.destination('/blog', '02', 'The process', 'Build-in-public journal', 'Field notes from the good days and the grind.', 'line-art')}${this.destination('/tutorials', '03', 'The knowledge', 'Practical tutorials', 'Take it apart. Understand it. Make it yours.', 'step-art')}</div></section>
-    <section class="latest"><div class="section-label"><span>02 / RECENT TRANSMISSIONS</span>${link('/blog', 'ALL ENTRIES ↗')}</div>${logs.slice(0, 2).map((entry, index) => this.row('blog', entry, index)).join('')}</section>
+     <section class="featured-work" aria-label="Featured work">${this.featuredProject()}</section>
+     <section class="latest"><div class="section-label"><span>02 / RECENT TRANSMISSIONS</span>${link('/blog', 'ALL ENTRIES ↗')}</div>${logs.slice(0, 2).map((entry, index) => this.row('blog', entry, index)).join('')}</section>
     <section class="manifesto"><span class="eyebrow">THE OPERATING PRINCIPLE</span><p>Nothing good comes<br>from <em>standing still.</em></p><span>BUILD IT. QUESTION IT. START AGAIN.</span></section>`;
   }
 
   private destination(path: string, number: string, title: string, subtitle: string, description: string, art: string): string {
     return link(path, `<div class="card-top"><span>${number} / ${subtitle}</span><span>↗</span></div><div class="card-art ${art}" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><h3>${title}</h3><p>${description}</p>`, 'destination-card');
+  }
+
+  private featuredProject(): string {
+    return `<aside class="featured-project" aria-label="Super Notch featured project"><div><span class="eyebrow">FEATURED PROJECT / MACOS APP</span><h2>Super Notch<span>↗</span></h2><p>Your agents. Your voice. Right in your notch. A Mac app by Austin Dixson for finding agent sessions, talking through ideas, and keeping a floating HUD beside your work.</p></div><div class="featured-actions"><a href="https://www.supernotch.ai" class="button-primary">Visit supernotch.ai <span>↗</span></a>${link('/portfolio/supernotch', 'Inside the project ↗', 'text-link')}</div></aside>`;
   }
 
   private collection(view: Collection, slug?: string): string {
@@ -92,7 +97,7 @@ export class Hud {
     if (slug && entry) return this.article(view, entry);
     const title = slug ? 'This piece is missing.' : labels[view];
     const description = slug ? 'That entry doesn’t exist. Pick up another thread below.' : descriptions[view];
-    return `<section class="collection-page">${link('/', '← BACK TO THE WORKSHOP', 'eyebrow back-link')}<header class="page-heading"><span class="eyebrow">${view.toUpperCase()} / ${String(entries.length).padStart(2, '0')} ENTRIES</span><h1>${title}</h1><p>${description}</p></header><div class="entry-list">${entries.map((item, index) => this.row(view, item, index)).join('')}</div></section>`;
+     return `<section class="collection-page">${link('/', '← BACK TO THE WORKSHOP', 'eyebrow back-link')}<header class="page-heading"><span class="eyebrow">${view.toUpperCase()} / ${String(entries.length).padStart(2, '0')} ENTRIES</span><h1>${title}</h1><p>${description}</p></header>${view === 'portfolio' ? this.featuredProject() : ''}<div class="entry-list">${entries.map((item, index) => this.row(view, item, index)).join('')}</div></section>`;
   }
 
   private metadata(view: Collection, entry: Entry): string {
