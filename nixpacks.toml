@@ -1,0 +1,9 @@
+# Nixpacks fallback if the service builder is switched off Railpack.
+# Installs Caddy and serves dist/ with the same SPA Caddyfile (index.html fallback).
+# Railpack ignores this file and uses railway.toml + Vite SPA detection instead.
+
+[phases.setup]
+nixPkgs = ["...", "caddy"]
+
+[start]
+cmd = "caddy run --config Caddyfile --adapter caddyfile"
