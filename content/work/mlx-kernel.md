@@ -1,10 +1,10 @@
 ---
-title: MLX Kernel / dense decode lab
+title: Dense 27B decode lab on M3 Max
 year: 2026
 status: research
 role: builder — Austin Dixson
 stack: Apple Silicon, MLX, mlx-serve Zig, DFlash2
-summary: I chased dense Qwen3.8-27B-4bit toward 70+ tok/s on M3 Max. Code and math cleared. Prose accept stayed flat, and I’m still watching that number.
+summary: Code and math cleared ~70 tok/s on dense Qwen3.8-27B-4bit. Prose accept stayed flat near 1.2. Still hunting that number.
 ---
 
 I run local inference research on Apple Silicon because I want dense 27B decode fast enough for agentic coding without MoE cosplay or fake-speed tricks.
@@ -20,4 +20,4 @@ I run local inference research on Apple Silicon because I want dense 27B decode 
 
 Most local-LLM posts stop at “it runs.” I measure accept rate, verify cost, and category gates because I’m hunting a specific speed. When distill doesn’t move accept, I stop and say so.
 
-Ship-log: [Dense 27B hits 70 tok/s on code. Prose still refuses.](/blog/mlx-dense-70-prose-wall)
+Ship-log: [Dense 27B hit 70 tok/s on code. Prose still stuck under 40.](/blog/mlx-dense-70-prose-wall)

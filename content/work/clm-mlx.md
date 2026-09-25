@@ -1,13 +1,13 @@
 ---
-title: CLM on Apple Silicon / System One
+title: CLM vs Jev on Apple Silicon
 year: 2026
 status: research
 role: builder — Austin Dixson
 stack: CLM-8B, MLX, Qwen3-8B-4bit, TypeSafe wire, FastAPI
-summary: I ported Contrastive-LM serve to Metal. Warm System One p50 hit 3.7 ms on M3 Max; agreement with hosted Jev on a tiny smoke pack stayed at 0.5.
+summary: Same System One payloads as hosted Jev. Local CLM warm p50: 3.7 ms. Jev: 92.9 ms. Agreement on a smoke pack: 0.50.
 ---
 
-I wanted local typed decisions (noul / choice / score) on the same wire as TypeSafe Jev, without NVIDIA and without a generative round-trip for every agent branch.
+I wanted typed decisions (noul / choice / score) on the same wire as TypeSafe Jev, local on Metal, without a generative round-trip for every agent branch.
 
 ## Result (2026-09-24)
 
@@ -20,6 +20,6 @@ I wanted local typed decisions (noul / choice / score) on the same wire as TypeS
 
 Agent loops reuse action sets. CLM disaggregates state and action embeddings so warm hits skip the encoder. That is the hunger: System One on my laptop at sub-10 ms when the cache is hot.
 
-Ship-log: [CLM on Metal hit 3.7 ms warm. Agreement with Jev is still smoke.](/blog/clm-mlx-mac-system-one)
+Ship-log: [I ran CLM vs Jev on my Mac. Warm System One answers hit 3.7 ms.](/blog/clm-mlx-mac-system-one)
 
 Explainer: [/blog/clm-mlx-mac/explainer.html](/blog/clm-mlx-mac/explainer.html)

@@ -1,5 +1,5 @@
 ---
-title: Dense 27B hits 70 tok/s on code. Prose still refuses.
+title: Dense 27B hit 70 tok/s on code. Prose still stuck under 40.
 date: 2026-09-24
 session: MLX-DFLASH-B4
 commits: —
