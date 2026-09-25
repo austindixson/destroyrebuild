@@ -1,15 +1,15 @@
 ---
-title: CLM on Metal hit 3.7 ms warm. Agreement with Jev is still smoke.
+title: I ran CLM vs Jev on my Mac. Warm System One answers hit 3.7 ms.
 date: 2026-09-24
 session: CLM-MLX-PORTABLE
 commits: —
 tools: CLM-8B, MLX, Qwen3-8B-4bit, Kev-4B, TypeSafe Jev, M3 Max
-mood: Latency win. Quality claim deferred.
+mood: Beat Jev on warm latency. Quality still open.
 ---
 
-I wanted a System One endpoint on my Mac that speaks the same `/v1/systemone` wire as TypeSafe Jev, without a GPU box and without burning generative tokens for every typed decision.
+Hosted Jev answered my warm System One calls in **92.9 ms** p50. Local CLM on Metal did the same payloads in **3.7 ms**. That is the headline. Local Kev sat at **210.8 ms**.
 
-Contrastive-LM's CLM is that shape: frozen Qwen3-8B encoder, tiny projection heads (~20M), score = scaled cosine, softmax = answer. Upstream assumes Linux + NVIDIA + vLLM. Official install does not support Mac. So I packed a portable tree, ported serve-only inference to Metal/MLX, and ran the same payloads against local Kev and hosted Jev.
+CLM is Contrastive-LM's System One model: frozen Qwen3-8B encoder, tiny projection heads (~20M), score = scaled cosine, softmax = answer. Upstream assumes Linux + NVIDIA + vLLM. Official install does not support Mac. I packed a portable tree, ported serve-only inference to Metal/MLX, and ran identical TypeSafe `/v1/systemone` requests against CLM, Kev, and hosted Jev.
 
 ## What I built
 
@@ -40,7 +40,7 @@ Sequential serve on Apple Silicon. Same five cases, two repeats. Jev is hosted T
 <img src="/blog/clm-mlx-mac/warm-speedup.svg" alt="Warm speedup ~57x vs local Kev" />
 </figure>
 
-I am chasing warm agent loops: fixed tool sets, revisited rooms, typed routing. On that path CLM's warm p50 is ~57× local Kev on this pack. Cold texts (new policy excerpt, new tides question) sit near Kev and slower than hosted Jev. That matches the architecture. Cache miss = encode. Cache hit = cosine.
+Vs hosted Jev that is ~25× on warm p50. Vs local Kev ~57×. I am chasing warm agent loops: fixed tool sets, revisited rooms, typed routing. Cold texts (new policy excerpt, new tides question) sit near Kev and slower than Jev. Cache miss = encode. Cache hit = cosine.
 
 <figure>
 <img src="/blog/clm-mlx-mac/agreement.svg" alt="Argmax agreement vs Jev: CLM 0.5, Kev 0.7" />
