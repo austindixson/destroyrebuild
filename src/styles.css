@@ -212,6 +212,16 @@ body::after {
 .prose pre { padding: 24px; overflow: auto; background: #20241b; border: 1px solid var(--line); font-size: 13px; line-height: 1.7; }
 .prose code { font-family: var(--mono); font-size: .8em; color: #ded8bf; }
 .prose img { max-width: 100%; }
+.prose .mermaid-figure {
+  margin: 36px 0;
+  padding: 20px 12px;
+  overflow: auto;
+  background: #1a1d16;
+  border: 1px solid var(--line);
+  max-width: min(920px, 100vw - 48px);
+}
+.prose .mermaid-figure .mermaid { margin: 0 auto; text-align: center; }
+.prose .mermaid-figure svg { max-width: 100%; height: auto; }
 .prose table { display: block; overflow: auto; border-collapse: collapse; }
 .prose td, .prose th { border: 1px solid var(--line); padding: 10px; }
 .video-note, .placeholder-token {

@@ -56,6 +56,36 @@ That's the miss. It was documented, and I copied it anyway.
 
 This is the plan. None of it is benchmarked yet. No results below, only targets.
 
+```mermaid
+flowchart TB
+  subgraph write [Write Lattice]
+    Raw[Raw turns] --> ContChunk[Jev continuation chunk]
+    ContChunk --> Episodic[Episodic drawers immutable]
+    ContChunk --> PreFilter[Jev prefilter for observer only]
+    PreFilter --> Observe[Off-loop claim extract]
+    Observe --> Claims[Claim nodes with validity]
+    Observe --> Timeline[Timeline rows]
+    Observe --> Conflicts[ConflictPair rows]
+    Observe --> Profile[Rolling profile]
+  end
+  subgraph read [Ability-routed read]
+    Q[Query] --> Ability[Jev ability choice]
+    Ability --> Route{Route}
+    Route -->|CR| Conflicts
+    Route -->|EO_TR| Timeline
+    Route -->|IE_pref| Claims
+    Route -->|default| Hybrid[FTS union embed]
+    Hybrid --> Sort[Score-as-sort top-k]
+    Conflicts --> Sort
+    Timeline --> Sort
+    Claims --> Profile
+    Profile --> Pack
+    Sort --> Prove[Prove-or-Abstain Jev]
+    Prove --> Pack[Evidence pack]
+    Pack --> Answer[Writer]
+  end
+```
+
 **Store everything that happened, verbatim.** An episodic lattice holds the raw turns. Nothing is deleted on a score.
 
 **Claims live in a second lattice.** Each claim links to what it supersedes. The old body stays. A correction adds an edge; it doesn't erase a node.

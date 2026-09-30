@@ -3,6 +3,7 @@ import { PLACEHOLDER_PATREON_URL, PLACEHOLDER_YOUTUBE_URL } from '../config';
 import { logs, tutorials, work } from '../content/catalog';
 import { contributions } from '../content/contributions';
 import type { Route } from '../router';
+import { hydrateMermaid } from './mermaid';
 
 type Entry = { slug: string; title: string; body: string };
 type Collection = 'portfolio' | 'blog' | 'tutorials';
@@ -73,6 +74,7 @@ export class Hud {
     const title = this.main.querySelector('h1')?.textContent ?? 'Independent work';
     document.title = `${title} — Destroy / Rebuild`;
     if (focus) this.main.focus({ preventScroll: true });
+    void hydrateMermaid(this.main);
   }
 
   private home(): string {
