@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "marked": "^18.0.12",
+    "mermaid": "^11.17.2",
     "three": "^0.186.0"
   },
   "devDependencies": {
