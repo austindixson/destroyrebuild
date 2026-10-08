@@ -6,6 +6,31 @@ import type { ComponentId } from '../data/content'
 
 export type HotspotSelect = (id: ComponentId | null) => void
 
+export type BootNotice = (text: string) => void
+
+/** Hard stop for a stalled GLB download. A late file still falls back to the simple model. */
+const MODEL_TIMEOUT_MS = 25_000
+
+/** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
+export function plantModelLoadText(loaded: number, total: number): string {
+  if (!(total > 0) || !Number.isFinite(loaded)) return 'The plant model loads.'
+  const pct = Math.min(100, Math.max(0, Math.round((loaded / total) * 100)))
+  return `The plant model loads. ${pct} percent.`
+}
+
+function modelTimeoutMs(): number {
+  const win = window as Window & { __YORK_MODEL_TIMEOUT_MS?: number }
+  const override = win.__YORK_MODEL_TIMEOUT_MS
+  if (typeof override === 'number' && Number.isFinite(override) && override >= 250 && override <= 60_000) {
+    return override
+  }
+  return MODEL_TIMEOUT_MS
+}
+
+function isAbortError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string }).name === 'AbortError'
+}
+
 export type InstrumentId =
   | 'chw-supply'
   | 'chw-return'
@@ -101,10 +126,22 @@ export class ChillerScene {
   private drySpin = 2
   private towerSpin = 2
   onInstrument: ((id: InstrumentId) => void) | null = null
+  /** True when the GLB and the simple model both failed. The boot line stays up. */
+  bootFailed = false
   readonly ready: Promise<void>
+  private onBoot: BootNotice | null = null
+  private modelLoader: THREE.FileLoader | null = null
+  private finishLoad: ((useFallback: boolean) => void) | null = null
+  private bootText = ''
 
-  constructor(canvas: HTMLCanvasElement, onSelect: HotspotSelect, lowPower = isLowPowerClient()) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    onSelect: HotspotSelect,
+    lowPower = isLowPowerClient(),
+    onBoot?: BootNotice,
+  ) {
     this.onSelect = onSelect
+    this.onBoot = onBoot ?? null
     this.lowPower = lowPower
     const w = Math.max(canvas.clientWidth || 320, 1)
     const h = Math.max(canvas.clientHeight || 280, 1)
@@ -282,19 +319,92 @@ export class ChillerScene {
     this.scene.add(stripe)
   }
 
+  private reportBoot(text: string) {
+    if (this.disposed || text === this.bootText) return
+    this.bootText = text
+    this.onBoot?.(text)
+  }
+
+  /**
+   * Download ymc2.glb, then mount it. Progress updates the boot line.
+   * The promise always resolves: timeout, network error, a throw in mount,
+   * or dispose. A failed GLB uses the simple model. Dispose skips that mount.
+   */
   private loadModel() {
-    const loader = new GLTFLoader()
+    const url = `${import.meta.env.BASE_URL}models/ymc2.glb`
+    const gltfLoader = new GLTFLoader()
+    const fileLoader = new THREE.FileLoader(gltfLoader.manager)
+    fileLoader.setResponseType('arraybuffer')
+    this.modelLoader = fileLoader
+
     return new Promise<void>((resolve) => {
-      loader.load(
-        `${import.meta.env.BASE_URL}models/ymc2.glb`,
-        (gltf) => {
-          this.mountModel(gltf.scene)
-          resolve()
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+
+      const finish = (useFallback: boolean) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        this.finishLoad = null
+        if (useFallback) this.modelLoader?.abort()
+        if (useFallback && !this.disposed) {
+          try {
+            this.buildChiller()
+            this.needsRender = true
+          } catch (err) {
+            console.error(err)
+            this.bootFailed = true
+            this.reportBoot('The plant model did not load. Use the buttons.')
+          }
+        }
+        resolve()
+      }
+      this.finishLoad = finish
+      timer = window.setTimeout(() => finish(true), modelTimeoutMs())
+
+      fileLoader.load(
+        url,
+        (data) => {
+          if (settled || this.disposed) {
+            finish(false)
+            return
+          }
+          this.reportBoot('The plant model opens.')
+          try {
+            gltfLoader.parse(
+              data as ArrayBuffer,
+              THREE.LoaderUtils.extractUrlBase(url),
+              (gltf) => {
+                if (settled || this.disposed) {
+                  finish(false)
+                  return
+                }
+                try {
+                  this.mountModel(gltf.scene)
+                  finish(false)
+                } catch (err) {
+                  console.error(err)
+                  finish(true)
+                }
+              },
+              (err) => {
+                if (!isAbortError(err)) console.error(err)
+                finish(!this.disposed)
+              },
+            )
+          } catch (err) {
+            console.error(err)
+            finish(!this.disposed)
+          }
         },
-        undefined,
-        () => {
-          this.buildChiller()
-          resolve()
+        (event) => {
+          if (settled || this.disposed) return
+          const total = event.lengthComputable ? event.total : 0
+          this.reportBoot(plantModelLoadText(event.loaded, total))
+        },
+        (err) => {
+          if (!isAbortError(err)) console.error(err)
+          finish(!this.disposed)
         },
       )
     })
@@ -306,6 +416,7 @@ export class ChillerScene {
    * Yaw +90° maps that measured long axis onto X for the side camera.
    */
   private mountModel(model: THREE.Object3D) {
+    if (this.disposed) return
     this.model = model
     model.traverse((c) => {
       const mesh = c as THREE.Mesh
@@ -884,6 +995,7 @@ export class ChillerScene {
   }
 
   private buildChiller() {
+    if (this.disposed) return
     const skid = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.16, 3.0), this.steel(0x1b2734, 0.5, 0.5))
     skid.position.set(0, 0.1, 0)
     this.root.add(skid)
@@ -1222,6 +1334,8 @@ export class ChillerScene {
 
   dispose() {
     this.disposed = true
+    this.finishLoad?.(false)
+    this.modelLoader?.abort()
     cancelAnimationFrame(this.animId)
     window.removeEventListener('resize', this.onResize)
     document.removeEventListener('visibilitychange', this.onVisibility)

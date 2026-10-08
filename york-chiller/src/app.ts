@@ -737,7 +737,7 @@ export class App {
             <span class="pill">CH-01 · N+1</span>
             <span class="pill" id="canvas-status">The 3D view starts.</span>
           </div>
-          <div class="canvas-boot" id="canvas-boot">The plant model starts.</div>
+          <div class="canvas-boot" id="canvas-boot" role="status">The plant model starts.</div>
           <canvas id="chiller-canvas"></canvas>
         </div>
         <aside class="detail-pane" id="detail" ${infoAttr(this.selected ? componentInfoId(this.selected) : 'detail-ready')}>${this.detailHtml()}</aside>
@@ -905,17 +905,32 @@ export class App {
         canvas.style.display = 'none'
         return
       }
-      this.scene = new mod.ChillerScene(canvas, (id) => id && this.onExplorerSelect(id), mod.isLowPowerClient())
-      this.scene.onInstrument = (id) => this.highlightPipe(id)
+      const scene = new mod.ChillerScene(
+        canvas,
+        (id) => id && this.onExplorerSelect(id),
+        mod.isLowPowerClient(),
+        (text) => {
+          if (this.view !== 'explorer' || !boot) return
+          boot.textContent = text
+        },
+      )
+      this.scene = scene
+      scene.onInstrument = (id) => this.highlightPipe(id)
       this.bindPipeBoard(el)
-      await this.scene.ready
-      if (this.view !== 'explorer') return
-      this.scene.setValve('chw', this.controller.chwValvePct)
-      this.scene.setValve('cw', this.controller.cwValvePct)
-      this.scene.setValve('gly', this.controller.glycolValvePct)
-      this.scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
-      this.scene.setReadings(this.sceneReadings())
-      if (this.selected) this.scene.select(this.selected)
+      await scene.ready
+      if (this.view !== 'explorer' || this.scene !== scene) return
+      if (scene.bootFailed) {
+        if (status) status.textContent = 'The 3D view failed.'
+        if (boot) boot.textContent = 'The plant model did not load. Use the buttons.'
+        canvas.style.display = 'none'
+        return
+      }
+      scene.setValve('chw', this.controller.chwValvePct)
+      scene.setValve('cw', this.controller.cwValvePct)
+      scene.setValve('gly', this.controller.glycolValvePct)
+      scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
+      scene.setReadings(this.sceneReadings())
+      if (this.selected) scene.select(this.selected)
       if (status) status.textContent = mod.isLowPowerClient() ? 'Low-detail 3D' : 'Turn the model. Select a part.'
       boot?.remove()
     } catch (e) {
