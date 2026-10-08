@@ -742,6 +742,10 @@ body::after {
   vertical-align: 1px;
 }
 
+.btn.rose.on .chaos-flag {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* cycle svg */
 .cycle-stage {
   border-radius: 22px;

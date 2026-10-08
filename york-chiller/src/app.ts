@@ -37,6 +37,15 @@ const CHAOS_FAULTS: Record<ChaosIncident, { label: string; tone: 'amber' | 'rose
   failover: { label: 'Lead trip and failover', tone: 'rose', info: 'chaos-failover' },
 }
 
+/** Scenario id to the inject the live board should show. Null clears a leftover fault. */
+const TROUBLE_INCIDENT: Record<string, ChaosIncident | null> = {
+  'high-head': 'high-head',
+  landing: 'landing',
+  'hall-hot-chiller-idle': 'hall-hot',
+  'no-start': 'failover',
+  'bms-fight': null,
+}
+
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live plant', icon: 'home' },
   { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
@@ -179,7 +188,10 @@ export class App {
       this.troubleTimer = null
     }
     this.view = view
-    if (view === 'trouble') this.startTroubleClock()
+    if (view === 'trouble') {
+      this.alignTroubleToIncident()
+      this.startTroubleClock()
+    }
     this.render()
   }
 
@@ -550,21 +562,39 @@ export class App {
     })
     el.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((b) => {
       b.addEventListener('click', () => {
-        const v = b.dataset.incident!
-        if (v === 'clear') {
-          this.sim.incident = null
-          this.sim.ch01Running = true
-          this.sim.ch02Running = false
+        const v = b.dataset.incident ?? ''
+        const active = this.isChaosIncident(v) && this.sim.incident === v
+        if (v === 'clear' || active) {
+          this.clearIncident()
           this.toast('The plant is stable.')
-        } else {
-          this.sim.incident = v as typeof this.sim.incident
-          if (v === 'failover') this.sim.ch02Running = false
+        } else if (this.isChaosIncident(v)) {
+          this.applyIncident(v)
           this.toast('The incident is active. The board is live.')
         }
         this.snap = this.sim.tick()
         this.patchLiveBoard()
       })
     })
+  }
+
+  private isChaosIncident(value: string): value is ChaosIncident {
+    return Object.prototype.hasOwnProperty.call(CHAOS_FAULTS, value)
+  }
+
+  /** Drop chiller run flags that an earlier fault left behind. */
+  private resetChillerRun() {
+    this.sim.ch01Running = true
+    this.sim.ch02Running = false
+  }
+
+  private clearIncident() {
+    this.sim.incident = null
+    this.resetChillerRun()
+  }
+
+  private applyIncident(id: ChaosIncident) {
+    this.resetChillerRun()
+    this.sim.incident = id
   }
 
   private plantHtml() {
@@ -1307,20 +1337,33 @@ COND ══╝     CHW → CRAH → HALL</div>
     }, 1000)
   }
 
+  private alignTroubleToIncident() {
+    const incident = this.sim.incident
+    if (!incident) return
+    const index = TROUBLE_CASES.findIndex((item) => TROUBLE_INCIDENT[item.id] === incident)
+    if (index >= 0 && index !== this.troubleIndex) {
+      this.troubleIndex = index
+      this.troublePicked = null
+    }
+  }
+
+  private syncTroubleIncident() {
+    const id = TROUBLE_CASES[this.troubleIndex].id
+    if (!(id in TROUBLE_INCIDENT)) return
+    const incident = TROUBLE_INCIDENT[id]
+    if (incident) this.applyIncident(incident)
+    else this.clearIncident()
+    this.snap = this.sim.tick()
+  }
+
   private troubleHtml() {
     const t = TROUBLE_CASES[this.troubleIndex]
-    const mapIncident: Record<string, typeof this.sim.incident> = {
-      'high-head': 'high-head',
-      'hall-hot-chiller-idle': 'hall-hot',
-      landing: 'landing',
-      'no-start': 'failover',
-    }
-    if (mapIncident[t.id]) this.sim.incident = mapIncident[t.id]
+    this.syncTroubleIncident()
     return `
       <div class="view-head">
         <div>
           <h2>Incident clock</h2>
-          <p>This is scenario ${this.troubleIndex + 1} of ${TROUBLE_CASES.length}. The live board has the same fault. Select the first safe action before the timer ends.</p>
+          <p>This is scenario ${this.troubleIndex + 1} of ${TROUBLE_CASES.length}. The live board follows this scenario. Select the first safe action before the timer ends.</p>
         </div>
         <div class="scoreline">
           <span class="timer ${this.troubleSeconds <= 12 ? 'critical' : ''}" id="incident-timer">${this.troubleSeconds}s</span>
