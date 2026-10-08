@@ -1,7 +1,7 @@
 import { GLOSSARY, type GlossaryId } from '../data/content'
 
 const SKIP_SELECTOR =
-  'button, a, input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot'
+  'button, a, input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot, .quiz-card:not([data-info]), .trouble-card:not([data-info])'
 
 /** Each of these is one "card" for the first-occurrence rule. Inner cards own their own text. */
 const CARD_SELECTOR = [
@@ -134,7 +134,8 @@ function linkCard(card: Element, skip?: GlossaryId) {
 
 /**
  * One pass over trainer text. Wraps the first whole-word match of each glossary
- * term in a button. Skips inputs, buttons, links, quiz choices, and 3D labels.
+ * term in a button. Skips inputs, buttons, links, quiz choices, 3D labels,
+ * and quiz or incident cards until a choice adds data-info.
  */
 export function linkGlossary(scope: ParentNode, options?: { skip?: GlossaryId }) {
   const cards: Element[] = []

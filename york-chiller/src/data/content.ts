@@ -142,7 +142,7 @@ export const COMPONENTS: ComponentInfo[] = [
       'Differential pressure and flow meters help you during a capacity shortfall.',
     ],
     operatorTip:
-      'If the hall temperature rises and the chiller %RLA is low, examine the pumps, the valves, and the distribution. Do not examine only the YMC².',
+      'If the hall temperature rises and the chiller % FLA is low, examine the pumps, the valves, and the distribution. Do not examine only the YMC².',
   },
 ]
 
@@ -299,7 +299,7 @@ export const QUIZ: QuizQuestion[] = [
   },
   {
     id: 'q4',
-    prompt: 'The hall temperature rises and the lead chiller shows a low %RLA. What is the most likely cause?',
+    prompt: 'The hall temperature rises and the lead chiller shows a low % FLA. What is the most likely cause?',
     choices: [
       'The compressor needs more refrigerant oil',
       'The cause is distribution, a pump, a valve, or a CRAH, not necessarily chiller capacity',
@@ -480,7 +480,7 @@ export const TROUBLE_CASES: TroubleCase[] = [
   {
     id: 'hall-hot-chiller-idle',
     title: 'Hot hall and unloaded chiller',
-    symptoms: ['Hot-aisle alarms are active', 'The lead YMC² is at a low %RLA and near the setpoint', 'Some CRAH valves are fully open'],
+    symptoms: ['Hot-aisle alarms are active', 'The lead YMC² is at a low % FLA and near the setpoint', 'Some CRAH valves are fully open'],
     options: [
       {
         text: 'Examine the CHW pumps, the header valves, the differential pressure, and the CRAH and CDU operation',
@@ -847,7 +847,7 @@ export const GLOSSARY = {
     aliases: ['wet-bulb', 'wet bulb'],
     definition:
       'Wet-bulb is the temperature that air reaches when water evaporation cools the air to saturation. The heat rejection limit of a cooling tower follows the wet-bulb.',
-    why: 'On a peak day, this trainer shows wet-bulb with the cooling tower and free cooling, and heat rejection is the first limit.',
+    why: 'In this trainer the cooling tower follows the wet-bulb. The dry cooler follows the dry-bulb.',
   },
   lchlt: {
     term: 'LCHLT',
@@ -856,11 +856,12 @@ export const GLOSSARY = {
       'LCHLT means leaving chilled liquid temperature. The LCHLT setpoint is the primary control target of the chiller.',
     why: 'In this trainer the setpoint starts at 55°F, and OptiView holds that setpoint.',
   },
-  rla: {
-    term: '%RLA',
-    aliases: ['% RLA', '%RLA', 'RLA'],
-    definition: '%RLA means percent rated load amps. %RLA shows the compressor load on this chiller.',
-    why: 'A low %RLA with a hot hall usually means a pump, a valve, or a CRAH fault, and %RLA does not show hall health.',
+  fla: {
+    term: '% FLA',
+    aliases: ['% FLA', '%FLA', 'FLA'],
+    definition:
+      '% FLA means percent of full load amps. OptiView on this YMC² shows motor current and input current as % FLA.',
+    why: 'In this trainer the gauge marked % FLA is the motor current of CH-01.',
   },
 } as const satisfies Record<string, GlossaryEntry>
 
@@ -936,9 +937,9 @@ export const INFO = {
   'kpi-ch01': point(
     'CH-01 load',
     [
-      '%RLA shows the compressor load. %RLA does not show the hall health.',
-      'A low %RLA with a hot hall usually means a pump, a valve, or a CRAH fault. The fault is not a need for more speed.',
-      'A high %RLA with high head means heat rejection or CW flow is the limit.',
+      '% FLA is the motor current of CH-01. % FLA does not show the hall health.',
+      'A low % FLA with a hot hall usually means a pump, a valve, or a CRAH fault. The fault is not a need for more speed.',
+      'A high % FLA with high head means heat rejection or CW flow is the limit.',
       'In an N+1 plant, know if CH-01 is lead, lag, standby, or in alarm before you stop a machine.',
     ],
     ['rla', 'mode'],
@@ -1066,7 +1067,7 @@ export const INFO = {
     'Peak weather high head',
     [
       'This fault limits cooling tower rejection and increases condenser pressure.',
-      'Expect the head tile and the alarm banner to change. %RLA often increases with the head.',
+      'Expect the head tile and the alarm banner to change. % FLA often increases with the head.',
       'First, examine the cooling towers, the CW flow, the strainer difference, and the approach. Then start a redundant chiller per the SOP.',
       'Do not vent refrigerant. Do not bypass a safety to continue past the limit.',
     ],
@@ -1076,7 +1077,7 @@ export const INFO = {
     'Hot hall, chiller idle',
     [
       'This fault warms the hall and unloads the chiller, and the CHW ΔP decreases.',
-      'A low %RLA next to hot supply air is the signature.',
+      'A low % FLA next to hot supply air is the signature.',
       'Examine the pumps, the header valves, the differential pressure, and the CRAH or CDU valves.',
       'Full compressor speed does not repair water that does not reach the hall.',
     ],
@@ -1224,7 +1225,7 @@ export const INFO = {
       'The waterboxes connect the machine to the shared CHW headers and the shared CW headers.',
       'Isolation valves and strainers are part of the MOP before tube work or waterbox work.',
       'A closed balance valve gives the hall too little water even if the chiller looks normal.',
-      'If the hall temperature rises and the %RLA is low, examine the pumps, the valves, and the distribution.',
+      'If the hall temperature rises and the % FLA is low, examine the pumps, the valves, and the distribution.',
     ],
     ['chwDp', 'cwDp', 'chwValve', 'cwValve'],
   ),
@@ -1433,9 +1434,9 @@ export const INFO = {
     ['optiAct', 'lchltSet'],
   ),
   'gauge-rla': point(
-    'Percent RLA',
+    'Motor current % FLA',
     [
-      '%RLA is the compressor load. %RLA is not the hall health.',
+      '% FLA is motor current on this YMC². OptiView also shows input current as % FLA.',
       'The gauge shows 0% when you have stopped CH-01 in this trainer.',
       'Low load and a hot hall mean the chiller does not see the heat. High load and high head mean that heat rejection or CW flow is the limit.',
     ],

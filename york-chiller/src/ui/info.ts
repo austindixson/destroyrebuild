@@ -18,7 +18,7 @@ const LIVE_LABEL: Record<InfoLive, string> = {
   head: 'CH-01 head',
   outdoor: 'Outdoor dry bulb',
   wetBulb: 'Wet-bulb',
-  rla: 'CH-01 %RLA',
+  rla: 'CH-01 % FLA',
   mode: 'CH-01 mode',
   chwDp: 'CHW ΔP',
   cwDp: 'CW ΔP',
@@ -41,7 +41,7 @@ const LIVE_LABEL: Record<InfoLive, string> = {
   evapPsig: 'Evaporator',
   alarm: 'Alarm',
   optiAct: 'LCHLT actual',
-  optiRla: '%RLA',
+  optiRla: '% FLA',
 }
 
 const LIVE_FORMAT: Record<InfoLive, (ctx: LiveContext) => string> = {
@@ -105,6 +105,8 @@ export class InfoDock {
   private trigger: HTMLButtonElement | null = null
   /** Focus returns here when the clicked term lived inside the panel and was replaced. */
   private anchor: HTMLButtonElement | null = null
+  /** Stable parent of a glossary button. A live rewrite replaces the button and keeps this node. */
+  private glossaryHost: HTMLElement | null = null
   private onKey: (event: KeyboardEvent) => void
   private onResize: () => void
 
@@ -289,6 +291,15 @@ export class InfoDock {
   private rememberTrigger(btn: HTMLButtonElement) {
     this.trigger = btn
     if (!this.panel.contains(btn)) this.anchor = btn
+    this.glossaryHost = btn.parentElement
+  }
+
+  /** The live rewrite keeps the host and inserts a new button for the same term. */
+  private replacementGlossaryTrigger(): HTMLButtonElement | null {
+    if (!this.glossaryId) return null
+    const host = this.glossaryHost
+    if (!(host instanceof Element) || !host.isConnected) return null
+    return host.querySelector<HTMLButtonElement>(`button.jargon[data-glossary="${CSS.escape(this.glossaryId)}"]`)
   }
 
   private present() {
@@ -315,12 +326,17 @@ export class InfoDock {
 
   private close(restore: boolean) {
     if (!this.mode && this.layer.hidden) return
-    const focusTarget = this.trigger?.isConnected ? this.trigger : this.anchor?.isConnected ? this.anchor : null
+    const focusTarget = this.trigger?.isConnected
+      ? this.trigger
+      : this.anchor?.isConnected
+        ? this.anchor
+        : this.replacementGlossaryTrigger()
     this.mode = null
     this.infoId = null
     this.glossaryId = null
     this.trigger = null
     this.anchor = null
+    this.glossaryHost = null
     this.layer.hidden = true
     this.appRoot.inert = false
     this.markExpanded()
@@ -353,10 +369,19 @@ export class InfoDock {
         if (!this.sheet()) this.place()
         return
       }
-      case 'glossary':
-        this.trigger = null
+      case 'glossary': {
+        const next = this.replacementGlossaryTrigger()
+        if (!next) {
+          this.trigger = null
+          this.markExpanded()
+          return
+        }
+        this.trigger = next
+        this.anchor = next
         this.markExpanded()
+        if (!this.sheet()) this.place()
         return
+      }
       default: {
         const unknown: never = mode
         return unknown

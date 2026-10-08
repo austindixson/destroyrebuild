@@ -345,7 +345,7 @@ export class App {
           ${this.mimicNode('it', '01', 'IT load', `${s.itLoadMw} MW of IT heat`, 'quiz', 'mimic-it')}
           ${this.mimicNode('crah', '02', 'CRAH / CDU', `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
           ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
-          ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
+          ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
           ${this.mimicNode('tower', '05', 'Cooling tower and dry cooler', `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
           ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'Escalated' : 'The watch desk is normal', 'trouble', 'mimic-noc', Boolean(s.alarm))}
         </div>
@@ -476,7 +476,7 @@ export class App {
       it: `${s.itLoadMw} MW of IT heat`,
       crah: `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`,
       chw: `ΔP ${s.chwDpPsi} psi`,
-      ch1: `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`,
+      ch1: `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`,
       tower: `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`,
       noc: s.alarm ? 'Escalated' : 'The watch desk is normal',
     }
@@ -1020,7 +1020,7 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
       <div class="gauge-row">
         <div class="gauge" ${infoAttr('gauge-set')}><div class="label">LCHLT SET</div><div class="value" data-ov="set">${s.lchltSet.toFixed(1)}°F</div></div>
         <div class="gauge" ${infoAttr('gauge-act')}><div class="label">LCHLT ACT</div><div class="value" data-ov="act">${this.running ? s.lchltAct.toFixed(1) : '58.2'}°F</div></div>
-        <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% RLA</div><div class="value" data-ov="rla">${this.running ? s.ch01.rla : 0}%</div></div>
+        <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% FLA</div><div class="value" data-ov="rla">${this.running ? s.ch01.rla : 0}%</div></div>
       </div>
       <div class="gauge-row">
         <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
