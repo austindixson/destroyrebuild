@@ -1,8 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { join } from 'node:path'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
@@ -70,18 +69,19 @@ function take(bucket: Buffer[], size: number, chunk: Buffer, max: number): numbe
   return next
 }
 
-function armKill(child: ChildProcess, signal: AbortSignal, graceMs: number): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const onAbort = () => {
-    child.kill('SIGTERM')
-    timer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-    }, graceMs)
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid
+  if (!pid) return
+  try {
+    process.kill(-pid, signal)
+    return
+  } catch {
+    // The child is not a group leader.
   }
-  signal.addEventListener('abort', onAbort, { once: true })
-  return () => {
-    signal.removeEventListener('abort', onAbort)
-    if (timer) clearTimeout(timer)
+  try {
+    child.kill(signal)
+  } catch {
+    // The process has already exited.
   }
 }
 
@@ -91,22 +91,46 @@ export const nodeRunner: ProcessRunner = {
     const grace = options?.killGraceMs ?? CLI_KILL_GRACE_MS
     if (signal.aborted) return Promise.reject(new Error('aborted'))
     return new Promise((resolveRun, reject) => {
-      const child = spawn(cmd, args, { env, cwd: options?.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+      const child = spawn(cmd, args, {
+        env,
+        cwd: options?.cwd,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
       const out: Buffer[] = []
       const err: Buffer[] = []
       let outSize = 0
       let errSize = 0
       let settled = false
-      const disarm = armKill(child, signal, grace)
+      let failure: Error | null = null
+      let killTimer: ReturnType<typeof setTimeout> | undefined
       const finish = (fn: () => void) => {
         if (settled) return
         settled = true
-        disarm()
+        signal.removeEventListener('abort', onAbort)
+        if (killTimer) clearTimeout(killTimer)
         fn()
       }
+      const settle = (code: number | null) => {
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        finish(() => {
+          if (failure) reject(failure)
+          else resolveRun({
+            code: code ?? 1,
+            stdout: Buffer.concat(out).toString('utf8'),
+            stderr: Buffer.concat(err).toString('utf8'),
+          })
+        })
+      }
+      const onAbort = () => {
+        killGroup(child, 'SIGTERM')
+        killTimer = setTimeout(() => killGroup(child, 'SIGKILL'), grace)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
       const overflow = () => {
-        child.kill('SIGKILL')
-        finish(() => reject(new Error('output too large')))
+        failure = new Error('output too large')
+        killGroup(child, 'SIGKILL')
       }
       child.stdout.on('data', (chunk: Buffer) => {
         const next = take(out, outSize, chunk, max)
@@ -119,13 +143,15 @@ export const nodeRunner: ProcessRunner = {
         else errSize = next
       })
       child.stdin.on('error', () => {})
+      child.stdout.on('error', () => {})
+      child.stderr.on('error', () => {})
       child.on('error', (error) => finish(() => reject(error)))
-      child.on('close', (code) => {
-        finish(() => resolveRun({
-          code: code ?? 1,
-          stdout: Buffer.concat(out).toString('utf8'),
-          stderr: Buffer.concat(err).toString('utf8'),
-        }))
+      child.on('exit', (code) => {
+        const drain = setTimeout(() => settle(code), 100)
+        child.once('close', () => {
+          clearTimeout(drain)
+          settle(code)
+        })
       })
       child.stdin.end(input)
     })
@@ -239,6 +265,8 @@ function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string,
     additionalReadonlyPaths: [] as string[],
   }
   const cli = {
+    version: 1,
+    editor: { vimMode: false },
     sandbox: { readBoundary: 'workspace' },
     permissions: { allow: [] as string[], deny: [...CURSOR_READ_DENY] },
   }
@@ -252,55 +280,6 @@ async function prepareCursorWorkspace(workspace: string): Promise<void> {
   await writeFile(join(dir, 'sandbox.json'), JSON.stringify(sandbox))
   await writeFile(join(dir, 'cli-config.json'), JSON.stringify(cli))
   await writeFile(join(dir, 'cli.json'), JSON.stringify({ permissions: cli.permissions }))
-}
-
-function readJson(path: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-    return parsed as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-function insideWorkspace(workspace: string, target: string): boolean {
-  const root = resolve(workspace)
-  const abs = resolve(target)
-  if (abs === root) return true
-  const rel = relative(root, abs)
-  return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
-}
-
-function envPath(target: string): boolean {
-  return basename(target) === '.env' || basename(target).startsWith('.env')
-}
-
-function denyList(cli: Record<string, unknown>): string[] {
-  const permissions = cli.permissions
-  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return []
-  const deny = (permissions as { deny?: unknown }).deny
-  return Array.isArray(deny) ? deny.filter((item): item is string => typeof item === 'string') : []
-}
-
-function cursorConfigConfined(workspace: string): boolean {
-  const sandbox = readJson(join(workspace, '.cursor', 'sandbox.json'))
-  const cli = readJson(join(workspace, '.cursor', 'cli-config.json'))
-  if (!sandbox || !cli) return false
-  if (sandbox.readBoundary !== 'workspace') return false
-  if (!Array.isArray(sandbox.additionalReadPaths) || sandbox.additionalReadPaths.length > 0) return false
-  const mode = cli.sandbox
-  if (!mode || typeof mode !== 'object' || Array.isArray(mode)) return false
-  if ((mode as { readBoundary?: unknown }).readBoundary !== 'workspace') return false
-  const deny = denyList(cli)
-  return deny.includes('Read(/etc/**)') && deny.includes('Read(.env*)')
-}
-
-/** True when the temp workspace config denies a read of target. */
-export function cursorOutsideReadDenied(workspace: string, target: string): boolean {
-  if (!cursorConfigConfined(workspace)) return false
-  if (!insideWorkspace(workspace, target)) return true
-  return envPath(target)
 }
 
 export async function completeCursor(

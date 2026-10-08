@@ -1,3 +1,5 @@
+import { budgetKey } from './ip.ts'
+
 export interface BudgetDecision {
   ok: boolean
   nearCap: boolean
@@ -5,6 +7,7 @@ export interface BudgetDecision {
 
 export interface Budget {
   allow(ip: string, round: number, now: number): BudgetDecision
+  size(): { hits: number; daily: number }
 }
 
 interface DailyRow {
@@ -20,27 +23,45 @@ function nextCount(row: DailyRow | undefined, day: string): number {
   return row && row.day === day ? row.count + 1 : 1
 }
 
+function nearCap(count: number, cap: number): boolean {
+  return count >= Math.ceil(cap * 0.8)
+}
+
+function prune(hits: Map<string, number[]>, daily: Map<string, DailyRow>, day: string, now: number): void {
+  for (const [key, stamps] of hits) {
+    const recent = stamps.filter((stamp) => now - stamp < 60_000)
+    if (recent.length === 0) hits.delete(key)
+    else hits.set(key, recent)
+  }
+  for (const [key, row] of daily) {
+    if (row.day !== day) daily.delete(key)
+  }
+}
+
 export function createBudget(dailyCap: number, perMinute: number, globalDailyCap: number): Budget {
   const hits = new Map<string, number[]>()
   const daily = new Map<string, DailyRow>()
   let global: DailyRow = { day: '', count: 0 }
   return {
+    size() {
+      return { hits: hits.size, daily: daily.size }
+    },
     allow(ip, round, now) {
       if (round < 0) return { ok: false, nearCap: false }
-      const recent = (hits.get(ip) ?? []).filter((stamp) => now - stamp < 60_000)
+      const key = budgetKey(ip)
+      const day = dayKey(now)
+      prune(hits, daily, day, now)
+      const recent = hits.get(key) ?? []
       if (recent.length >= perMinute) return { ok: false, nearCap: false }
       recent.push(now)
-      hits.set(ip, recent)
-      const day = dayKey(now)
-      const count = nextCount(daily.get(ip), day)
+      hits.set(key, recent)
+      const count = nextCount(daily.get(key), day)
       if (count > dailyCap) return { ok: false, nearCap: false }
-      const globalCount = nextCount(global, day)
+      const globalCount = nextCount(global.day === day ? global : undefined, day)
       if (globalCount > globalDailyCap) return { ok: false, nearCap: false }
-      daily.set(ip, { day, count })
+      daily.set(key, { day, count })
       global = { day, count: globalCount }
-      const nearIp = count >= Math.ceil(dailyCap * 0.8)
-      const nearGlobal = globalCount >= Math.ceil(globalDailyCap * 0.8)
-      return { ok: true, nearCap: nearIp || nearGlobal }
+      return { ok: true, nearCap: nearCap(count, dailyCap) || nearCap(globalCount, globalDailyCap) }
     },
   }
 }

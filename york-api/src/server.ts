@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { completeWithCascade } from './adapters.ts'
+import { probeAndLogClis } from './cliVersions.ts'
 import { handleChat, defaultBudget } from './chat.ts'
 import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
@@ -101,4 +102,7 @@ export function createYorkServer(options: YorkServerOptions = {}) {
 
 const port = Number(process.env.PORT || 8787)
 const isMain = Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-if (isMain) createYorkServer().listen(port)
+if (isMain) {
+  await probeAndLogClis(process.env)
+  createYorkServer().listen(port)
+}

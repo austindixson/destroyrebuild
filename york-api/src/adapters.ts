@@ -37,13 +37,13 @@ export function buildAdapters(env: NodeJS.ProcessEnv, fetchImpl: FetchLike, run:
     {
       id: 'claude',
       model: CLAUDE_MODEL,
-      enabled: () => Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
+      enabled: () => Boolean(env.CLAUDE_CODE_OAUTH_TOKEN) && env.YORK_CLAUDE_CLI !== 'unavailable',
       complete: (req, signal) => within(signal, 25_000, (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
       model: CURSOR_MODEL,
-      enabled: () => Boolean(env.CURSOR_API_KEY),
+      enabled: () => Boolean(env.CURSOR_API_KEY) && env.YORK_CURSOR_CLI !== 'unavailable',
       complete: (req, signal) => within(signal, 35_000, (limited) => completeCursor(req, limited, run, env)),
     },
   ]

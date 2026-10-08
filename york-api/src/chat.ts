@@ -1,4 +1,5 @@
 import { createBudget, type Budget } from './budget.ts'
+import { budgetKey } from './ip.ts'
 import type { Inflight } from './inflight.ts'
 import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAILABLE } from './copy.ts'
 import { finishAnswer } from './finish.ts'
@@ -84,6 +85,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   const req = readRequest(raw)
   if (!req || !req.question) return { http: 400, body: { status: 'error', answer: NO_ANSWER } }
   if (req.question.length > QUESTION_LIMIT) return { http: 400, body: { status: 'error', answer: TOO_LONG } }
+  if (process.env.YORK_LOG_CLIENT === '1') console.log(`york-api chat key=${budgetKey(deps.ip)} round=${req.round}`)
   const slot = deps.budget.allow(deps.ip, req.round, deps.now())
   if (!slot.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   if (req.round > 6) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }

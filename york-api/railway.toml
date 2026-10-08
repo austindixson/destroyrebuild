@@ -3,12 +3,14 @@
 # The static site keeps Railpack/Caddy from the root railway.toml.
 #
 # YORK_API_HOST belongs on the static site, not on this service.
-# It is the address Caddy uses for /api/york/*. See ENV.md for every variable,
-# the per-IP cap, the per-minute cap, the global daily ceiling, the in-flight
-# cap, and the X-Real-IP trust rule.
+# It is the address Caddy uses for /api/york/*. See ENV.md.
+# This service must have no public domain, TCP proxy, or other callers.
+# X-Real-IP is trusted only when Caddy and the Railway edge are the only path in.
+# The image pins Claude Code 2.1.295 and Cursor agent 2026.10.01-e373342.
 
 [build]
-builder = "RAILPACK"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "npm start"

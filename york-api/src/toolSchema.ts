@@ -5,6 +5,7 @@ interface FieldSpec {
   min?: number
   max?: number
   maxLen?: number
+  clamp?: boolean
 }
 
 type ReadOk = { ok: true; value: unknown }
@@ -17,8 +18,8 @@ function str(required = false): FieldSpec {
   return { type: 'string', required, maxLen: 80 }
 }
 
-function num(required = false, min?: number, max?: number): FieldSpec {
-  return { type: 'number', required, min, max }
+function num(required = false, min?: number, max?: number, clamp = false): FieldSpec {
+  return { type: 'number', required, min, max, clamp }
 }
 
 function en(values: readonly (string | number)[], required = false): FieldSpec {
@@ -40,7 +41,7 @@ const SCHEMAS: Record<string, Record<string, FieldSpec>> = {
   'plant.setWeather': { preset: en(['cold', 'mild', 'hot'], true) },
   'plant.setOutdoorDryBulb': { f: num(true, 20, 110) },
   'plant.setLchltSetpoint': { f: num(true, 42, 65) },
-  'plant.setValve': { loop: en(['chw', 'cw', 'gly'], true), pct: num(true) },
+  'plant.setValve': { loop: en(['chw', 'cw', 'gly'], true), pct: num(true, 0, 100, true) },
   'plant.setItLoad': { deltaMw: num(), targetMw: num(), rampSeconds: num() },
   'chiller.start': { unit: str(true) },
   'chiller.stop': { unit: str(true), mode: en(['soft', 'safety'], true) },
@@ -71,9 +72,13 @@ function readString(field: FieldSpec, value: unknown): Read {
 
 function readNumber(field: FieldSpec, value: unknown): Read {
   if (typeof value !== 'number' || !Number.isFinite(value)) return FAIL
-  if (field.min !== undefined && value < field.min) return FAIL
-  if (field.max !== undefined && value > field.max) return FAIL
-  return { ok: true, value }
+  let next = value
+  if (field.clamp) {
+    if (field.min !== undefined && next < field.min) next = field.min
+    if (field.max !== undefined && next > field.max) next = field.max
+  } else if (field.min !== undefined && next < field.min) return FAIL
+  else if (field.max !== undefined && next > field.max) return FAIL
+  return { ok: true, value: next }
 }
 
 function readEnum(field: FieldSpec, value: unknown): Read {
