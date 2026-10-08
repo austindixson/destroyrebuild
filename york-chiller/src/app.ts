@@ -25,7 +25,14 @@ import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { openTroubleView, shuffleChoices, troubleStep, type TroubleDestination } from './troubleOrder'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantController, type PlantChangeDetail } from './sim/controller'
-import { chwHeaderDpPsi, isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
+import {
+  HALL_HOT_CHW_DP_PSI,
+  isIncidentKind,
+  printedChwDpPsi,
+  rankFor,
+  type IncidentKind,
+  type PlantSnapshot,
+} from './sim/plantSim'
 import {
   dismissValveAlert,
   reduceValveAlert,
@@ -106,9 +113,19 @@ function pipeSliderInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
 
 /** Home CHW card only. The snapshot stays steady so the pipe board can match the incident. */
 function homeChwDpText(s: PlantSnapshot): string {
-  const steady = Math.round(chwHeaderDpPsi(s.chwValvePct) * 10) / 10
+  const steady = printedChwDpPsi(s.chwValvePct)
   const live = s.chwDpPsi === steady ? s.chwDpPsi + Math.sin(s.t / 9) * 0.3 : s.chwDpPsi
   return live.toFixed(1)
+}
+
+/** Hall-hot holds the printed CHW ΔP. The note states that fact and does not ask for a valve move. */
+function pipeChwNote(dp: number, incident: IncidentKind | null): string {
+  if (incident === 'hall-hot') {
+    return `The trainer hot-hall fault holds the CHW ΔP at ${HALL_HOT_CHW_DP_PSI.toFixed(1)} psi. `
+  }
+  if (dp < VALVE_RED.chwDpLowPsi) return 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
+  if (dp > VALVE_RED.chwDpHighPsi) return 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
+  return ''
 }
 
 function lchltHint(s: PlantSnapshot): string {
@@ -885,15 +902,7 @@ export class App {
     if (cwGain) this.relinkText(cwGain, `${s.cwHeadGain.toFixed(1)} psi of head per 10%. Wet-bulb ${s.wbF}°F`)
     set('gly-gain', `${s.glycolGain.toFixed(1)} psi per 10%. Dry cooler fans ${s.dryFanPct}%`)
     const note = this.root.querySelector('#pipe-note')
-    if (note) {
-      const warn =
-        s.chwDpPsi < VALVE_RED.chwDpLowPsi
-          ? 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
-          : s.chwDpPsi > VALVE_RED.chwDpHighPsi
-            ? 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
-            : ''
-      this.relinkText(note, warn + s.reason)
-    }
+    if (note) this.relinkText(note, pipeChwNote(s.chwDpPsi, this.controller.incident) + s.reason)
     this.scene?.setFans(s.dryFanPct, s.towerFanPct)
     this.scene?.setReadings(this.sceneReadings())
     this.pushSceneValves(this.scene)

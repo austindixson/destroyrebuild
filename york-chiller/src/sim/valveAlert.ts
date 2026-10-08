@@ -1,4 +1,10 @@
-import { cwHeaderDpPsi, chwHeaderDpPsi, glycolHeaderDpPsi } from './plantSim'
+import {
+  CHW_DP_HIGH_PSI,
+  CHW_DP_LOW_PSI,
+  cwHeaderDpPsi,
+  glycolHeaderDpPsi,
+  printedChwDpPsi,
+} from './plantSim'
 
 /**
  * Balance-valve red zones for the trainer.
@@ -18,12 +24,12 @@ import { cwHeaderDpPsi, chwHeaderDpPsi, glycolHeaderDpPsi } from './plantSim'
  * the same zone as the valve curve, this alert stays quiet so it does not
  * contradict the board. The home CHW card is the only place that adds wobble.
  *
- * applyFlowAlarm uses CHW below 42% and CW below 40%. Those faults sit next to
- * these marks.
+ * The home CHW low banner uses printedChwDpPsi and the same 12 psi limit.
+ * CW below 40% is a separate banner.
  */
 export const VALVE_RED = {
-  chwDpLowPsi: 12,
-  chwDpHighPsi: 24,
+  chwDpLowPsi: CHW_DP_LOW_PSI,
+  chwDpHighPsi: CHW_DP_HIGH_PSI,
   cwDpLowPsi: 8,
   cwDpHighPsi: 18,
   glyDpLowPsi: 8,
@@ -145,7 +151,7 @@ function agree(curve: ValveZone, boardDp: number | undefined, low: number, high:
 }
 
 function chwZone(pct: number): ValveZone {
-  return dpZone(shownPsi(chwHeaderDpPsi(pct)), VALVE_RED.chwDpLowPsi, VALVE_RED.chwDpHighPsi)
+  return dpZone(printedChwDpPsi(pct), VALVE_RED.chwDpLowPsi, VALVE_RED.chwDpHighPsi)
 }
 
 function cwZone(pct: number): ValveZone {

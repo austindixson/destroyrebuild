@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { INFO } from '../src/data/content'
+import { PlantController } from '../src/sim/controller'
+import { CHW_DP_LOW_PSI, HALL_HOT_CHW_DP_PSI, chwLowFlowLesson, chwLowOpenPct, printedChwDpPsi } from '../src/sim/plantSim'
 import {
   dismissValveAlert,
   reduceValveAlert,
   seedValveAlert,
+  VALVE_RED,
   valveZone,
   type ValveAlertState,
   type ValveReading,
@@ -127,6 +131,51 @@ test('two valves that enter red on the same tick show the later loop', () => {
   assert.equal(both.entered, true)
   assert.equal(both.show?.loop, 'cw')
   assert.match(both.show?.text ?? '', /CW return temperature rise/)
+})
+
+test('the CHW low banner matches the printed board at every slider point', () => {
+  assert.equal(VALVE_RED.chwDpLowPsi, CHW_DP_LOW_PSI)
+  assert.equal(printedChwDpPsi(41), 12)
+  assert.equal(printedChwDpPsi(40), 11.8)
+  for (let pct = 15; pct <= 100; pct++) {
+    const plant = new PlantController()
+    plant.setValve('chw', pct)
+    const snap = plant.snapshot
+    const printed = printedChwDpPsi(pct)
+    const low = printed < CHW_DP_LOW_PSI
+    assert.equal(snap.chwValvePct, pct)
+    assert.equal(snap.chwDpPsi, printed, `board at ${pct}%`)
+    assert.equal(snap.chwDpPsi < VALVE_RED.chwDpLowPsi, low)
+    assert.equal(valveZone('chw', pct, snap.oatF) === 'low', low)
+    assert.equal((snap.alarm ?? '').includes('The CHW ΔP is low'), low, `banner at ${pct}%`)
+  }
+})
+
+test('the CHW slider lesson uses the printed low opening', () => {
+  const pct = chwLowOpenPct()
+  assert.equal(printedChwDpPsi(pct) < CHW_DP_LOW_PSI, true)
+  assert.equal(printedChwDpPsi(pct + 1) < CHW_DP_LOW_PSI, false)
+  const lesson = chwLowFlowLesson()
+  assert.equal(
+    lesson,
+    `At ${pct}% open and below, the CHW ΔP is below the trainer limit of ${CHW_DP_LOW_PSI} psi. This sim then gives the CRAHs too little flow, and the hall gets warmer.`,
+  )
+  assert.equal(INFO['slider-chw'].points.includes(lesson), true)
+  assert.equal(
+    INFO['pipe-chw'].points.some((line) => line.includes('If a fault holds the ΔP, a valve move does not change it.')),
+    true,
+  )
+})
+
+test('hall-hot holds the CHW ΔP at 9.5 psi when the valve is fully open', () => {
+  const plant = new PlantController()
+  plant.injectIncident('hall-hot')
+  assert.equal(plant.snapshot.chwValvePct, 72)
+  assert.equal(plant.snapshot.chwDpPsi, HALL_HOT_CHW_DP_PSI)
+  plant.setValve('chw', 100)
+  assert.equal(plant.snapshot.chwValvePct, 100)
+  assert.equal(plant.snapshot.chwDpPsi, HALL_HOT_CHW_DP_PSI)
+  assert.equal((plant.snapshot.alarm ?? '').includes('Open the CHW valve'), false)
 })
 
 test('hall-hot 9.5 psi does not raise a valve alert that contradicts the board', () => {
