@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { ComponentId } from '../data/content'
 
@@ -14,6 +15,23 @@ export type InstrumentId =
   | 'gly-return'
 
 type LoopKind = 'chw' | 'cw' | 'gly'
+
+type PlantTag = 'CHWS' | 'CHWR' | 'CWS' | 'CWR' | 'GLS' | 'GLR' | 'TOWER · WATER' | 'GLYCOL DRY'
+
+/** Live loop readings the plant sim actually publishes. */
+export interface SceneReadings {
+  chwsF: number
+  chwrF: number
+  cwsF: number
+  cwrF: number
+  glyS: number
+  glyR: number
+  chwValvePct: number
+  cwValvePct: number
+  glycolValvePct: number
+  towerFanPct: number
+  dryFanPct: number
+}
 
 export function isLowPowerClient(): boolean {
   if (typeof window === 'undefined') return true
@@ -58,6 +76,9 @@ export class ChillerScene {
   private needsRender = true
   private interacting = false
   private model: THREE.Object3D | null = null
+  private labelRenderer: CSS2DRenderer
+  private labelValues = new Map<PlantTag, HTMLElement>()
+  private readings: SceneReadings | null = null
   private instruments: { id: InstrumentId; mesh: THREE.Object3D; wheel: THREE.Object3D; kind: LoopKind }[] = []
   private fans: { mesh: THREE.Object3D; sink: 'dry' | 'tower' }[] = []
   private drySpin = 2
@@ -78,8 +99,20 @@ export class ChillerScene {
       powerPreference: lowPower ? 'low-power' : 'high-performance',
       failIfMajorPerformanceCaveat: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 2 : 1.5))
     this.renderer.setSize(w, h, false)
+    this.labelRenderer = new CSS2DRenderer()
+    const labels = this.labelRenderer.domElement
+    labels.className = 'plant-labels'
+    labels.style.position = 'absolute'
+    labels.style.left = '0'
+    labels.style.top = '0'
+    labels.style.pointerEvents = 'none'
+    labels.style.zIndex = '1'
+    labels.setAttribute('aria-hidden', 'true')
+    canvas.parentElement?.appendChild(labels)
+    this.labelRenderer.setSize(w, h)
+    void document.fonts.load("600 13px 'IBM Plex Mono'").catch(() => undefined)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -117,6 +150,7 @@ export class ChillerScene {
     window.addEventListener('resize', this.onResize, { passive: true })
     document.addEventListener('visibilitychange', this.onVisibility)
     this.tick()
+    requestAnimationFrame(() => this.onResize())
   }
 
   private segs(hi: number, lo: number) {
@@ -319,6 +353,16 @@ export class ChillerScene {
     this.needsRender = true
   }
 
+  /** Refresh label text from the latest sim snapshot. Nodes stay put; only textContent changes. */
+  setReadings(readings: SceneReadings) {
+    this.readings = readings
+    for (const [tag, el] of this.labelValues) {
+      const next = readingText(tag, readings)
+      if (el.textContent !== next) el.textContent = next
+    }
+    this.needsRender = true
+  }
+
   /**
    * Three loops leave the nozzle face (world +X after the measured yaw):
    * teal water to the hall, gold water to the tower, violet glycol to the dry cooler.
@@ -335,7 +379,7 @@ export class ChillerScene {
     const coolX = box.min.x - 2.55
     const coolZ = front - 0.15
 
-    const chw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: string }[] = [
+    const chw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
       { id: 'chw-return', color: 0x146e78, y: yBase, z: zMid + size.z * 0.18, rack: 0, tag: 'CHWR' },
       { id: 'chw-supply', color: 0x2ec4c4, y: yBase + 0.26, z: zMid + size.z * 0.04, rack: 1, tag: 'CHWS' },
     ]
@@ -351,7 +395,7 @@ export class ChillerScene {
       ], line, 'chw')
     }
 
-    const cw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: string }[] = [
+    const cw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
       { id: 'cw-supply', color: 0xd4a017, y: yBase + 0.04, z: zMid - size.z * 0.14, rack: 0, tag: 'CWS' },
       { id: 'cw-return', color: 0x8a5a12, y: yBase + 0.3, z: zMid - size.z * 0.28, rack: 1, tag: 'CWR' },
     ]
@@ -369,7 +413,7 @@ export class ChillerScene {
     }
     this.buildTower(group, towerX, towerZ)
 
-    const gly: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: string }[] = [
+    const gly: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
       { id: 'gly-supply', color: 0x7c5cff, y: yBase + 0.48, z: zMid + size.z * 0.32, rack: 0, tag: 'GLS' },
       { id: 'gly-return', color: 0xb9a6ff, y: yBase + 0.7, z: zMid + size.z * 0.4, rack: 1, tag: 'GLR' },
     ]
@@ -392,7 +436,7 @@ export class ChillerScene {
   private layLine(
     group: THREE.Group,
     points: THREE.Vector3[],
-    line: { id: InstrumentId; color: number; tag: string },
+    line: { id: InstrumentId; color: number; tag: PlantTag },
     kind: LoopKind,
   ) {
     this.runPipe(group, points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
@@ -422,7 +466,7 @@ export class ChillerScene {
     fan.position.y = 1.84
     g.add(fan)
     this.fans.push({ mesh: fan, sink: 'tower' })
-    const label = this.tagSprite('TOWER · WATER', '#ffb020')
+    const label = this.tagLabel('TOWER · WATER', '#ffb020')
     label.position.y = 2.28
     g.add(label)
     group.add(g)
@@ -452,7 +496,7 @@ export class ChillerScene {
       g.add(fan)
       this.fans.push({ mesh: fan, sink: 'dry' })
     }
-    const label = this.tagSprite('GLYCOL DRY', '#c4b5fd')
+    const label = this.tagLabel('GLYCOL DRY', '#c4b5fd')
     label.position.y = 1.72
     g.add(label)
     group.add(g)
@@ -507,7 +551,7 @@ export class ChillerScene {
     group.add(flange)
   }
 
-  private addValve(group: THREE.Group, pos: THREE.Vector3, id: InstrumentId, kind: LoopKind, tag: string) {
+  private addValve(group: THREE.Group, pos: THREE.Vector3, id: InstrumentId, kind: LoopKind, tag: PlantTag) {
     const valve = new THREE.Group()
     valve.position.copy(pos)
     const body = new THREE.Mesh(
@@ -528,7 +572,7 @@ export class ChillerScene {
       spoke.rotation.y = rot
       wheel.add(spoke)
     }
-    const label = this.tagSprite(tag, kind === 'chw' ? '#2ec4c4' : kind === 'cw' ? '#ffb020' : '#c4b5fd')
+    const label = this.tagLabel(tag, kind === 'chw' ? '#2ec4c4' : kind === 'cw' ? '#ffb020' : '#c4b5fd')
     label.position.y = 0.46
     valve.add(label)
     valve.userData.instrument = id
@@ -564,26 +608,19 @@ export class ChillerScene {
     group.add(gauge)
   }
 
-  private tagSprite(text: string, color: string) {
-    const canvas = document.createElement('canvas')
-    canvas.width = 256
-    canvas.height = 64
-    const ctx = canvas.getContext('2d')!
-    ctx.fillStyle = 'rgba(6,14,22,0.88)'
-    ctx.fillRect(0, 0, 256, 64)
-    ctx.strokeStyle = color
-    ctx.lineWidth = 4
-    ctx.strokeRect(3, 3, 250, 58)
-    ctx.fillStyle = '#eaf3f8'
-    ctx.font = '600 28px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(text, 128, 34)
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthWrite: false }),
-    )
-    sprite.scale.set(0.62, 0.16, 1)
-    return sprite
+  private tagLabel(text: PlantTag, color: string) {
+    const root = document.createElement('div')
+    root.className = 'plant-tag'
+    root.style.borderColor = color
+    const name = document.createElement('span')
+    name.className = 'plant-tag-name'
+    name.textContent = text
+    const value = document.createElement('span')
+    value.className = 'plant-tag-value'
+    if (this.readings) value.textContent = readingText(text, this.readings)
+    root.append(name, value)
+    this.labelValues.set(text, value)
+    return new CSS2DObject(root)
   }
 
   private placeProxyHotspots(box: THREE.Box3) {
@@ -827,6 +864,7 @@ export class ChillerScene {
   }
 
   private onResize = () => {
+    if (this.disposed) return
     const canvas = this.renderer.domElement
     const w = canvas.clientWidth
     const h = canvas.clientHeight
@@ -834,17 +872,33 @@ export class ChillerScene {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h, false)
+    this.labelRenderer.setSize(w, h)
     this.needsRender = true
   }
 
   private onVisibility = () => {
-    if (!document.hidden) this.needsRender = true
+    if (document.hidden) {
+      this.labelRenderer.domElement.style.visibility = 'hidden'
+      return
+    }
+    this.labelRenderer.domElement.style.visibility = ''
+    this.needsRender = true
+  }
+
+  /** Labels track the canvas. Hidden with the tab, a display:none canvas, or an unmounted view. */
+  private labelsInView() {
+    const canvas = this.renderer.domElement
+    if (document.hidden || !canvas.isConnected) return false
+    return canvas.style.display !== 'none'
   }
 
   private tick = () => {
     if (this.disposed) return
     this.animId = requestAnimationFrame(this.tick)
-    if (document.hidden) return
+    if (document.hidden) {
+      this.labelRenderer.domElement.style.visibility = 'hidden'
+      return
+    }
 
     const t = this.clock.getElapsedTime()
     const animate = !this.lowPower || this.interacting || this.highlightRing.visible
@@ -877,6 +931,12 @@ export class ChillerScene {
 
     if (this.needsRender) {
       this.renderer.render(this.scene, this.camera)
+      if (this.labelsInView()) {
+        this.labelRenderer.domElement.style.visibility = ''
+        this.labelRenderer.render(this.scene, this.camera)
+      } else {
+        this.labelRenderer.domElement.style.visibility = 'hidden'
+      }
       if (this.lowPower && !this.interacting) this.needsRender = false
     }
   }
@@ -887,6 +947,8 @@ export class ChillerScene {
     window.removeEventListener('resize', this.onResize)
     document.removeEventListener('visibilitychange', this.onVisibility)
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointer)
+    this.labelRenderer.domElement.remove()
+    this.labelValues.clear()
     this.controls.dispose()
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh
@@ -898,5 +960,30 @@ export class ChillerScene {
       }
     })
     this.renderer.dispose()
+  }
+}
+
+function readingText(tag: PlantTag, readings: SceneReadings): string {
+  switch (tag) {
+    case 'CHWS':
+      return `${readings.chwsF}°F · ${readings.chwValvePct}%`
+    case 'CHWR':
+      return `${readings.chwrF}°F · ${readings.chwValvePct}%`
+    case 'CWS':
+      return `${readings.cwsF}°F · ${readings.cwValvePct}%`
+    case 'CWR':
+      return `${readings.cwrF}°F · ${readings.cwValvePct}%`
+    case 'GLS':
+      return `${readings.glyS}°F · ${readings.glycolValvePct}%`
+    case 'GLR':
+      return `${readings.glyR}°F · ${readings.glycolValvePct}%`
+    case 'TOWER · WATER':
+      return `fans ${readings.towerFanPct}%`
+    case 'GLYCOL DRY':
+      return `fans ${readings.dryFanPct}%`
+    default: {
+      const unknown: never = tag
+      return unknown
+    }
   }
 }

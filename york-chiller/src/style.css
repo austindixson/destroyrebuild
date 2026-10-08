@@ -961,6 +961,45 @@ body::after {
   color: var(--muted);
 }
 
+.plant-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.plant-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  box-sizing: border-box;
+  padding: 2px 6px 3px;
+  background: rgba(6, 14, 22, 0.88);
+  border: 1.5px solid #2ec4c4;
+  color: #eaf3f8;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: clamp(11px, 2.4vw, 13px);
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.plant-tag-value {
+  font-size: 0.85em;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.plant-tag-value:empty {
+  display: none;
+}
+
 .detail-pane {
   border-radius: var(--radius);
   border: 1px solid var(--line);

@@ -11,7 +11,7 @@ import {
   type ComponentId,
   type ViewId,
 } from './data/content'
-import type { ChillerScene } from './3d/chillerScene'
+import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantSim, rankFor, type PlantSnapshot } from './sim/plantSim'
 import { iconSvg } from './ui/icons'
@@ -644,6 +644,24 @@ export class App {
       note.textContent = warn + s.reason
     }
     this.scene?.setFans(s.dryFanPct, s.towerFanPct)
+    this.scene?.setReadings(this.sceneReadings())
+  }
+
+  private sceneReadings(): SceneReadings {
+    const s = this.snap
+    return {
+      chwsF: s.chwsF,
+      chwrF: s.chwrF,
+      cwsF: s.cwsF,
+      cwrF: s.cwrF,
+      glyS: s.glyS,
+      glyR: s.glyR,
+      chwValvePct: s.chwValvePct,
+      cwValvePct: s.cwValvePct,
+      glycolValvePct: s.glycolValvePct,
+      towerFanPct: s.towerFanPct,
+      dryFanPct: s.dryFanPct,
+    }
   }
 
   private async bindExplorer(el: Element) {
@@ -669,6 +687,7 @@ export class App {
       this.scene.setValve('cw', this.sim.cwValvePct)
       this.scene.setValve('gly', this.sim.glycolValvePct)
       this.scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
+      this.scene.setReadings(this.sceneReadings())
       if (this.selected) this.scene.select(this.selected)
       if (status) status.textContent = mod.isLowPowerClient() ? 'Light 3D' : 'Orbit · tap a part'
       boot?.remove()
