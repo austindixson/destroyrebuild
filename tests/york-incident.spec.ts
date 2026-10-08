@@ -21,6 +21,17 @@ function seededCases(seed: number) {
   return TROUBLE_CASES.map((item) => shuffleChoices(item.options, random))
 }
 
+/** One more shuffle after the five case presentations. Practice again uses that draw. */
+function practiceOrder(seed: number) {
+  const random = rngFrom(seed)
+  shuffleChoices(MATCH_PAIRS, random)
+  shuffleChoices(MATCH_PAIRS, random)
+  shuffleChoices(QUIZ, random)
+  for (const item of TROUBLE_CASES) shuffleChoices(item.options, random)
+  const first = TROUBLE_CASES[0]
+  return first ? shuffleChoices(first.options, random) : []
+}
+
 async function choiceTexts(card: Locator) {
   return card.locator('.choice').allTextContents()
 }
@@ -76,7 +87,19 @@ test('incident clock shuffles, grades the picked choice, and stops after 5 of 5'
       await expect(page.locator('.trouble-card .choice.correct')).toHaveCount(1)
     }
 
-    if (index < TROUBLE_CASES.length - 1) await page.locator('[data-tr-next]').click()
+    if (index < TROUBLE_CASES.length - 1) {
+      await page.locator('[data-tr-next]').click()
+      if (index === 0) {
+        const timer = page.locator('#incident-timer')
+        const started = Number(((await timer.textContent()) ?? '').replace(/s$/, ''))
+        expect(started).toBeGreaterThanOrEqual(43)
+        expect(started).toBeLessThanOrEqual(45)
+        await page.waitForTimeout(2200)
+        const later = Number(((await timer.textContent()) ?? '').replace(/s$/, ''))
+        expect(later).toBeLessThan(started)
+        expect(later).toBeGreaterThanOrEqual(40)
+      }
+    }
   }
 
   expect(gradedOffFirst).toBe(true)
@@ -86,6 +109,10 @@ test('incident clock shuffles, grades the picked choice, and stops after 5 of 5'
   const cleared = (await page.locator('[data-xp]').textContent()) ?? ''
 
   await page.getByRole('button', { name: 'Practice again' }).click()
+  const practiced = practiceOrder(SEED).map((option) => option.text)
+  const firstOrder = presented[0]?.map((option) => option.text) ?? []
+  expect(practiced).not.toEqual(firstOrder)
+  await expect(page.locator('.trouble-card .choice')).toHaveText(practiced)
   const first = TROUBLE_CASES[0]
   const correct = first?.options.find((option) => option.correct)?.text ?? ''
   await page.getByRole('button', { name: correct, exact: true }).click()

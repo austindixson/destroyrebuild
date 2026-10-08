@@ -52,6 +52,7 @@ test('a later presentation of the same incident can move the correct choice', ()
 
 test('the correct incident choice is not identifiable by length', () => {
   let notLongest = 0
+  let notShortest = 0
   for (const item of TROUBLE_CASES) {
     const correct = item.options.filter((option) => option.correct)
     assert.equal(correct.length, 1)
@@ -59,13 +60,30 @@ test('the correct incident choice is not identifiable by length', () => {
     const distractors = item.options.filter((option) => !option.correct).map((option) => option.text.length)
     assert.equal(distractors.length, 3)
     const longest = Math.max(...distractors)
+    const shortest = Math.min(...distractors)
     const ratio = correctText.length / longest
     assert.ok(ratio <= 1.2, `${item.id} correct/longest distractor = ${ratio.toFixed(2)}`)
     if (correctText.length < longest) notLongest += 1
+    if (correctText.length > shortest) notShortest += 1
     const body = INFO[troubleInfoId(item.id)].points.join('\n').toLowerCase()
     assert.equal(body.includes(correctText.toLowerCase()), false, item.id)
   }
   assert.ok(notLongest >= 2)
+  assert.ok(notShortest >= 2)
+})
+
+/** A second clause that says to skip, delay, or leave the real step gives the answer away. */
+const DISTRACTOR_SPOILER =
+  /\b(?:skip(?:s|ping)?|defer(?:s|red|ring)?|delay(?:s|ed|ing)?|leave|leaves|leaving|left)\b|before you|for later|no entry|unread/i
+
+test('incident distractors do not tell the player to skip the real step', () => {
+  for (const item of TROUBLE_CASES) {
+    for (const option of item.options) {
+      assert.match(option.text, /\.$/)
+      if (option.correct) continue
+      assert.equal(DISTRACTOR_SPOILER.test(option.text), false, `${item.id}: ${option.text}`)
+    }
+  }
 })
 
 test('a cleared incident set does not wrap on Next', () => {

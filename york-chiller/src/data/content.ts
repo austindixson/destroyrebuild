@@ -428,17 +428,17 @@ export const TROUBLE_CASES: TroubleCase[] = [
         feedback: 'That is correct. Use the cooling towers and the redundant chillers before the hall gets hot.',
       },
       {
-        text: 'Raise the LCHLT by 10°F as the first move, before you examine the towers. Skip the change ticket for this hot-weather alarm.',
+        text: 'Raise the LCHLT by 10°F as the first move, because a warmer chilled-water supply can ease the condenser pressure on a peak day.',
         correct: false,
         feedback: 'The SOP can allow a higher LCHLT later, as an emergency action. It is not the first diagnosis, and the move needs change control.',
       },
       {
-        text: 'Add refrigerant charge now, because the condenser pressure is high. Leave the cooling-tower fans and the CW pumps at the current output.',
+        text: 'Add refrigerant charge now, because high condenser pressure on a hot day often looks like a circuit that is short of charge.',
         correct: false,
         feedback: 'High head on a design wet-bulb day is a heat-rejection fault. Extra refrigerant can raise the head. Examine the towers and the CW path first.',
       },
       {
-        text: 'Decrease the CW pump speed to cut the condenser pressure. Delay the redundant chiller until the warm-aisle alarm clears.',
+        text: 'Decrease the CW pump speed to cut the condenser pressure, because a slower pump seems to unload the tower.',
         correct: false,
         feedback: 'Less CW flow can raise the condenser pressure. On a peak day, check the towers, then stage the redundant chiller per the SOP.',
       },
@@ -460,17 +460,17 @@ export const TROUBLE_CASES: TroubleCase[] = [
         feedback: 'That is correct. An electrical event plus a landing is a facilities task, not noise.',
       },
       {
-        text: 'Clear the MBC landing counter now, and leave the power event out of the ticket log.',
+        text: 'Clear the MBC landing counter now, because a stable hall means the generator test caused a harmless contact.',
         correct: false,
         feedback: 'If you erase the landing count, you hide the failure mode. Record the count, then ask service to examine the power and the UPS.',
       },
       {
-        text: 'Stop the chiller until the next service window. Treat the stable hall as proof that the landing needs no ticket.',
+        text: 'Stop the chiller now, because a stable hall after the generator test proves the landing is only a test result.',
         correct: false,
         feedback: 'A stop with no spare plan can put the hall at risk. If the chiller is stable, keep it in operation and record the power event.',
       },
       {
-        text: 'Mark the landing as a normal result of the generator test. Make no entry in the ticket log.',
+        text: 'Mark the landing as a normal result of the generator test, because the exercise explains the time of the contact.',
         correct: false,
         feedback: 'A landing is an abnormal event. A generator test can explain the time, but it does not close the record.',
       },
@@ -483,22 +483,22 @@ export const TROUBLE_CASES: TroubleCase[] = [
     symptoms: ['Hot-aisle alarms are active', 'The lead YMC² is at a low % FLA and near the setpoint', 'Some CRAH valves are fully open'],
     options: [
       {
-        text: 'Examine the CHW pumps, the header valves, the differential pressure, and the CRAH and CDU operation',
+        text: 'Examine the CHW pumps, the header valves, the differential pressure, and the CRAH and CDU operation.',
         correct: true,
         feedback: 'The distribution failed. The chiller did not receive the load.',
       },
       {
-        text: 'Command the lead compressor to 100% speed because the aisle is hot. Leave the CHW pumps and header valves for later.',
+        text: 'Command the lead compressor to 100% speed, because a hot aisle looks like a machine that is short of capacity.',
         correct: false,
         feedback: 'If the LCHLT already matches the setpoint, more compressor speed does not repair a hall loop with low flow.',
       },
       {
-        text: 'Stop the redundant chillers so the lead machine receives the CHW flow. Keep the CRAH valves open.',
+        text: 'Stop the redundant chillers so the lead machine receives all CHW flow, because one machine looks stronger alone.',
         correct: false,
         feedback: 'Do not remove redundancy during an event. A spare chiller is not the cause of a hot aisle with a light lead machine.',
       },
       {
-        text: 'Increase the CRAH fan speed in the hot aisle. Leave the CHW pump status and the header pressure unchecked.',
+        text: 'Increase the CRAH fan speed in the hot aisle, because more air seems able to pull the aisle temperature down.',
         correct: false,
         feedback: 'A faster CRAH fan does not create CHW flow. Examine the pumps, the header valves, and the differential pressure.',
       },
@@ -516,17 +516,17 @@ export const TROUBLE_CASES: TroubleCase[] = [
         feedback: 'The inhibit text is the list. Do not use a shortcut.',
       },
       {
-        text: 'Force a start from the BMS enable command before you read the inhibit text on OptiView. Tell the NOC only after that standby machine is online.',
+        text: 'Force a start from the BMS enable command, because that command looks like the remote proof that clears a standby inhibit on the OptiView panel.',
         correct: false,
         feedback: 'The inhibit text is the list. A BMS enable does not clear flow, a remote stop, or a local interlock. Tell the NOC while you work.',
       },
       {
-        text: 'Reset the OptiView panel and press Start again before you read the inhibit. Leave that text unread until the second attempt fails.',
+        text: 'Reset the OptiView panel and press Start again, because a fresh panel often clears a start inhibit that looks like a stale message.',
         correct: false,
         feedback: 'A panel reset does not name the interlock. Read the inhibit, then clear the proof that the text names.',
       },
       {
-        text: 'Switch the lead chiller back to Start before you clear the standby inhibit. Ask the NOC to wait while the tripped unit retries.',
+        text: 'Switch the lead chiller back to Start, because a second start on the tripped unit can look faster than work on the standby inhibit.',
         correct: false,
         feedback: 'The lead unit already tripped. A retry on that unit does not clear the standby inhibit. Read the inhibit and tell the NOC.',
       },
@@ -548,17 +548,17 @@ export const TROUBLE_CASES: TroubleCase[] = [
         feedback: 'Stop the disagreement first. Then repair the integration. Do not change both setpoints again and again.',
       },
       {
-        text: 'Change the OptiView setpoint again so it matches the latest BMS value. Repeat that change each time the water temperature moves.',
+        text: 'Change the OptiView setpoint again to the latest BMS value, because the newest write looks like the true chilled-water target.',
         correct: false,
         feedback: 'Another setpoint change keeps the fight. Stop the disagreement first. Then decide which system writes the setpoint.',
       },
       {
-        text: 'Set a new setpoint on the BMS and a different setpoint on OptiView. Use both writes together until the oscillation stops.',
+        text: 'Set a new setpoint on the BMS and a different one on OptiView, because both writes seem stronger.',
         correct: false,
         feedback: 'Two writers on one setpoint cause the oscillation. Choose one owner. Do not move both values again.',
       },
       {
-        text: 'Hold the CRAH valves at the current position. Leave the BMS setpoint and the OptiView setpoint in conflict while you watch the aisle.',
+        text: 'Hold the CRAH valves at the current position, because a fixed valve looks able to calm the aisle.',
         correct: false,
         feedback: 'A fixed valve position does not end a setpoint fight. The CRAH valves hunt because the water target moves. Settle one control mode first.',
       },
