@@ -231,7 +231,7 @@ export class ChillerScene {
     const loader = new GLTFLoader()
     return new Promise<void>((resolve) => {
       loader.load(
-        '/models/ymc2.glb',
+        `${import.meta.env.BASE_URL}models/ymc2.glb`,
         (gltf) => {
           this.mountModel(gltf.scene)
           resolve()

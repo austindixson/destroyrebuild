@@ -28,7 +28,7 @@ export class Hud {
       <a class="skip" href="#main">Skip to content</a>
       <header class="site-header">
         ${link('/', '<span class="brand-symbol" aria-hidden="true">d/r<span>↗</span></span><span class="brand-name">DESTROY<br>REBUILD</span><span class="sr-only">Destroy / Rebuild home</span>', 'brand')}
-        <nav aria-label="Main navigation">${link('/portfolio', 'Portfolio')}${link('/blog', 'Blog')}${link('/tutorials', 'Tutorials')}<a href="https://github.com/austindixson">GitHub ↗</a></nav>
+        <nav aria-label="Main navigation">${link('/portfolio', 'Portfolio')}${link('/blog', 'Blog')}${link('/tutorials', 'Tutorials')}<a href="/york-chiller/">York Chiller</a><a href="https://github.com/austindixson">GitHub ↗</a></nav>
         <span class="header-note"><i></i> INDEPENDENT BY DESIGN</span>
       </header>
       <main id="main" tabindex="-1"></main>

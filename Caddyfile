@@ -19,6 +19,39 @@
 		respond 200
 	}
 
+	# Exact path only. /york-chiller/* is the trainer app.
+	handle /york-chiller {
+		redir * /york-chiller/ 308
+	}
+
+	handle /york-chiller/* {
+		root * dist
+
+		# Vite fingerprints JS/CSS under assets/. The GLB and icon are unhashed.
+		@hashed path /york-chiller/assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# One path segment: /york-chiller/*.glb does not match models/ymc2.glb.
+		@glb path /york-chiller/models/*.glb
+		header @glb {
+			Content-Type "model/gltf-binary"
+			Cache-Control "public, max-age=86400"
+			defer
+		}
+
+		@icon path /york-chiller/icon.svg
+		header @icon Cache-Control "public, max-age=86400"
+
+		# HTML entry and client-side fallbacks should revalidate.
+		@document not path /york-chiller/assets/* /york-chiller/models/* /york-chiller/icon.svg
+		header @document Cache-Control "no-cache"
+
+		# gzip text, JS, CSS, and SVG. GLB stays uncompressed (binary, unhashed).
+		encode gzip
+		try_files {path} /york-chiller/index.html
+		file_server
+	}
+
 	handle {
 		root * dist
 		encode gzip
