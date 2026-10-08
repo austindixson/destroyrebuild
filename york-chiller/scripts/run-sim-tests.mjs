@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { build } from 'esbuild'
 
-const entries = ['tests/phase0.test.ts', 'tests/valveAlert.test.ts']
+const entries = [
+  'tests/phase0.test.ts',
+  'tests/snapshot.test.ts',
+  'tests/gates.test.ts',
+  'tests/valveAlert.test.ts',
+]
 const outdir = mkdtempSync(path.join(tmpdir(), 'york-sim-'))
 let status = 0
 

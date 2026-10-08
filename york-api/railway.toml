@@ -1,0 +1,10 @@
+# Second Railway service. Set the service root directory to york-api/.
+# Do not add a start script to the repository root package.json.
+# The static site keeps Railpack/Caddy from the root railway.toml.
+
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/york/health"

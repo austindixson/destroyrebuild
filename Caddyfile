@@ -19,6 +19,11 @@
 		respond 200
 	}
 
+	# York trainer chat. Same origin. The API is a second Railway service.
+	handle /api/york/* {
+		reverse_proxy {$YORK_API_HOST:127.0.0.1:8787}
+	}
+
 	# Exact path only. /york-chiller/* is the trainer app.
 	handle /york-chiller {
 		redir * /york-chiller/ 308

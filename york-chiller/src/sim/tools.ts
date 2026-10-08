@@ -286,10 +286,14 @@ const TOOLS: ToolDef[] = [
   },
 ]
 
+export function yorkToolCatalog(): YorkToolInfo[] {
+  return TOOLS.map(({ name, gate, description, parameters }) => ({ name, gate, description, parameters }))
+}
+
 export function createYorkTools(controller: PlantController): YorkToolbox {
   const byName = new Map(TOOLS.map((tool) => [tool.name, tool]))
   return {
-    list: () => TOOLS.map(({ name, gate, description, parameters }) => ({ name, gate, description, parameters })),
+    list: () => yorkToolCatalog(),
     call: (name, args = {}, actor = 'user') => {
       const tool = byName.get(name)
       if (!tool) return { ok: false, message: 'This trainer has no tool with that name.', snapshot: controller.snapshot }

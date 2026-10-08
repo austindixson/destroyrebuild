@@ -37,6 +37,7 @@ const CARD_SELECTOR = [
   '.canvas-hud',
   '.nav-note',
   '.brand',
+  '.chat-bubble',
   'label',
 ].join(',')
 

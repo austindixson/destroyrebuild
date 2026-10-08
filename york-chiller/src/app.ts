@@ -42,6 +42,8 @@ import {
   type ValveAlertState,
 } from './sim/valveAlert'
 import { createYorkTools } from './sim/tools'
+import { mountYorkChat } from './chat/panel'
+import type { ScreenInput } from './chat/snapshot'
 import { isTroubleCaseId, troubleIncident } from './sim/troubleMap'
 import { iconSvg } from './ui/icons'
 import { linkGlossary } from './ui/glossary'
@@ -224,7 +226,73 @@ export class App {
       window.__york = { controller: this.controller, tools: createYorkTools(this.controller) }
     }
     this.render()
+    mountYorkChat(document.body, {
+      screen: () => this.screenInput(),
+      callTool: (name, args) => {
+        const result = createYorkTools(this.controller).call(name, args, 'ai')
+        this.snap = this.controller.snapshot
+        this.onPlantChange()
+        return result
+      },
+      undo: () => {
+        this.controller.undo('ai')
+        this.snap = this.controller.snapshot
+        this.onPlantChange()
+      },
+    })
     this.loop()
+  }
+
+  private screenInput(): ScreenInput {
+    const pct = masteryPercent(this.progress)
+    const rank = rankFor(pct, this.progress.xp)
+    const incident = this.controller.incident
+    const selected = COMPONENTS.find((item) => item.id === this.selected)
+    const trouble = TROUBLE_CASES[this.troubleIndex]
+    const quizDone = this.quizIndex >= this.quizOrder.length
+    return {
+      view: this.view,
+      snap: this.snap,
+      ch01Running: this.controller.running,
+      ch02Running: this.controller.unitRunning('CH-02'),
+      paused: this.controller.paused,
+      timeScale: this.controller.timeScale,
+      itLoadTargetMw: this.controller.itLoadCenterMw,
+      incident,
+      chaosLabel: incident ? CHAOS_FAULTS[incident].label : null,
+      optiLog: this.controller.optiLogLines.map((line) => line.text),
+      selectedId: this.selected,
+      selectedName: selected?.name ?? null,
+      optiTab: this.optiTab,
+      plantStep: this.plantIndex,
+      plantSteps: PLANT_NODES.length,
+      plantLabel: PLANT_NODES[this.plantIndex]?.label ?? '',
+      cycleStep: this.cycleIndex,
+      cycleSteps: CYCLE_NODES.length,
+      cycleLabel: CYCLE_NODES[this.cycleIndex]?.label ?? '',
+      opMode: this.opMode,
+      opIndex: this.opIndex,
+      troubleSeconds: this.troubleSeconds,
+      troubleDone: this.troubleDoneView,
+      troubleTitle: trouble?.title ?? '',
+      troubleSolved: this.progress.troubleSolved.length,
+      troubleTotal: TROUBLE_CASES.length,
+      troublePicked: this.troublePicked !== null,
+      quizIndex: this.quizIndex,
+      quizTotal: this.quizOrder.length,
+      quizScore: this.quizScore,
+      quizDone,
+      matchScore: this.matchScore,
+      matchBest: this.progress.matchBest,
+      maintChecked: this.maintChecks.size,
+      maintTotal: MAINT_ITEMS.length,
+      explored: this.progress.explored.length,
+      rankTitle: rank.title,
+      rankTier: rank.tier,
+      masteryPct: pct,
+      xp: this.progress.xp,
+      wallClock: new Date().toLocaleTimeString(),
+    }
   }
 
   private loop = () => {
