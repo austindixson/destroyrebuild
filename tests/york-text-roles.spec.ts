@@ -135,3 +135,58 @@ test('text roles stay distinct on the board, a control card, an alert, and a qui
   await expect(page.locator('.pt-row span').first()).toHaveCSS('text-transform', 'uppercase')
   await expect(page.locator('.pt-row b').first()).toHaveCSS('color', INK.value)
 })
+
+const STATUS = {
+  mint: 'rgb(61, 255, 168)',
+  amber: 'rgb(255, 176, 32)',
+  rose: 'rgb(255, 93, 122)',
+  value: 'rgb(103, 243, 230)',
+  jargon: 'rgb(210, 196, 255)',
+}
+
+test('status color beats role ink on KPIs, pipe delta P, and chaos status', async ({ page }) => {
+  test.setTimeout(90_000)
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/york-chiller/')
+  await expect(page.locator('#chaos-status')).toHaveText('No fault is active.')
+  await expect(page.locator('#chaos-status')).toHaveCSS('color', STATUS.mint)
+  await expect(page.locator('#chaos-status')).not.toHaveCSS('color', STATUS.value)
+
+  const okValue = page.locator('.kpi.ok .val').first()
+  await expect(okValue).toBeVisible()
+  await expect(okValue).toHaveCSS('color', STATUS.mint)
+  const okJargon = okValue.locator('button.jargon')
+  if ((await okJargon.count()) > 0) await expect(okJargon.first()).toHaveCSS('color', STATUS.mint)
+
+  await page.locator('[data-incident="high-head"]').click()
+  const fault = page.locator('#chaos-status')
+  await expect(fault).toHaveClass(/is-fault/)
+  await expect(fault).toHaveCSS('color', STATUS.amber)
+  await expect(fault).not.toHaveCSS('color', STATUS.value)
+
+  const head = page.locator('[data-k="head"]')
+  await expect(head.locator('xpath=..')).toHaveClass(/warn|bad/)
+  const headColor = await head.evaluate((el) => getComputedStyle(el).color)
+  expect([STATUS.amber, STATUS.rose]).toContain(headColor)
+  expect(headColor).not.toBe(STATUS.value)
+  const headTerm = head.locator('button.jargon')
+  await expect(headTerm).toHaveCount(1)
+  await expect(headTerm).toHaveCSS('color', headColor)
+  await expect(headTerm).not.toHaveCSS('color', STATUS.jargon)
+
+  await page.locator('.nav [data-nav="explorer"]').click()
+  const chw = page.locator('#chw-dp-read')
+  await expect(chw).toContainText(/ΔP \d/)
+  await expect(chw).not.toHaveClass(/bad/)
+  await expect(chw).toHaveCSS('color', STATUS.mint)
+  await expect(chw).not.toHaveCSS('color', STATUS.value)
+
+  await page.locator('.nav [data-nav="home"]').click()
+  await page.locator('[data-incident="hall-hot"]').click()
+  await page.locator('.nav [data-nav="explorer"]').click()
+  await expect(chw).toContainText(/ΔP \d/)
+  await expect(chw).toHaveClass(/bad/)
+  await expect(chw).toHaveCSS('color', STATUS.rose)
+  await expect(chw).not.toHaveCSS('color', STATUS.value)
+  await expect(chw).not.toHaveCSS('color', STATUS.mint)
+})

@@ -1203,8 +1203,8 @@ export class App {
         <div class="optiview-body">
           <div class="opti-screen" id="opti-screen">${this.optiScreenHtml()}</div>
           <div class="opti-actions">
-            <label style="font-size:.85rem;color:#86efac" ${infoAttr('slider-lchlt')}>LCHLT setpoint
-              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" style="width:100%;margin-top:6px"/>
+            <label class="opti-set-label" ${infoAttr('slider-lchlt')}>LCHLT setpoint
+              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" />
             </label>
             <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.ch01StartHeld() ? 'disabled' : ''}>Start</button>
             <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.controller.running ? 'disabled' : ''}>Soft stop</button>
@@ -1354,7 +1354,7 @@ COND ══╝     CHW → CRAH → HALL</div>
               const locked = this.matchLocked.has(p.id)
               return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${infoAttr('mission-match')} ${locked ? 'disabled' : ''}>
                 <span class="card-icon" style="color:${COMPONENTS.find((c) => c.id === p.id)?.color}">${iconSvg(p.icon, 28)}</span>
-                <span style="color:var(--muted);font-family:var(--mono);font-size:.78rem">${locked ? 'Matched' : 'Select'}</span>
+                <span class="match-cue">${locked ? 'Matched' : 'Select'}</span>
               </button>`
             })
             .join('')}

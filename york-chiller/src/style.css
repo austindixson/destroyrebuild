@@ -807,7 +807,7 @@ body::after {
 }
 
 .cycle-svg .node.active circle {
-  fill: rgba(46, 230, 214, 0.2);
+  fill: #164852;
   stroke: var(--cyan);
   filter: drop-shadow(0 0 8px rgba(46, 230, 214, 0.55));
 }
@@ -2023,7 +2023,7 @@ label.info-host,
   }
 }
 
-/* Text roles. Color, weight, and tracking come from here. Size stays on the component. */
+/* Text roles. These rules set ink, weight, tracking, and the sizes that separate roles. */
 .york-title,
 .brand h1,
 .view-head h2,
@@ -2057,8 +2057,7 @@ label.info-host,
 .plant-node .n,
 .mission .status,
 .detail-pane .tag,
-.chip,
-.plant-tag-name {
+.chip {
   color: var(--york-text-label);
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -2100,8 +2099,6 @@ label.info-host,
 .kpi .val,
 .gauge .value,
 .pt-row b,
-.plant-tag-value,
-.chaos-status,
 .mimic-node p,
 .mastery-top,
 .info-now,
@@ -2210,11 +2207,6 @@ label.info-host,
 button.jargon {
   color: var(--york-text-jargon);
   font-weight: 600;
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: var(--cyan);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
 }
 
 button.jargon:hover {
@@ -2249,6 +2241,11 @@ button.jargon:hover {
   font-weight: 500;
 }
 
+/* The active disc is #164852. Label ink falls under 4.5:1 once the 11px digit is antialiased. */
+.cycle-svg .node.active .sub {
+  fill: var(--york-text-title);
+}
+
 .tip strong {
   color: var(--york-text-prompt);
   font-weight: 700;
@@ -2256,12 +2253,63 @@ button.jargon:hover {
 }
 
 .plant-tag-name {
-  font-size: 0.85em;
-  letter-spacing: 0.02em;
+  color: var(--york-text-label);
 }
 
 .plant-tag-value {
-  font-size: 1em;
+  color: var(--york-text-value);
+}
+
+/* Status color beats role ink, including a glossary link inside the reading. */
+.kpi.ok .val {
+  color: var(--mint);
+}
+
+.kpi.warn .val {
+  color: var(--amber);
+}
+
+.kpi.bad .val {
+  color: var(--rose);
+}
+
+.pipe-card p.dp-read {
+  color: var(--mint);
+}
+
+.pipe-card p.dp-read.bad {
+  color: var(--rose);
+}
+
+.chaos-status:not(.is-fault) {
+  color: var(--mint);
+}
+
+.chaos-status.is-fault {
+  color: var(--amber);
+}
+
+.kpi .val button.jargon,
+.kpi .val .jargon,
+.pipe-card p.dp-read .jargon,
+.chaos-status .jargon {
+  color: inherit;
+}
+
+.opti-set-label {
+  font-size: 0.85rem;
+  color: var(--york-text-label);
+}
+
+.opti-set-label input {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.match-cue {
+  color: var(--york-text-label);
+  font-family: var(--mono);
+  font-size: 0.78rem;
 }
 
 .maint-item .task {
