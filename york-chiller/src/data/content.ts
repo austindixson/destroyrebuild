@@ -665,9 +665,208 @@ export type InfoLive =
   | 'optiAct'
   | 'optiRla'
 
+export interface GlossaryEntry {
+  /** What the popover titles and what the button calls it. */
+  term: string
+  /** Whole-token, case-insensitive. Longer aliases are tried first. */
+  aliases: readonly string[]
+  /** One or two plain sentences. */
+  definition: string
+  /** One line on why this plant cares. Omit when the definition already says it. */
+  why?: string
+}
+
+/**
+ * The only copy for tap-to-define jargon. Info panels that teach the same
+ * term reuse these strings instead of restating them.
+ */
+export const GLOSSARY = {
+  'it-load': {
+    term: 'IT load',
+    aliases: ['IT loads', 'IT load'],
+    definition:
+      'IT load is the heat servers reject into the hall, into air or into liquid. Demand follows compute and can spike during batch or AI jobs.',
+    why: 'The chiller and the towers have to reject that heat, not a nameplate that assumes a flat day.',
+  },
+  noc: {
+    term: 'NOC',
+    aliases: ['NOC'],
+    definition:
+      'The NOC, the network operations center, owns the incident clock when cooling threatens IT. Operators work the plant and say what they see.',
+    why: 'Say what changed and what you are doing, and do not silence the desk hoping an inhibit clears itself.',
+  },
+  bms: {
+    term: 'BMS',
+    aliases: ['BMS'],
+    definition:
+      'The BMS, the building management system, monitors and sequences the plant, and it may write setpoints and enables.',
+    why: 'If the BMS and OptiView disagree, trust the instruments, then reconcile which system is master.',
+  },
+  crah: {
+    term: 'CRAH',
+    aliases: ['CRAHs', 'CRAH'],
+    definition: 'A CRAH, a computer-room air handler, moves IT heat from hall air into chilled water.',
+    why: 'Valve position and supply versus return air show whether that water is keeping up.',
+  },
+  cdu: {
+    term: 'CDU',
+    aliases: ['CDUs', 'CDU'],
+    definition: 'A CDU, a coolant distribution unit, moves heat from a liquid-cooled rack loop into chilled water.',
+    why: 'It is a hall terminal, like a CRAH, so a hot hall can be a CDU problem even when the chiller looks lightly loaded.',
+  },
+  chw: {
+    term: 'CHW',
+    aliases: ['chilled-water', 'chilled water', 'CHW'],
+    definition: 'CHW is chilled water, the loop that carries hall heat back to the chillers.',
+    why: 'Pumps, headers, and valves decide whether it arrives, and this trainer flags differential pressure below 12 psi or above 24 psi.',
+  },
+  chws: {
+    term: 'CHWS',
+    aliases: ['CHWS'],
+    definition: 'CHWS is chilled-water supply, the water the chiller sends toward the hall.',
+    why: 'On the plant-room tag it is the leaving temperature, shown with the loop valve percent.',
+  },
+  chwr: {
+    term: 'CHWR',
+    aliases: ['CHWR'],
+    definition: 'CHWR is chilled-water return, warmer water coming back from the hall to the evaporator.',
+    why: 'The dry cooler can free-cool only when outdoor air is colder than this return.',
+  },
+  cw: {
+    term: 'CW',
+    aliases: ['condenser-water', 'condenser water', 'CW'],
+    definition: 'CW is condenser water, the loop that carries compressor heat from the condenser to the cooling tower.',
+    why: 'Low flow and a hot wet bulb both raise head, and this trainer flags differential pressure below 8 psi or above 18 psi.',
+  },
+  cws: {
+    term: 'CWS',
+    aliases: ['CWS'],
+    definition: 'CWS is condenser-water supply, water from the cooling tower into the condenser.',
+    why: 'It is the cooler side of the pair, and low flow here shows up as higher head.',
+  },
+  cwr: {
+    term: 'CWR',
+    aliases: ['CWR'],
+    definition: 'CWR is condenser-water return, warmer water leaving the condenser back toward the cooling tower.',
+    why: 'The tower has to reject the heat this water is carrying.',
+  },
+  mop: {
+    term: 'MOP',
+    aliases: ['MOPs', 'MOP'],
+    definition:
+      'A MOP, a method of procedure, is the approved steps, window, and change ticket for work on a production chiller.',
+    why: 'Confirm the procedure and that the NOC knows before you touch the machine.',
+  },
+  ats: {
+    term: 'ATS',
+    aliases: ['ATS'],
+    definition: 'An ATS, an automatic transfer switch, moves a feeder between sources such as utility and generator.',
+    why: 'That transfer can land the magnetic bearings even if the hall never notices, and the landing still gets a ticket.',
+  },
+  'n-plus-1': {
+    term: 'N+1',
+    aliases: ['N+1'],
+    definition: 'N+1 means one extra unit of capacity beyond what the load needs.',
+    why: 'The spare counts only if it is online and able to carry load before you remove a machine.',
+  },
+  optiview: {
+    term: 'OptiView',
+    aliases: ['OptiView™', 'OptiView'],
+    definition:
+      'OptiView is the local operator panel on this chiller. It holds setpoints such as leaving chilled-liquid temperature and usually reports to the BMS.',
+    why: 'Know which setpoints are local and which the BMS writes, and if they disagree, trust the instruments.',
+  },
+  vsd: {
+    term: 'VSD',
+    aliases: ['VSD'],
+    definition:
+      'A VSD, a variable-speed drive, changes compressor speed to follow IT load. On this machine the trainer calls that drive OptiSpeed.',
+    why: 'A generator or UPS feed can make a drive problem look like a compressor problem.',
+  },
+  mbc: {
+    term: 'MBC',
+    aliases: ['MBC'],
+    definition: 'The MBC, the magnetic bearing controller, levitates the rotor and reports vibration and landings.',
+    why: 'Touchdown bearings engage when rotation stops or magnetic support is lost, including a power event.',
+  },
+  'delta-t': {
+    term: 'ΔT',
+    aliases: ['delta-T', 'delta T', 'ΔT'],
+    definition:
+      'ΔT is a temperature difference. On the hall side it is how much the chilled water warms as it picks up IT heat.',
+    why: 'Read it with valve position to see whether the plant is keeping up.',
+  },
+  setpoint: {
+    term: 'Setpoint',
+    aliases: ['setpoints', 'setpoint'],
+    definition:
+      'A setpoint is the target an operator or the BMS tells the machine to hold, such as leaving chilled-liquid temperature.',
+    why: 'Changing it affects hall supply air, so it belongs in change control.',
+  },
+  glycol: {
+    term: 'Glycol',
+    aliases: ['glycol'],
+    definition: 'Glycol is the fluid in the loop between the plant and the dry cooler, separate from tower water.',
+    why: 'That loop can take load only when outdoor air is colder than the chilled-water return.',
+  },
+  'dry-cooler': {
+    term: 'Dry cooler',
+    aliases: ['dry coolers', 'dry-cooler', 'dry cooler'],
+    definition: 'A dry cooler rejects glycol heat to outdoor air. It does not use cooling-tower water.',
+    why: 'It can free-cool only in cold weather, and hot weather puts the tower on the critical path.',
+  },
+  'cooling-tower': {
+    term: 'Cooling tower',
+    aliases: ['cooling towers', 'cooling tower', 'towers', 'tower'],
+    definition:
+      'A cooling tower rejects condenser-water heat to the outdoors, and its limit follows wet bulb rather than dry bulb alone.',
+    why: 'Peak wet-bulb weather is when this kind of plant usually runs out of heat rejection first.',
+  },
+  lift: {
+    term: 'Lift',
+    aliases: ['lift'],
+    definition: 'Lift is the pressure difference the compressor works against, from the evaporator up to the condenser.',
+    why: 'A colder leaving-water target or hotter condenser water means more lift, which this trainer shows as rising head.',
+  },
+  surge: {
+    term: 'Surge',
+    aliases: ['surge'],
+    definition: 'Surge is unstable flow through a centrifugal compressor, usually when load is low or lift is high.',
+    why: 'The machine should protect itself, and an operator does not defeat that protection to push through.',
+  },
+  psig: {
+    term: 'psig',
+    aliases: ['psig'],
+    definition:
+      'psig means pounds per square inch gauge, pressure above the surrounding air. Evaporator and condenser pressures on this board are in psig.',
+    why: 'The head tile warns when condenser pressure is above 115 psig.',
+  },
+  mw: {
+    term: 'MW',
+    aliases: ['MW'],
+    definition: 'MW means megawatts. Here it is the IT heat the plant has to remove, not the chiller’s electrical draw.',
+    why: 'Read the IT-load tile before you decide whether the chiller’s percent looks high or low.',
+  },
+  ups: {
+    term: 'UPS',
+    aliases: ['UPS'],
+    definition:
+      'A UPS, an uninterruptible power supply, carries critical load through a short outage. Chiller controls and bearing hold-up sit on that kind of feed.',
+    why: 'A generator or UPS event can look like a compressor fault and can add a bearing landing.',
+  },
+} as const satisfies Record<string, GlossaryEntry>
+
+export type GlossaryId = keyof typeof GLOSSARY
+
+function gloss(id: GlossaryId): { definition: string; why: string } {
+  const entry = GLOSSARY[id]
+  if (!entry.why) throw new Error(`Glossary entry ${id} is missing why`)
+  return { definition: entry.definition, why: entry.why }
+}
+
 export interface InfoEntry {
   title: string
-  /** Three to five short teaching points. */
+  /** Three to five short teaching points. Shared jargon uses GLOSSARY strings. */
   points: readonly string[]
   live?: readonly InfoLive[]
 }
@@ -703,9 +902,8 @@ export const INFO = {
   'kpi-it': point(
     'IT load',
     [
-      'IT load is the heat the servers reject into air or liquid.',
-      'Cooling demand follows compute and can spike during batch or AI jobs.',
-      'The chiller and the towers have to reject that heat, not a nameplate that assumes a flat day.',
+      gloss('it-load').definition,
+      gloss('it-load').why,
       'If load jumps and head or hall temperature follows, tell the NOC what the plant is doing.',
     ],
     ['itLoad'],
@@ -714,7 +912,8 @@ export const INFO = {
     'Condenser head',
     [
       'Head here is condenser pressure on CH-01. High head means the machine is struggling to reject heat.',
-      'This board warns above 115 psig.',
+      gloss('psig').definition,
+      gloss('psig').why,
       'Peak wet-bulb weather, low condenser-water flow, and fouled towers are the usual causes.',
       'Do not defeat safeties to push through. Use towers, flow, and redundant chillers per the site SOP.',
     ],
@@ -743,9 +942,8 @@ export const INFO = {
   'mimic-it': point(
     'IT load',
     [
-      'This block is the heat source. Servers reject heat to air or to liquid.',
-      'The number is compute heat in megawatts from the live sim.',
-      'Spikes are normal in batch and AI work. The plant has to follow them.',
+      gloss('it-load').definition,
+      'The number on this block is that heat, in megawatts, from the live sim.',
       'Use the knowledge gate if you need the operating rules behind the number.',
     ],
     ['itLoad'],
@@ -753,9 +951,9 @@ export const INFO = {
   'mimic-crah': point(
     'CRAH / CDU',
     [
-      'Hall units move IT heat into the chilled-water loop.',
-      'Supply air and return air are the pair to watch. A wide gap with valves already open means the water is not cold enough or not arriving.',
-      'Valve position and the water-side ΔT tell you whether the plant is keeping up.',
+      gloss('crah').definition,
+      gloss('cdu').definition,
+      gloss('delta-t').why,
       'Do not reboot racks to fix a cooling-distribution problem.',
     ],
     ['hallSupply', 'hallReturn'],
@@ -763,9 +961,8 @@ export const INFO = {
   'mimic-chw': point(
     'CHW loop',
     [
-      'Pumps and headers carry chilled water between the chillers and the white space.',
-      'Differential pressure is the delivery signal. The field card shows the current target next to ΔP.',
-      'This trainer marks CHW ΔP bad below 12 psi or above 24 psi.',
+      gloss('chw').definition,
+      gloss('chw').why,
       'Redundancy lives in this loop. A happy chiller does not prove the hall is fed.',
     ],
     ['chwDp', 'chwValve'],
@@ -783,20 +980,20 @@ export const INFO = {
   'mimic-tower': point(
     'Tower and dry cooler',
     [
-      'The tower rejects condenser heat. The dry cooler can take glycol load only when outdoor air is colder than the chilled-water return.',
+      gloss('cooling-tower').definition,
+      gloss('dry-cooler').definition,
+      gloss('glycol').why,
       'Wet bulb, dry bulb, and the glycol free-cool percent are the three numbers on this block.',
-      'Heat rejection is the usual summer limit. Watch it before IT load peaks.',
-      'The refrigerant-loop view is the path of heat inside the machine. This block is where that heat leaves the building.',
     ],
     ['wetBulb', 'outdoor', 'freeCool', 'towerFan', 'dryFan'],
   ),
   'mimic-noc': point(
     'NOC / BMS',
     [
-      'Operators work the plant. The NOC owns the incident clock when cooling threatens IT.',
+      gloss('noc').definition,
+      gloss('bms').definition,
       'A green watch desk means no active sim alarm. Escalated means say what you see and what you are doing.',
-      'If the BMS and the local panel disagree, trust the instruments, then reconcile the points.',
-      'Do not silence the desk and hope an inhibit clears itself.',
+      gloss('bms').why,
     ],
     ['alarm'],
   ),
@@ -923,9 +1120,8 @@ export const INFO = {
   'chaos-landing': point(
     'ATS landing',
     [
-      'This inject records a magnetic-bearing landing, the kind of count that moves after an ATS transfer or generator test.',
-      'The hall can look stable while the landing counter has changed. That is still a follow-up.',
-      'Document it and have service look at power and UPS health. Do not clear the counter to keep the dashboard green.',
+      gloss('ats').definition,
+      gloss('ats').why,
       'The MBC screen on OptiView shows the landing count for this drill.',
     ],
     ['mbc', 'landings'],
@@ -952,8 +1148,8 @@ export const INFO = {
   'chain-it': point(
     'IT load',
     [
-      'Servers reject heat to air or liquid. That heat is the load the plant must remove.',
-      'Demand follows compute and is often spiky.',
+      gloss('it-load').definition,
+      gloss('it-load').why,
       'Name the load before you talk about chiller percent. A small load should not need every machine at full head.',
     ],
     ['itLoad'],
@@ -961,18 +1157,17 @@ export const INFO = {
   'chain-crah': point(
     'CRAH / CDU',
     [
-      'Hall units transfer IT heat into the chilled-water loop.',
-      'Valve position and the temperature rise across the coil tell you if the water is keeping up.',
-      'Wide-open valves and a rising hall are a reason to look at CHW flow, not just compressor speed.',
+      gloss('crah').definition,
+      gloss('cdu').definition,
+      gloss('crah').why,
     ],
     ['hallSupply', 'hallReturn'],
   ),
   'chain-chw': point(
     'CHW loop',
     [
-      'Pumps and headers move chilled water between the chillers and the white space.',
-      'N+1 and 2N redundancy live in this loop: pumps, headers, and more than one chiller.',
-      'Differential pressure and the balancing valve decide whether the hall is fed.',
+      gloss('chw').definition,
+      gloss('n-plus-1').definition,
       'Wrong flow starves CRAHs even when the chiller display looks satisfied.',
     ],
     ['chwDp', 'chwValve'],
@@ -989,8 +1184,9 @@ export const INFO = {
   'chain-tower': point(
     'Towers and condenser water',
     [
-      'Heat leaves the building at the towers. A separate glycol loop can free-cool only when outdoor air is cold enough.',
-      'Peak wet-bulb days are when plants run out of rejection capacity first.',
+      gloss('cooling-tower').definition,
+      gloss('cw').definition,
+      gloss('glycol').why,
       'Coordinate tower fans, flow, and water treatment. Fouling shows up as approach under IT load.',
     ],
     ['wetBulb', 'towerFan', 'freeCool'],
@@ -998,9 +1194,9 @@ export const INFO = {
   'chain-bms': point(
     'BMS / NOC',
     [
-      'The BMS sequences and supervises. The NOC owns the incident clock.',
-      'Operators execute the plant response and say what changed.',
-      'If the BMS and OptiView disagree on setpoint or enable, stop the fight per SOP, then reconcile which system is master.',
+      gloss('bms').definition,
+      gloss('noc').definition,
+      gloss('bms').why,
     ],
     ['alarm'],
   ),
@@ -1026,8 +1222,9 @@ export const INFO = {
   'comp-condenser': point(
     'Condenser',
     [
-      'The condenser rejects compressor heat into condenser water and on to the tower.',
-      'Glycol to the dry cooler is a separate loop. It free-cools only when outdoor air is colder than the chilled-water return.',
+      gloss('cw').definition,
+      gloss('dry-cooler').definition,
+      gloss('glycol').why,
       'High condenser pressure on a peak wet-bulb day is a capacity cliff.',
       'Do not chase high head by defeating safeties. Shed noncritical load or bring a redundant chiller per SOP.',
     ],
@@ -1037,38 +1234,35 @@ export const INFO = {
     'Compressor',
     [
       'This is an oil-free centrifugal with active magnetic bearings, the usual choice where a plant runs all day.',
-      'Data centers rarely sit at design load. Part-load behavior matters.',
+      gloss('lift').definition,
+      gloss('surge').definition,
       'Landings after a utility blip or an ATS transfer need a ticket. Power quality is a facilities issue.',
-      'Never stop the last online chiller until redundant capacity is online and loaded.',
     ],
     ['rla', 'mode'],
   ),
   'comp-vsd': point(
     'Variable-speed drive',
     [
-      'The drive tracks IT load by changing compressor speed.',
-      'On a shared campus bus, harmonics and voltage balance can look like a compressor fault.',
+      gloss('vsd').definition,
+      gloss('vsd').why,
       'Keep drive coolant and heat-exchanger maintenance on the outage plan. A thermal trip takes cooling offline.',
-      'After a generator test or UPS work, check drive health before you call the plant normal.',
     ],
     ['rla'],
   ),
   'comp-optiview': point(
     'OptiView',
     [
-      'This is the local operator panel. On a data-center plant it usually also reports to the BMS.',
-      'Know which setpoints are local and which the BMS writes. Fighting both causes the loop to hunt.',
+      gloss('optiview').definition,
+      gloss('optiview').why,
       'Read the message class. A warning, a cycling shutdown, and a safety trip escalate differently.',
-      'If the panel and the BMS disagree, trust the instruments, then reconcile the points.',
     ],
     ['lchltSet', 'lchltAct'],
   ),
   'comp-mbc': point(
     'Magnetic bearing controller',
     [
-      'The controller levitates the rotor and reports vibration and landings.',
-      'Touchdown bearings engage when rotation stops or magnetic support is lost, including a power event.',
-      'An ATS transfer can add a landing even if the hall never alarms.',
+      gloss('mbc').definition,
+      gloss('mbc').why,
       'A new power-fail landing during a generator exercise gets a ticket the same shift.',
     ],
     ['mbc', 'landings', 'vibe'],
@@ -1076,9 +1270,9 @@ export const INFO = {
   'comp-power': point(
     'Power and battery panel',
     [
-      'This feed holds up controls and the magnetic bearings. It sits inside the critical-power topology, not off to the side.',
-      'Know which UPS and which panel feed this chiller before you rack out a breaker.',
-      'Lockout for electrical work uses the same rigor as an IT change.',
+      gloss('ups').definition,
+      gloss('ups').why,
+      'Know which panel feeds this chiller before you rack out a breaker.',
       'Cooling loss is an IT incident. Do not treat chiller power as noncritical.',
     ],
   ),
@@ -1095,28 +1289,30 @@ export const INFO = {
   'pipe-chw': point(
     'Chilled-water loop',
     [
-      'CHWR is warm return from the hall. CHWS is the water the chiller sends back out.',
+      gloss('chwr').definition,
+      gloss('chws').definition,
       'The valve on this card is the balancing valve for the whole chilled-water loop, so both rows move together.',
-      'This trainer flags ΔP below 12 psi or above 24 psi. The target next to ΔP depends on the outdoor temperature.',
-      'Open the valve if ΔP is low and the hall is warming. Ease it back if ΔP is high.',
+      gloss('chw').why,
+      'Open the valve if differential pressure is low and the hall is warming. Ease it back if it is high.',
     ],
     ['chwr', 'chws', 'chwDp', 'chwValve'],
   ),
   'pipe-cw': point(
     'Condenser-water loop',
     [
-      'CWS is water from the tower to the condenser. CWR is the warmer water going back to the tower.',
-      'Tower fan percent is the heat-rejection knob. Low flow and a hot wet bulb both raise head.',
-      'This trainer flags condenser ΔP below 8 psi or above 18 psi.',
-      'If CW ΔP collapses, head will climb. Prove flow before you blame the compressor.',
+      gloss('cws').definition,
+      gloss('cwr').definition,
+      gloss('cw').why,
+      'If condenser-water flow collapses, head will climb. Prove flow before you blame the compressor.',
     ],
     ['cws', 'cwr', 'cwDp', 'cwValve', 'towerFan'],
   ),
   'pipe-gly': point(
     'Glycol loop',
     [
-      'GLS and GLR are the glycol pair to the dry cooler, separate from the tower water.',
-      'Free cooling is available when outdoor air is cold enough that the dry cooler can take heat the chiller would otherwise lift.',
+      gloss('glycol').definition,
+      gloss('dry-cooler').definition,
+      'Free cooling is heat the compressor does not have to lift.',
       'On a cold day with the glycol valve nearly shut, the plant note will say the economizer is being left idle.',
       'Dry-cooler fan percent is the rejection knob on this loop. It is not the tower fan.',
     ],
@@ -1145,10 +1341,10 @@ export const INFO = {
   'slider-gly': point(
     'Glycol balancing valve',
     [
-      'This slider is the glycol balancing valve to the dry cooler, from 15% to 100% open.',
-      'It only carries useful load when outdoor air is cold enough for free cooling.',
+      gloss('glycol').definition,
+      gloss('glycol').why,
       'Shutting it on a cold day leaves the chiller and the tower doing work the dry cooler could share.',
-      'Watch glycol ΔP and the free-cool percent together.',
+      'Watch glycol differential pressure and the free-cool percent together.',
     ],
     ['glyValve', 'glyDp', 'freeCool', 'outdoor'],
   ),
@@ -1174,7 +1370,8 @@ export const INFO = {
   'cycle-comp': point(
     'Compressor stage',
     [
-      'The magnetic-bearing motor compresses the vapor and raises its pressure.',
+      gloss('lift').definition,
+      gloss('surge').definition,
       'Speed follows plant load through the variable-speed drive.',
       'Landings and vibration belong to this stage. A power event can land the rotor even when the hall stays up.',
     ],
@@ -1183,8 +1380,8 @@ export const INFO = {
   'cycle-cond': point(
     'Condenser stage',
     [
-      'Heat leaves the refrigerant and goes to condenser water, then the towers.',
-      'This is the summer bottleneck. High outdoor wet bulb shows up here first.',
+      gloss('cw').definition,
+      gloss('cooling-tower').why,
       'CWS, CWR, tower fans, and head are the readings that belong to this stage.',
     ],
     ['cws', 'cwr', 'head', 'towerFan'],
@@ -1201,17 +1398,17 @@ export const INFO = {
   'mop-mop': point(
     'MOP and ticket',
     [
-      'Confirm the approved method of procedure, the window, and NOC awareness before you touch a production chiller.',
-      'A change ticket is how the hall finds out cooling work is happening.',
+      gloss('mop').definition,
+      gloss('mop').why,
       'If there is no ticket, you are not in a planned start.',
     ],
   ),
   'mop-redundancy': point(
     'Redundant capacity',
     [
+      gloss('n-plus-1').definition,
+      gloss('n-plus-1').why,
       'Confirm a sister chiller and the pumps can carry the IT load before you remove a machine.',
-      'N+1 only counts if the standby unit is actually able to run.',
-      'Never start work that collapses redundancy without a written plan.',
     ],
   ),
   'mop-power': point(
@@ -1234,7 +1431,7 @@ export const INFO = {
   'mop-setpoints': point(
     'Setpoints',
     [
-      'Match LCHLT, enables, and cutouts to the live plant SOP. A lab default is not a campus setpoint.',
+      gloss('setpoint').definition,
       'This trainer’s LCHLT setpoint starts at 55°F and the OptiView slider runs from 42°F to 65°F.',
       'Know whether the BMS or the panel is allowed to write the number.',
     ],
@@ -1261,8 +1458,8 @@ export const INFO = {
   'stop-noc': point(
     'NOC approval to stop',
     [
-      'A planned stop needs facilities and NOC awareness.',
-      'An unplanned stop is an incident. Communicate it immediately.',
+      gloss('noc').definition,
+      'A planned stop needs facilities and NOC awareness. An unplanned stop is an incident.',
       'Do not treat a local soft key as permission if the ticket is not open.',
     ],
   ),
@@ -1427,9 +1624,9 @@ export const INFO = {
   'opti-noc': point(
     'Page NOC',
     [
-      'Paging the NOC opens the incident path. Operators keep working the plant.',
+      gloss('noc').definition,
+      gloss('noc').why,
       'Say the symptom, the machine, and what you already checked.',
-      'The NOC owns the clock if cooling can affect IT. You own the valves and the panel.',
     ],
   ),
   'opti-done': point(

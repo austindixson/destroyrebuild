@@ -1748,6 +1748,39 @@ label.info-host,
   line-height: 1.4;
 }
 
+button.jargon {
+  appearance: none;
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted var(--cyan);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+  border-radius: 2px;
+  touch-action: manipulation;
+}
+
+button.jargon abbr {
+  text-decoration: none;
+}
+
+button.jargon:hover {
+  color: var(--cyan);
+}
+
+button.jargon:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
 @media (max-width: 900px) {
   .info-host > .info-btn,
   .step.info-host > .info-btn {

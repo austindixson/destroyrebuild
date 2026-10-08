@@ -25,6 +25,7 @@ import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantSim, rankFor, type PlantSnapshot } from './sim/plantSim'
 import { iconSvg } from './ui/icons'
+import { linkGlossary } from './ui/glossary'
 import { InfoDock } from './ui/info'
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
@@ -290,6 +291,24 @@ export class App {
     }
     map[this.view]()
     this.info.mount(el)
+    const sidebar = this.root.querySelector('.sidebar')
+    if (sidebar) linkGlossary(sidebar)
+  }
+
+  /** Replace live prose and link the first glossary hit in that block. */
+  private relinkText(el: Element, text: string) {
+    if (el.textContent !== text) {
+      const active = document.activeElement
+      const glossary =
+        active instanceof HTMLButtonElement && el.contains(active) ? active.dataset.glossary : undefined
+      el.textContent = text
+      linkGlossary(el)
+      if (glossary) {
+        el.querySelector<HTMLButtonElement>(`button.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
+      }
+      return
+    }
+    linkGlossary(el)
   }
 
   private homeHtml() {
@@ -402,17 +421,33 @@ export class App {
     const banner = this.root.querySelector('#alarm-banner')
     if (banner) {
       banner.classList.toggle('show', Boolean(s.alarm))
-      banner.textContent = s.alarm ?? ''
+      this.relinkText(banner, s.alarm ?? '')
     }
     const strip = this.root.querySelector('#kpi-strip')
     if (strip) {
       const active = document.activeElement
-      const focusedId =
-        active instanceof HTMLButtonElement && strip.contains(active) ? active.dataset.infoBtn : undefined
+      const focusedInfo =
+        active instanceof HTMLButtonElement && active.classList.contains('info-btn') && strip.contains(active)
+          ? active.dataset.infoBtn
+          : undefined
+      const focusedGlossary =
+        active instanceof HTMLButtonElement && active.classList.contains('jargon') && strip.contains(active)
+          ? active.dataset.glossary
+          : undefined
+      const focusedHost =
+        active instanceof HTMLButtonElement && strip.contains(active)
+          ? active.closest<HTMLElement>('.kpi')?.dataset.info
+          : undefined
       strip.innerHTML = this.kpiHtml(s)
       this.info.mount(strip)
-      if (focusedId) {
-        strip.querySelector<HTMLButtonElement>(`.info-btn[data-info-btn="${CSS.escape(focusedId)}"]`)?.focus()
+      if (focusedInfo) {
+        strip.querySelector<HTMLButtonElement>(`.info-btn[data-info-btn="${CSS.escape(focusedInfo)}"]`)?.focus()
+      } else if (focusedGlossary && focusedHost) {
+        strip
+          .querySelector<HTMLButtonElement>(
+            `.kpi[data-info="${CSS.escape(focusedHost)}"] button.jargon[data-glossary="${CSS.escape(focusedGlossary)}"]`,
+          )
+          ?.focus()
       }
     }
     const bodies: Record<string, string> = {
@@ -428,7 +463,7 @@ export class App {
       if (el) el.textContent = text
     }
     const reason = this.root.querySelector('#plant-reason')
-    if (reason) reason.textContent = s.reason
+    if (reason) this.relinkText(reason, s.reason)
     this.root.querySelectorAll('.mimic-node').forEach((n) => {
       const id = (n as HTMLElement).dataset.mimic
       n.classList.toggle('alarm', (id === 'ch1' && s.ch01.mode === 'alarm') || (id === 'noc' && Boolean(s.alarm)))
@@ -709,7 +744,7 @@ export class App {
           : s.chwDpPsi > 24
             ? 'CHW ΔP is high. Ease that valve back. '
             : ''
-      note.textContent = warn + s.reason
+      this.relinkText(note, warn + s.reason)
     }
     this.scene?.setFans(s.dryFanPct, s.towerFanPct)
     this.scene?.setReadings(this.sceneReadings())
@@ -1163,6 +1198,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         })
         if (i === q.answer) this.quizScore += 1
         feedback.innerHTML = `<div class="feedback">${i === q.answer ? 'Correct. ' : 'Not quite. '}${q.explain}</div>`
+        linkGlossary(feedback)
         next.style.display = 'inline-flex'
       })
     })

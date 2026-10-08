@@ -1,5 +1,6 @@
-import { INFO, type InfoId, type InfoLive } from '../data/content'
+import { GLOSSARY, INFO, type GlossaryId, type InfoId, type InfoLive } from '../data/content'
 import type { PlantSnapshot } from '../sim/plantSim'
+import { isGlossaryId, linkGlossary } from './glossary'
 
 export interface LiveContext {
   snap: PlantSnapshot
@@ -123,7 +124,9 @@ function liveText(id: InfoId, ctx: LiveContext): string {
   return keys.map((key) => `${LIVE_LABEL[key]}: ${formatLive(key, ctx)}`).join('\n')
 }
 
-/** One info button and one panel for every card and slider marked with data-info. */
+type PanelMode = 'info' | 'glossary'
+
+/** One info button and one panel. Glossary terms reuse this same popover and sheet. */
 export class InfoDock {
   private layer: HTMLElement
   private panel: HTMLElement
@@ -131,8 +134,12 @@ export class InfoDock {
   private nowEl: HTMLElement
   private bodyEl: HTMLElement
   private closeBtn: HTMLButtonElement
-  private openId: InfoId | null = null
+  private mode: PanelMode | null = null
+  private infoId: InfoId | null = null
+  private glossaryId: GlossaryId | null = null
   private trigger: HTMLButtonElement | null = null
+  /** Focus returns here when the clicked term lived inside the panel and was replaced. */
+  private anchor: HTMLButtonElement | null = null
   private onKey: (event: KeyboardEvent) => void
   private onResize: () => void
 
@@ -163,9 +170,11 @@ export class InfoDock {
     this.closeBtn = this.layer.querySelector('.info-close')!
     this.layer.querySelector('.info-backdrop')!.addEventListener('click', () => this.close(true))
     this.closeBtn.addEventListener('click', () => this.close(true))
+    this.appRoot.addEventListener('click', (event) => this.onGlossaryClick(event), true)
+    this.panel.addEventListener('click', (event) => this.onGlossaryClick(event), true)
     this.onKey = (event) => this.onKeyDown(event)
     this.onResize = () => {
-      if (!this.openId) return
+      if (!this.mode) return
       const sheet = this.sheet()
       this.panel.classList.toggle('sheet', sheet)
       if (sheet) {
@@ -215,12 +224,12 @@ export class InfoDock {
       }
       host.append(this.button(infoId))
     }
+    linkGlossary(scope)
     this.retarget()
   }
 
   sync() {
-    if (!this.openId) return
-    this.paintNow(this.openId)
+    if (this.mode === 'info' && this.infoId) this.paintNow(this.infoId)
     this.retarget()
   }
 
@@ -231,7 +240,7 @@ export class InfoDock {
     btn.dataset.infoBtn = id
     btn.setAttribute('aria-label', `Learn more about ${INFO[id].title}`)
     btn.setAttribute('aria-haspopup', 'dialog')
-    btn.setAttribute('aria-expanded', this.openId === id ? 'true' : 'false')
+    btn.setAttribute('aria-expanded', this.mode === 'info' && this.infoId === id ? 'true' : 'false')
     btn.setAttribute('aria-controls', 'info-title')
     const mark = document.createElement('span')
     mark.setAttribute('aria-hidden', 'true')
@@ -240,32 +249,84 @@ export class InfoDock {
     btn.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      this.toggle(id, btn)
+      this.toggleInfo(id, btn)
     })
     return btn
   }
 
-  private toggle(id: InfoId, btn: HTMLButtonElement) {
-    if (this.openId === id && this.trigger === btn) {
+  private onGlossaryClick(event: Event) {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const btn = target.closest('button.jargon')
+    if (!(btn instanceof HTMLButtonElement)) return
+    const id = btn.dataset.glossary
+    if (!id || !isGlossaryId(id)) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.toggleGlossary(id, btn)
+  }
+
+  private toggleInfo(id: InfoId, btn: HTMLButtonElement) {
+    if (this.mode === 'info' && this.infoId === id && this.trigger === btn) {
       this.close(true)
       return
     }
-    this.open(id, btn)
+    this.openInfo(id, btn)
   }
 
-  private open(id: InfoId, btn: HTMLButtonElement) {
+  private toggleGlossary(id: GlossaryId, btn: HTMLButtonElement) {
+    if (this.mode === 'glossary' && this.glossaryId === id && this.trigger === btn) {
+      this.close(true)
+      return
+    }
+    this.openGlossary(id, btn)
+  }
+
+  private openInfo(id: InfoId, btn: HTMLButtonElement) {
     const entry = INFO[id]
-    this.openId = id
-    this.trigger = btn
+    this.mode = 'info'
+    this.infoId = id
+    this.glossaryId = null
+    this.rememberTrigger(btn)
     this.titleEl.textContent = entry.title
+    this.fillPoints(entry.points)
+    this.paintNow(id)
+    linkGlossary(this.panel)
+    this.present()
+  }
+
+  private openGlossary(id: GlossaryId, btn: HTMLButtonElement) {
+    const entry = GLOSSARY[id]
+    this.mode = 'glossary'
+    this.glossaryId = id
+    this.infoId = null
+    this.rememberTrigger(btn)
+    this.titleEl.textContent = entry.term
+    const lines: string[] = [entry.definition]
+    if (entry.why) lines.push(`Why it matters here: ${entry.why}`)
+    this.fillPoints(lines)
+    this.nowEl.hidden = true
+    this.nowEl.textContent = ''
+    linkGlossary(this.panel, { skip: id })
+    this.present()
+  }
+
+  private fillPoints(lines: readonly string[]) {
     this.bodyEl.replaceChildren(
-      ...entry.points.map((point) => {
+      ...lines.map((line) => {
         const li = document.createElement('li')
-        li.textContent = point
+        li.textContent = line
         return li
       }),
     )
-    this.paintNow(id)
+  }
+
+  private rememberTrigger(btn: HTMLButtonElement) {
+    this.trigger = btn
+    if (!this.panel.contains(btn)) this.anchor = btn
+  }
+
+  private present() {
     this.layer.hidden = false
     const sheet = this.sheet()
     this.panel.classList.toggle('sheet', sheet)
@@ -288,38 +349,64 @@ export class InfoDock {
   }
 
   private close(restore: boolean) {
-    if (!this.openId && this.layer.hidden) return
-    const trigger = this.trigger
-    this.openId = null
+    if (!this.mode && this.layer.hidden) return
+    const focusTarget = this.trigger?.isConnected ? this.trigger : this.anchor?.isConnected ? this.anchor : null
+    this.mode = null
+    this.infoId = null
+    this.glossaryId = null
     this.trigger = null
+    this.anchor = null
     this.layer.hidden = true
     this.appRoot.inert = false
     this.markExpanded()
-    if (restore && trigger?.isConnected) trigger.focus()
+    if (restore && focusTarget) focusTarget.focus()
   }
 
   private retarget() {
-    if (!this.openId) return
+    if (!this.mode) return
     if (this.trigger?.isConnected) {
       this.markExpanded()
       return
     }
-    const next = this.appRoot.querySelector<HTMLButtonElement>(
-      `.info-btn[data-info-btn="${CSS.escape(this.openId)}"]`,
-    )
-    if (!next) {
-      this.close(false)
-      return
+    const mode = this.mode
+    switch (mode) {
+      case 'info': {
+        if (!this.infoId) {
+          this.close(false)
+          return
+        }
+        const next = this.appRoot.querySelector<HTMLButtonElement>(
+          `.info-btn[data-info-btn="${CSS.escape(this.infoId)}"]`,
+        )
+        if (!next) {
+          this.close(false)
+          return
+        }
+        this.trigger = next
+        this.anchor = next
+        this.markExpanded()
+        if (!this.sheet()) this.place()
+        return
+      }
+      case 'glossary':
+        this.trigger = null
+        this.markExpanded()
+        return
+      default: {
+        const unknown: never = mode
+        return unknown
+      }
     }
-    this.trigger = next
-    this.markExpanded()
-    if (!this.sheet()) this.place()
   }
 
   private markExpanded() {
-    this.appRoot.querySelectorAll<HTMLButtonElement>('.info-btn').forEach((btn) => {
-      btn.setAttribute('aria-expanded', btn === this.trigger && this.openId ? 'true' : 'false')
-    })
+    const buttons = [
+      ...this.appRoot.querySelectorAll<HTMLButtonElement>('.info-btn, button.jargon'),
+      ...this.panel.querySelectorAll<HTMLButtonElement>('button.jargon'),
+    ]
+    for (const btn of buttons) {
+      btn.setAttribute('aria-expanded', btn === this.trigger && this.mode ? 'true' : 'false')
+    }
   }
 
   private sheet() {
@@ -343,7 +430,7 @@ export class InfoDock {
   }
 
   private onKeyDown(event: KeyboardEvent) {
-    if (!this.openId) return
+    if (!this.mode) return
     if (event.key === 'Escape') {
       event.preventDefault()
       this.close(true)
