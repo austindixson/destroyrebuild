@@ -623,8 +623,8 @@ export class PlantSim {
 
   private applyFlowAlarm(draft: BoardDraft): void {
     if (this.incident || draft.alarm) return
-    if (this.chwValvePct < 42) {
-      const starve = (42 - this.chwValvePct) / 42
+    if (printedChwDpPsi(this.chwValvePct) < CHW_DP_LOW_PSI) {
+      const starve = (CHW_FLOW_SPAN_PCT - this.chwValvePct) / CHW_FLOW_SPAN_PCT
       draft.hallSupplyF += starve * 6
       draft.hallReturnF += starve * 7
       draft.alarm = 'The CHW ΔP is low. The header valve does not give the CRAHs enough flow.'
@@ -842,7 +842,7 @@ function applyHighHead(draft: BoardDraft): void {
 function applyHallHot(draft: BoardDraft, lchltSet: number): void {
   draft.hallSupplyF += 9
   draft.hallReturnF += 11
-  draft.chwDpPsi = 9.5
+  draft.chwDpPsi = HALL_HOT_CHW_DP_PSI
   draft.ch01RlaScale = 0.45
   draft.ch01RlaFloor = 18
   draft.lchltAct = lchltSet + 0.2
@@ -1011,6 +1011,21 @@ function unitFace(units: UnitSnapshot[], id: string): UnitSnapshot {
 function chwDpAt(pct: number) {
   const f = Math.max(15, Math.min(100, pct)) / 100
   return 6 + Math.pow(f, 1.35) * 20
+}
+
+/** Hall-hot replaces the CHW header ΔP with this printed value. The valve opening does not change it. */
+export const HALL_HOT_CHW_DP_PSI = 9.5
+
+/** Trainer limits on the 0.1 psi figure the pipe board prints. */
+export const CHW_DP_LOW_PSI = 12
+export const CHW_DP_HIGH_PSI = 24
+
+/** Span used only to scale hall warmth while the printed CHW ΔP is below the low limit. */
+const CHW_FLOW_SPAN_PCT = 42
+
+/** Steady CHW header ΔP rounded to the 0.1 psi the pipe board prints. */
+export function printedChwDpPsi(pct: number): number {
+  return round(chwDpAt(pct), 1)
 }
 
 function cwDpAt(pct: number) {

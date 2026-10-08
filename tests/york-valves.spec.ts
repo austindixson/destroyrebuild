@@ -79,17 +79,57 @@ test('a balance valve dragged into red shows one alert until it leaves', async (
   await expect(alert).toContainText('CRAHs do not get enough flow')
 })
 
-test('hall-hot prints 9.5 psi in red on the pipe board', async ({ page }) => {
+const HALL_HOT_NOTE = 'The hall-hot fault holds the CHW ΔP at 9.5 psi.'
+
+test('hall-hot prints 9.5 psi in red and the note does not ask for a valve move', async ({ page }) => {
   test.setTimeout(60_000)
   await page.goto('/york-chiller/')
   await page.locator('#view button[data-incident="hall-hot"]').click()
   await page.locator('.nav [data-nav="explorer"]').click()
   const read = page.locator('#chw-dp-read')
+  const note = page.locator('#pipe-note')
+  await expect(page.locator('#chw-valve-out')).toHaveText('72%')
   await expect(read).toContainText('ΔP 9.5 psi')
   await expect(read).toHaveClass(/bad/)
   await expect(page.locator('#pt-chw-enter-p')).toHaveText('52.0 psi')
   await expect(page.locator('#pt-chw-leave-p')).toHaveText('42.5 psi')
-  await expect(page.locator('#pipe-note')).toContainText('The CHW ΔP is low')
+  await expect(note).toContainText(HALL_HOT_NOTE)
+  await expect(note).not.toContainText('Open the CHW valve')
+  await expect(note).not.toContainText('Examine the CHW pumps')
+
+  await setRange(page.locator('#chw-valve'), '100')
+  await expect(page.locator('#chw-valve-out')).toHaveText('100%')
+  await expect(read).toContainText('ΔP 9.5 psi')
+  await expect(read).toHaveClass(/bad/)
+  await expect(page.locator('#pt-chw-enter-p')).toHaveText('52.0 psi')
+  await expect(page.locator('#pt-chw-leave-p')).toHaveText('42.5 psi')
+  await expect(note).toContainText(HALL_HOT_NOTE)
+  await expect(note).not.toContainText('Open the CHW valve')
+  await expect(note).not.toContainText('Examine the CHW pumps')
+})
+
+test('CHW at 41% prints 12.0 psi and does not raise the low banner', async ({ page }) => {
+  test.setTimeout(60_000)
+  await openExplorer(page)
+  await setRange(page.locator('#chw-valve'), '41')
+  const read = page.locator('#chw-dp-read')
+  await expect(read).toContainText('ΔP 12.0 psi')
+  await expect(read).not.toHaveClass(/bad/)
+  await expect(page.locator('#pipe-note')).not.toContainText('The CHW ΔP is low')
+  await page.locator('.nav [data-nav="home"]').click()
+  await expect(page.locator('#alarm-banner')).not.toContainText('The CHW ΔP is low')
+})
+
+test('the first CHW opening that prints below 12.0 psi is red on the board and the banner', async ({ page }) => {
+  test.setTimeout(60_000)
+  await openExplorer(page)
+  await setRange(page.locator('#chw-valve'), '40')
+  const read = page.locator('#chw-dp-read')
+  await expect(read).toContainText('ΔP 11.8 psi')
+  await expect(read).toHaveClass(/bad/)
+  await expect(page.locator('#pipe-note')).toContainText('The CHW ΔP is low. Open the CHW valve before the hall gets hot.')
+  await page.locator('.nav [data-nav="home"]').click()
+  await expect(page.locator('#alarm-banner')).toContainText('The CHW ΔP is low')
 })
 
 test('a CW valve at 44% prints 8.0 psi and does not alert below 8', async ({ page }) => {
