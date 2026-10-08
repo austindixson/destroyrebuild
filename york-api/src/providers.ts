@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { launchCommand, macSandboxProfile, resolveBin } from './sandbox.ts'
+import { helperExecPaths, launchCommand, macSandboxProfile, profileDeniesHome, resolveBin, resolvedPath } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
@@ -192,7 +192,7 @@ export const nodeRunner: ProcessRunner = {
   },
 }
 
-/** The signed-in user environment, minus the proxy secret. HOME stays put. */
+/** The signed-in user environment, minus the proxy secret and canary. Launch helpers replace HOME. */
 export function providerChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(env)) {
@@ -280,13 +280,19 @@ export function cursorArgs(model: string, workspace: string): string[] {
 }
 
 export function codexArgs(): string[] {
-  return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config']
+  return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config', '--ephemeral', '--ignore-rules']
 }
 
 export function codexLaunchArgsOk(args: string[]): boolean {
   const sandbox = args.indexOf('--sandbox')
   const value = sandbox >= 0 ? args[sandbox + 1] : undefined
-  return Boolean(value && !value.startsWith('-') && args.includes('--ignore-user-config'))
+  return Boolean(
+    value
+    && !value.startsWith('-')
+    && args.includes('--ignore-user-config')
+    && args.includes('--ephemeral')
+    && args.includes('--ignore-rules'),
+  )
 }
 
 /** A reply that is only reasoning_effort tags is an empty failure. */
@@ -319,31 +325,43 @@ export function grokConfigToml(): string {
   ].join('\n')
 }
 
-export function grokSandboxToml(): string {
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+/**
+ * Absolute deny paths. Grok 1.0.50 does not expand $HOME or ~. Those strings
+ * became folders inside the cwd. Auth is copied into the temp GROK_HOME, so
+ * this profile does not allow a read of the real home.
+ */
+export function grokSandboxToml(realHome: string): string {
+  const home = realHome.startsWith('/') ? realHome : '/Users'
+  const deny = [
+    home,
+    `${home}/**`,
+    `${home}/.ssh`,
+    `${home}/.ssh/**`,
+    `${home}/.config`,
+    `${home}/.config/**`,
+    `${home}/.zshrc`,
+    `${home}/.claude`,
+    `${home}/.claude/**`,
+    `${home}/.claude/settings.json`,
+    `${home}/.cursor`,
+    `${home}/.cursor/**`,
+    `${home}/.cursor/hooks.json`,
+    `${home}/Library`,
+    `${home}/Library/**`,
+    `${home}/.grok`,
+    `${home}/.grok/**`,
+    `${home}/.grok/hooks`,
+    `${home}/.grok/hooks/**`,
+  ]
   return [
     '[profiles.york]',
     'extends = "strict"',
     'deny = [',
-    '  "$HOME",',
-    '  "$HOME/**",',
-    '  "~/.ssh",',
-    '  "~/.ssh/**",',
-    '  "~/.config",',
-    '  "~/.config/**",',
-    '  "~/.zshrc",',
-    '  "~/.claude",',
-    '  "~/.claude/**",',
-    '  "~/.cursor",',
-    '  "~/.cursor/**",',
-    '  "~/Library",',
-    '  "~/Library/**",',
-    '  "~/.grok/hooks",',
-    '  "~/.grok/hooks/**",',
-    ']',
-    'read_only = [',
-    '  "$HOME/.grok/auth.json",',
-    '  "$HOME/.grok/credentials.json",',
-    '  "$HOME/.grok/.credentials.json",',
+    ...deny.map((path) => `  ${tomlString(path)},`),
     ']',
     '',
   ].join('\n')
@@ -362,6 +380,7 @@ function promptOf(req: LlmRequest): string {
 }
 
 async function linkAuth(sourceDir: string, destDir: string, names: readonly string[]): Promise<void> {
+  await mkdir(destDir, { recursive: true })
   for (const name of names) {
     const source = join(sourceDir, name)
     try {
@@ -372,6 +391,32 @@ async function linkAuth(sourceDir: string, destDir: string, names: readonly stri
       // The auth file is absent. The CLI may still use the keychain.
     }
   }
+}
+
+/** A copy, not a symlink. The seatbelt denies the real home, so a symlink would miss. */
+async function copyAuth(sourceDir: string, destDir: string, names: readonly string[]): Promise<void> {
+  await mkdir(destDir, { recursive: true })
+  for (const name of names) {
+    const source = join(sourceDir, name)
+    try {
+      const info = await lstat(source)
+      if (!info.isFile() && !info.isSymbolicLink()) continue
+      const dest = join(destDir, name)
+      await copyFile(source, dest)
+      await chmod(dest, 0o600)
+    } catch {
+      // The auth file is absent. The CLI may still use the keychain.
+    }
+  }
+}
+
+async function isolatedHome(dir: string): Promise<string> {
+  const homeDir = join(dir, 'home')
+  const claudeDir = join(homeDir, '.claude')
+  await mkdir(claudeDir, { recursive: true })
+  await mkdir(join(homeDir, '.config'), { recursive: true })
+  await writeFile(join(claudeDir, 'settings.json'), `${JSON.stringify({ permissions: { allow: [], deny: [] }, hooks: {} })}\n`)
+  return homeDir
 }
 
 function authPaths(home: string, dirName: string, names: readonly string[]): string[] {
@@ -385,19 +430,26 @@ async function seatbeltWrap(
   args: string[],
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
+  realHome: string,
   allowRead: string[],
 ): Promise<{ cmd: string; args: string[] }> {
   if (platform !== 'darwin') return { cmd: bin, args }
   const resolved = resolveBin(bin, env)
-  if (!resolved) return { cmd: bin, args }
-  const profile = join(dir, '.york.sb')
-  await writeFile(profile, macSandboxProfile({
-    home: env.HOME || '/Users',
-    tempDir: dir,
+  if (!resolved) throw new Error('sandbox wrapper skipped')
+  const home = resolvedPath(realHome)
+  const tempDir = resolvedPath(dir)
+  const execPaths = [resolved, ...helperExecPaths(env)]
+  const text = macSandboxProfile({
+    realHome: home,
+    tempDir,
     binPath: resolved,
+    execPaths,
     allowRead,
-  }))
-  return launchCommand(bin, args, profile, platform)
+  })
+  if (!profileDeniesHome(text, home)) throw new Error('sandbox profile void')
+  const profile = join(dir, '.york.sb')
+  await writeFile(profile, text)
+  return launchCommand(resolved, args, profile, platform)
 }
 
 async function runLaunch(launch: CliLaunch, signal: AbortSignal, run: ProcessRunner): Promise<string> {
@@ -414,24 +466,31 @@ export async function prepareGrokLaunch(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CliLaunch> {
-  const grokHome = join(dir, 'grok-home')
+  const realHome = resolvedPath(env.HOME ?? '')
+  const homeDir = await isolatedHome(dir)
+  const grokHome = join(homeDir, '.grok')
   await mkdir(join(grokHome, 'hooks'), { recursive: true })
   await mkdir(join(dir, '.grok'), { recursive: true })
   const promptFile = join(dir, 'prompt.txt')
   await writeFile(promptFile, promptOf(req))
   await writeFile(join(grokHome, 'config.toml'), grokConfigToml())
-  const sandbox = grokSandboxToml()
+  const sandbox = grokSandboxToml(realHome)
   await writeFile(join(grokHome, 'sandbox.toml'), sandbox)
   await writeFile(join(dir, '.grok', 'sandbox.toml'), sandbox)
-  const home = env.HOME ?? ''
-  if (home) await linkAuth(join(home, '.grok'), grokHome, GROK_AUTH)
+  if (realHome) await copyAuth(join(realHome, '.grok'), grokHome, GROK_AUTH)
   const bin = env.GROK_BIN || 'grok'
   const args = grokArgs(promptFile)
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.grok', GROK_AUTH))
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, [])
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
-    env: childEnv(env, { ...GROK_COMPAT_OFF, GROK_HOME: grokHome }),
+    env: childEnv(env, {
+      ...GROK_COMPAT_OFF,
+      HOME: homeDir,
+      GROK_HOME: grokHome,
+      CLAUDE_CONFIG_DIR: join(homeDir, '.claude'),
+      XDG_CONFIG_HOME: join(homeDir, '.config'),
+    }),
     cwd: dir,
     input: '',
   }
@@ -443,14 +502,21 @@ export async function prepareClaudeLaunch(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CliLaunch> {
+  const realHome = resolvedPath(env.HOME ?? '')
+  const homeDir = await isolatedHome(dir)
   const bin = env.CLAUDE_BIN || 'claude'
   const args = claudeArgs(CLAUDE_MODEL)
-  const home = env.HOME ?? ''
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.claude', CLAUDE_AUTH))
+  if (realHome) await linkAuth(join(realHome, '.claude'), join(homeDir, '.claude'), CLAUDE_AUTH)
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.claude', CLAUDE_AUTH))
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
-    env: childEnv(env, { CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1' }),
+    env: childEnv(env, {
+      CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
+      HOME: homeDir,
+      CLAUDE_CONFIG_DIR: join(homeDir, '.claude'),
+      XDG_CONFIG_HOME: join(homeDir, '.config'),
+    }),
     cwd: dir,
     input: promptOf(req),
   }
@@ -462,15 +528,21 @@ export async function prepareCursorLaunch(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CliLaunch> {
-  const configDir = await prepareCursorWorkspace(dir, env.HOME)
+  const realHome = resolvedPath(env.HOME ?? '')
+  const homeDir = await isolatedHome(dir)
+  const configDir = await prepareCursorWorkspace(homeDir, realHome)
   const bin = env.CURSOR_BIN || 'agent'
   const args = cursorArgs(CURSOR_MODEL, dir)
-  const home = env.HOME ?? ''
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.cursor', CURSOR_AUTH))
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.cursor', CURSOR_AUTH))
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
-    env: childEnv(env, { CURSOR_CONFIG_DIR: configDir }),
+    env: childEnv(env, {
+      HOME: homeDir,
+      CURSOR_CONFIG_DIR: configDir,
+      CLAUDE_CONFIG_DIR: join(homeDir, '.claude'),
+      XDG_CONFIG_HOME: join(homeDir, '.config'),
+    }),
     cwd: dir,
     input: promptOf(req),
   }
@@ -482,13 +554,20 @@ export async function prepareCodexLaunch(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CliLaunch> {
+  const realHome = resolvedPath(env.HOME ?? '')
+  const homeDir = await isolatedHome(dir)
   const bin = env.CODEX_BIN || 'codex'
   const args = codexArgs()
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, [])
+  if (realHome) await linkAuth(join(realHome, '.codex'), join(homeDir, '.codex'), ['auth.json'])
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.codex', ['auth.json']))
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
-    env: childEnv(env, {}),
+    env: childEnv(env, {
+      HOME: homeDir,
+      CODEX_HOME: join(homeDir, '.codex'),
+      XDG_CONFIG_HOME: join(homeDir, '.config'),
+    }),
     cwd: dir,
     input: promptOf(req),
   }
@@ -543,15 +622,15 @@ function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string,
   return { sandbox, cli }
 }
 
-export async function prepareCursorWorkspace(workspace: string, home?: string): Promise<string> {
-  const dir = join(workspace, '.cursor')
+export async function prepareCursorWorkspace(homeDir: string, realHome?: string): Promise<string> {
+  const dir = join(homeDir, '.cursor')
   await mkdir(dir, { recursive: true })
   const { sandbox, cli } = cursorConfig()
   await writeFile(join(dir, 'sandbox.json'), JSON.stringify(sandbox))
   await writeFile(join(dir, 'cli-config.json'), JSON.stringify(cli))
   await writeFile(join(dir, 'cli.json'), JSON.stringify({ permissions: cli.permissions }))
   await writeFile(join(dir, 'hooks.json'), JSON.stringify({ version: 1, hooks: {} }))
-  if (home) await linkAuth(join(home, '.cursor'), dir, CURSOR_AUTH)
+  if (realHome) await linkAuth(join(realHome, '.cursor'), dir, CURSOR_AUTH)
   return dir
 }
 

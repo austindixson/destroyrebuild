@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { codexArgs, codexLaunchArgsOk, grokArgs, grokLaunchArgsOk } from './providers.ts'
-import { resolveBin } from './sandbox.ts'
+import { applySandboxProbe, probeSandbox, resolveBin } from './sandbox.ts'
 
 /** Log-and-warn floors. An older binary still serves. A missing binary does not. */
 export const CLAUDE_CLI_MIN = '2.1.293'
@@ -128,6 +128,7 @@ export async function probeAndLogClis(env: NodeJS.ProcessEnv): Promise<void> {
     console.log('york-api cli codex status=unavailable reason=sandbox')
     env.YORK_CODEX_CLI = 'unavailable'
   }
+  applySandboxProbe(env, await probeSandbox(env))
 }
 
 async function logOne(

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { isIP } from 'node:net'
 
 /**
  * Client address for rate limits.
@@ -6,8 +7,10 @@ import { timingSafeEqual } from 'node:crypto'
  * The public path is Railway Caddy, then Tailscale Funnel, then this process
  * on 127.0.0.1. Caddy sets X-York-Proxy-Secret and copies the edge
  * X-Real-IP header into X-York-Client-IP. York trusts that client IP
- * header only after the secret matches. York does not read X-Real-IP or
- * X-Forwarded-For as a client identity.
+ * header only after the secret matches. The value must be one IP. A repeated
+ * header, a comma-joined list, or a missing header on a proxied request is
+ * rejected. York does not fall back to the socket, and it does not read
+ * X-Real-IP or X-Forwarded-For as a client identity.
  *
  * With no configured secret, the socket address is the identity and forwarded
  * headers are ignored.
@@ -41,15 +44,14 @@ export function headerText(value: string | string[] | undefined): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function oneAddress(raw: string): string {
-  if (!raw) return ''
-  if (!raw.includes(',')) return raw
-  const hops = raw.split(',')
-  for (let i = hops.length - 1; i >= 0; i -= 1) {
-    const hop = hops[i]?.trim() ?? ''
-    if (hop) return hop
-  }
-  return ''
+/** One IP, or null. Arrays and comma-joined hop lists are rejected. */
+export function clientHeader(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return null
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  if (!text || text.includes(',')) return null
+  if (isIP(text) === 0) return null
+  return text
 }
 
 export function trustedClientIp(
@@ -60,8 +62,7 @@ export function trustedClientIp(
   const socket = socketAddr?.trim() || 'local'
   if (!secret) return socket
   if (!proxySecretOk(headerText(headers['x-york-proxy-secret']), secret)) return null
-  const client = oneAddress(headerText(headers['x-york-client-ip']))
-  return client || socket
+  return clientHeader(headers['x-york-client-ip'])
 }
 
 export function budgetKey(ip: string): string {

@@ -23,7 +23,7 @@ Caddy sets two headers on the upstream request:
 | `X-York-Proxy-Secret` | `{$YORK_PROXY_SECRET}` |
 | `X-York-Client-IP` | `{http.request.header.X-Real-IP}` |
 
-`{http.request.header.X-Real-IP}` is the client address the edge already stored. The Railway peer address is one shared hop, so it is not the budget key. Caddy does not strip `X-Real-IP`. It still strips `X-Forwarded-For`. York accepts `X-York-Client-IP` only after `YORK_PROXY_SECRET` matches. The compare is constant-time. A request with the wrong secret gets the same unavailable sentence. An empty `X-Real-IP` leaves the client header empty, and York then uses the socket address.
+`{http.request.header.X-Real-IP}` is the client address the edge already stored. The Railway peer address is one shared hop, so it is not the budget key. Caddy does not strip `X-Real-IP`. It strips `X-Forwarded-For` and `X-York-Only` (`request_header -X-York-Only`) before the proxy. York accepts `X-York-Client-IP` only after `YORK_PROXY_SECRET` matches, and only when `net.isIP` accepts that one value. A repeated header, a comma-joined list, a non-IP, or a missing header is rejected. York does not use the socket address for that request. The compare is constant-time. A request with the wrong secret gets the same unavailable sentence.
 
 Set these on the Railway static site. Use the same secret the Mac installer wrote, at least 16 characters.
 
@@ -38,12 +38,14 @@ The cascade is local CLIs, in order. Each tier is skipped when its binary is mis
 
 | Order | Command | Budget |
 | --- | --- | --- |
-| 1 | `grok` | 45 seconds |
+| 1 | `grok` | 45 seconds, or 30 seconds when `YORK_CODEX=1` |
 | 2 | `claude --model claude-haiku-5-5` | 25 seconds |
-| 3 | `agent -p --model auto` | 30 seconds |
-| 4 | `codex exec` | 35 seconds, only when `YORK_CODEX=1` |
+| 3 | `agent -p --model auto` | 30 seconds, or 25 seconds when `YORK_CODEX=1` |
+| 4 | `codex exec` | 25 seconds, only when `YORK_CODEX=1` |
 
-45 + 25 + 30 seconds fits under the server deadline of 110 seconds and the trainer abort of 120 seconds. Codex runs only with the time those three left behind. Caddy waits 130 seconds for the upstream response.
+45 + 25 + 30 seconds fits under the server deadline of 110 seconds and the trainer abort of 120 seconds. With Codex on, the split is 30 + 25 + 25 + 25 seconds. Caddy waits 130 seconds for the upstream response.
+
+Startup runs a sandbox probe and sets `YORK_SANDBOX=ready` only when that probe passes. On any other result the four CLI tiers are turned off and the reason is logged. A non-macOS host logs `wrapper-skipped` and does not write a canary into the home directory. A Mac without `sandbox-exec` logs `sandbox-exec-missing`. A profile that is empty, still names `$HOME` or `~`, or lets the probe read a canary under the real home logs `profile-void`. The `agent` realpath check still runs.
 
 This repository's Linux check does not run the grok, claude, agent, or codex binaries. Flag behavior below is from the CLI docs and from the ghost128 install at `811ce7e`. A flag the live binary rejects fails that call, and the cascade moves on. Nothing here pretends a missing binary accepted a flag.
 
@@ -55,9 +57,9 @@ Every call also passes `--permission-mode dontAsk`, `--disable-web-search`, `--n
 
 `dontAsk` does not stop reads. `read_file`, `grep`, `list_dir`, `cat`, `ls`, and `ps` run without a prompt in every permission mode, including `dontAsk`. The block is grok's own sandbox profile `york` plus, on macOS, an outer `sandbox-exec` profile.
 
-`york` extends `strict` and denies `$HOME` (including `~/.ssh`, `~/.config`, `~/.zshrc`, `~/.claude`, `~/.cursor`, `~/Library`, and `~/.grok/hooks`). It allows read of only these auth files when they exist: `~/.grok/auth.json`, `~/.grok/credentials.json`, `~/.grok/.credentials.json`. Built-in profiles, including `strict`, do not deny `~/.ssh`.
+`york` extends `strict` and denies the real home by its absolute path. Grok 1.0.50 does not expand `$HOME` or `~`. Those strings became directories inside the working directory, and the launch was observed to start with `--bind / /`. The deny list is the resolved home and the same tree: `.ssh`, `.config`, `.zshrc`, `.claude`, `.cursor`, `Library`, and `.grok`. There is no read exception for the real home. Built-in profiles, including `strict`, do not deny `~/.ssh`.
 
-There is no documented flag that turns off native `~/.grok/hooks`. York points `GROK_HOME` at the per-call temp directory, writes a fresh `config.toml` (permission `dontAsk`, Claude and Cursor compat off), writes `sandbox.toml`, creates an empty `hooks` directory, and symlinks only the auth files named above. The user's `config.toml` is not copied. Sessions in that temp home are deleted with the directory. `--no-memory` turns off cross-session memory. It does not by itself move the session files.
+There is no documented flag that turns off native `~/.grok/hooks`. York sets `HOME` and `GROK_HOME` to a per-call temp directory, writes a fresh `config.toml` (permission `dontAsk`, Claude and Cursor compat off), writes `sandbox.toml` with those absolute denies, creates an empty `hooks` directory, and copies only `auth.json`, `credentials.json`, and `.credentials.json` (mode `600`). It also writes an empty `.claude/settings.json` in that temp home so Claude compat cannot load the user's permission rules. The user's `config.toml` is not copied. Sessions in that temp home are deleted with the directory. `--no-memory` turns off cross-session memory. It does not by itself move the session files.
 
 These environment variables are set to `0` on the child: `GROK_CLAUDE_SKILLS_ENABLED`, `GROK_CLAUDE_RULES_ENABLED`, `GROK_CLAUDE_AGENTS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`, `GROK_CLAUDE_HOOKS_ENABLED`, and the five `GROK_CURSOR_*_ENABLED` names of the same shape. A project `.grok/config.toml` cannot turn compat off. It only contributes `[mcp_servers]`, `[plugins]`, and `[permission]`.
 
@@ -69,37 +71,37 @@ The arguments are `-p`, `--safe-mode`, `--no-session-persistence`, `--model clau
 
 A reply that is only `<reasoning_effort>` tags is treated as empty, and the cascade moves on. There is no extra effort flag in this launch.
 
-`CLAUDE_CONFIG_DIR` stays on the signed-in home. York does not point it at an empty directory.
+`HOME` and `CLAUDE_CONFIG_DIR` point at the per-call temp home. Auth files are symlinked in. The temp `.claude/settings.json` is empty. The user's settings file is not copied.
 
 ### Cursor
 
 `agent` must be the Cursor CLI. At startup York resolves `agent` and `grok`. The Cursor tier stays off when those paths are the same file, or when `agent --version` starts with `grok `. The xAI installer can symlink `agent` to grok. Cursor's own version line looks like `2026.07.17-hash`.
 
-Cursor does not read a `cli-config.json` written into the workspace. It reads `~/.cursor`, `CURSOR_CONFIG_DIR`, or `XDG_CONFIG_HOME`. York sets `CURSOR_CONFIG_DIR` to `<temp>/.cursor` and writes `cli-config.json`, `sandbox.json`, `cli.json`, and an empty `hooks.json` (`{"version":1,"hooks":{}}`) there. Deny rules include `Read(/Users/**)` and `Read(~/**)` in addition to `Read(/home/**)` and the other outside paths. The workspace is `--workspace` on that temp directory, `--mode ask`, `--sandbox enabled`, and no `--force`.
+Cursor reads `~/.cursor/hooks.json` and `~/.claude/settings.json` from the real `HOME` even when `CURSOR_CONFIG_DIR` is set. York therefore sets `HOME` to a per-call temp directory, and sets `CURSOR_CONFIG_DIR` to `<temp home>/.cursor`. It writes `cli-config.json`, `sandbox.json`, `cli.json`, and an empty `hooks.json` (`{"version":1,"hooks":{}}`) there, plus an empty `.claude/settings.json`. Deny rules include `Read(/Users/**)` and `Read(~/**)` in addition to `Read(/home/**)` and the other outside paths. The workspace is `--workspace` on that temp directory, `--mode ask`, `--sandbox enabled`, and no `--force`.
 
 If `~/.cursor/auth.json` or `~/.cursor/cli-auth.json` exists, York symlinks that file into the temp config. It does not copy the user's `cli-config.json` or `hooks.json`. Keychain login under this config directory was not re-checked here. If a live run cannot sign in, link the one auth file the failure names. Do not copy the user's permission file.
 
-No documented flag disables one hook event. `~/.cursor/hooks.json` and Claude-compat hooks in `~/.claude/settings.json` are kept out by `CURSOR_CONFIG_DIR`, the empty `hooks.json`, and the macOS seatbelt deny of those files. Print mode often does not emit `beforeSubmitPrompt`. `sessionStart` can still fire when the hook file is the one Cursor loads.
+No documented flag disables one hook event. The temp `HOME` keeps the user's hook files from loading. The macOS seatbelt still denies the real `hooks.json` and `settings.json`. Print mode often does not emit `beforeSubmitPrompt`. `sessionStart` can still fire when the hook file is the one Cursor loads.
 
 ### Codex
 
-When `YORK_CODEX=1`, the arguments must include `--sandbox` and `--ignore-user-config` or the tier stays off. York passes `--sandbox read-only`. The ghost128 `codex` binary was not executed for this change. If that binary rejects the flag, the call fails and the cascade moves on.
+When `YORK_CODEX=1`, the arguments must include `--sandbox`, `--ignore-user-config`, `--ephemeral`, and `--ignore-rules` or the tier stays off. York passes `--sandbox read-only`. Codex also gets the temp `HOME`. The ghost128 `codex` binary was not executed for this change. If that binary rejects a flag, the call fails and the cascade moves on.
 
 ### What each call may touch
 
-On macOS the child is `sandbox-exec -f <temp>/.york.sb -- <cli> ...`. The profile starts from deny-default. It allows exec of that one CLI binary, reads of system libraries, reads and writes of the temp directory, keychain `mach-lookup`, and outbound network so the model API can answer. It denies reads and writes of `/Users` and `$HOME`, then allows read of that CLI's auth files only, then denies again `.ssh`, `.config`, `Library`, `.zshrc`, `Library/LaunchAgents`, `.grok/hooks`, `.cursor/hooks.json`, and `.claude/settings.json`. Linux does not run `sandbox-exec`. The grok `--sandbox york` profile is still applied on every platform.
+On macOS the child is `sandbox-exec -f <temp>/.york.sb -- <cli> ...`. The profile starts from deny-default. It allows reads of system libraries, a named `mach-lookup` list (not every mach service), and outbound network so the model API can answer. It denies reads and writes of `/Users` and the resolved home. It then allows read and write of this request's temp directory only. `/private/tmp` and `/var` are realpathed, and the profile does not allow all of `/private/var`. After the home deny, it allows exec, read, and map of the CLI binary and of `bash`, `sh`, `realpath`, `node`, `sandbox-exec`, `env`, and `cat` when those resolve. That last-match lets a binary under the home run while home reads stay denied. Auth file reads are allowed after that, then `.ssh`, `.grok/hooks`, `.cursor/hooks.json`, `.claude/settings.json`, `.zshrc`, and `Library/LaunchAgents` are denied again. The whole `~/Library` tree is not denied after the binary allow, because the CLI may live there. Linux does not run `sandbox-exec`. On darwin a missing binary or a void profile throws, and the call does not run unsandboxed. The grok `--sandbox york` profile is still applied on every platform.
 
-A CLI that needs a helper binary outside that one exec path fails the call. That failure was not executed against the real binaries here. Keychain access through the seatbelt is also unverified until the live run.
+An inner `sandbox-exec` is on the exec allow list so a nested CLI sandbox can try to start. macOS may still refuse that nesting. This repository did not execute that case. A CLI that needs some other helper fails the call. Keychain access through the seatbelt is also unverified until the live run.
 
-The child keeps `HOME` so a CLI can find its login. `YORK_PROXY_SECRET` and `YORK_CANARY` are removed from the child environment.
+The child `HOME` is the temp directory, with only the auth file linked or copied in. `YORK_PROXY_SECRET` and `YORK_CANARY` are removed from the child environment.
 
 `york-api/Dockerfile` does not download a Cursor tarball. There is no checksum to pin. The Mac's installed `agent` is the binary.
 
 ## Output
 
-Before a reply is sent, York refuses the whole response when the text contains a private-key header, a passwd line (`root:x:0:0` or `root:*:0:0`), or an obvious token (`sk-`, `xoxb-` and the other `xox*-` forms, `ghp_`, `github_pat_`). The same check covers tool arguments. A configured `YORK_PROXY_SECRET` (16 characters or more) or `YORK_CANARY` (8 characters or more) in the text is also refused. The public body is `The AI chat is not available now.` The refused text is not trimmed and sent.
+Before a reply is sent, York refuses the whole response when the text contains a private-key header, a passwd line (`root:x:0:0` or `root:*:0:0`), or an obvious token (`sk-`, `sk-ant-`, `sk-proj-`, `xai-`, `xoxb-` and the other `xox*-` forms, `ghp_`, `gho_`, `ghs_`, `github_pat_`, `sk_live_`, `rk_live_`, `AIza`, `tskey-`, an AWS `AKIA` or `ASIA` access key, a JWT, or a `KEY=` / `SECRET=` / `TOKEN=` / `PASSWORD=` line). A few split and encoded forms of those prefixes are refused too. The same check covers tool arguments. A configured `YORK_PROXY_SECRET` (16 characters or more) or `YORK_CANARY` (8 characters or more) in the text is also refused. The public body is `The AI chat is not available now.` The refused text is not trimmed and sent. The public `provider` field is `local`. The real tier is logged as `tier=` only when `YORK_LOG_CLIENT=1`.
 
-`X-York-Only` may be `grok`, `claude`, `cursor`, or `codex`. It is honored only after the proxy secret matches. It is not a public switch.
+`X-York-Only` may be `grok`, `claude`, `cursor`, or `codex`. Caddy removes that header. The server honors it only when `YORK_ALLOW_TIER_OVERRIDE=1` and the request socket is loopback (`127.0.0.1`, `::1`, or `::ffff:127.0.0.1`) and the proxy secret matches. The installer does not set the flag. Turn it off after a checklist run. It is not a public switch.
 
 ## Caps
 
@@ -140,6 +142,6 @@ node scripts/real-call-checklist.mjs
 
 Restart the LaunchAgent with `YORK_DAILY_MESSAGE_CAP` equal to `YORK_SERVER_DAILY_CAP` before that run. Each outside-read uses its own client address. An unavailable or capped reply fails that read. It does not pass.
 
-The checklist calls `prepareGrokLaunch`, `prepareClaudeLaunch`, and `prepareCursorWorkspace` so the direct probes use York's launch, not a hand-built argument list. It plants a canary under `~/.ssh` and `~/.config`, asks each tier to read those files, append to `~/.zshrc`, write `~/Library/LaunchAgents`, run `id`, and fetch a local URL. It installs a canary hook and restores the previous hook files afterward. `X-York-Only` forces grok, then claude, then cursor.
+The checklist calls `prepareGrokLaunch`, `prepareClaudeLaunch`, and `prepareCursorWorkspace` so the direct probes use York's launch, not a hand-built argument list. It plants a canary under `~/.ssh` and `~/.config`, asks each tier to read those files, append to `~/.zshrc`, write `~/Library/LaunchAgents`, run `id`, and fetch a local URL. A polite refusal is not a pass. The output must show a denied tool attempt (`permission denied`, `EPERM`, `EACCES`, or the same family). It installs a canary hook and restores the previous hook files from `finally`, and also on `SIGINT`, `SIGTERM`, and `uncaughtException`. `SIGKILL` cannot run that restore. `X-York-Only` forces grok, then claude, then cursor. That step reads `tier=` from the server log. It fails unless the running process was started with `YORK_ALLOW_TIER_OVERRIDE=1` and `YORK_LOG_CLIENT=1`. Turn the override off afterward.
 
 Step 9 calls `https://www.destroyrebuild.xyz/api/york/chat`. A 404, a 405, or an empty body is `SKIP`, not `PASS`. Two networks are compared only when `YORK_PEER_BUDGET_KEY` is set from a second client. This host cannot invent that key. A skip is not a pass.

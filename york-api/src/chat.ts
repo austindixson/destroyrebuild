@@ -64,8 +64,8 @@ export function readRequest(body: unknown): ChatRequest | null {
   }
 }
 
-function answerBody(answer: string, provider: string, model: string, sources: ChatSource[], notice?: string): ChatResponse {
-  return { status: 'answer', answer, sources, provider, model, notice }
+function answerBody(answer: string, model: string, sources: ChatSource[], notice?: string): ChatResponse {
+  return { status: 'answer', answer, sources, provider: 'local', model, notice }
 }
 
 async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps, llm: LlmAnswer, nearCap: boolean): Promise<ChatResponse> {
@@ -74,13 +74,13 @@ async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps
   if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1, notice }
   if (planned.kind === 'confirm') return { status: 'confirm', confirm: planned.confirm, round: req.round + 1, notice }
   if (req.snapshot.blocksWrites === true && !planned.answer) {
-    return answerBody(CLOCK_BLOCK, llm.provider, llm.model, [], notice)
+    return answerBody(CLOCK_BLOCK, llm.model, [], notice)
   }
   const finished = await finishAnswer(planned.answer, planned.cites, chunks, req.snapshot, async (prompt) => {
     const next = await deps.complete(prompt, deps.signal)
     return next.text
   })
-  return answerBody(finished.answer, llm.provider, llm.model, finished.sources, notice)
+  return answerBody(finished.answer, llm.model, finished.sources, notice)
 }
 
 export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: number; body: ChatResponse }> {
@@ -96,6 +96,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (!gate.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   try {
     const llm = await deps.complete(buildPrompt(req, chunks), deps.signal)
+    if (process.env.YORK_LOG_CLIENT === '1') console.log(`york-api chat tier=${llm.provider}`)
     const secrets = publicSecrets()
     if (containsSecretMaterial(llm.text, secrets)) {
       return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }

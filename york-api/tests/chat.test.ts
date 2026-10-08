@@ -127,7 +127,7 @@ test('cascade fallthrough still answers', async () => {
   )
   assert.equal(result.body.status, 'answer')
   if (result.body.status !== 'answer') return
-  assert.equal(result.body.provider, 'cursor')
+  assert.equal(result.body.provider, 'local')
   assert.equal(result.body.model, 'auto')
   assert.match(result.body.answer, /70°F/)
 })

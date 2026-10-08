@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildAdapters } from '../src/adapters.ts'
 import { cascade, type Adapter } from '../src/cascade.ts'
-import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS } from '../src/adapters.ts'
+import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, tierBudgetMs } from '../src/adapters.ts'
 import { claudeArgs, codexArgs, codexLaunchArgsOk, cursorArgs, grokArgs, grokLaunchArgsOk, GROK_MODEL } from '../src/providers.ts'
 import type { LlmRequest } from '../src/types.ts'
 
@@ -57,27 +57,30 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(GROK_BUDGET_MS, 45_000)
   assert.equal(CLAUDE_BUDGET_MS, 25_000)
   assert.equal(CURSOR_BUDGET_MS, 30_000)
-  assert.equal(CODEX_BUDGET_MS, 35_000)
+  assert.equal(CODEX_BUDGET_MS, 25_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS < 110_000)
-  const adapters = buildAdapters({}, {
+  const off = tierBudgetMs({})
+  assert.deepEqual(off, { grok: 45_000, claude: 25_000, cursor: 30_000, codex: 25_000 })
+  const on = tierBudgetMs({ YORK_CODEX: '1' })
+  assert.deepEqual(on, { grok: 30_000, claude: 25_000, cursor: 25_000, codex: 25_000 })
+  assert.ok(on.grok + on.claude + on.cursor + on.codex <= 110_000)
+  const runner = {
     async run() {
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
     },
-  })
+  }
+  const adapters = buildAdapters({ YORK_SANDBOX: 'ready' }, runner)
   assert.deepEqual(adapters.map((item) => item.id), ['grok', 'claude', 'cursor', 'codex'])
   assert.equal(adapters[0]?.enabled(), true)
   assert.equal(adapters.find((item) => item.id === 'codex')?.enabled(), false)
-  const withCodex = buildAdapters({ YORK_CODEX: '1' }, {
-    async run() {
-      return { code: 0, stdout: 'The hall is stable.', stderr: '' }
-    },
-  })
+  assert.equal(buildAdapters({}, runner)[0]?.enabled(), false)
+  const withCodex = buildAdapters({ YORK_SANDBOX: 'ready', YORK_CODEX: '1' }, runner)
   assert.equal(withCodex.find((item) => item.id === 'codex')?.enabled(), true)
 })
 
 test('cascade skips claude when that binary is missing', async () => {
   const calls: string[] = []
-  const adapters = buildAdapters({ YORK_CLAUDE_CLI: 'unavailable' }, {
+  const adapters = buildAdapters({ YORK_SANDBOX: 'ready', YORK_CLAUDE_CLI: 'unavailable' }, {
     async run(cmd) {
       calls.push(cmd)
       if (cmd === 'grok') return { code: 1, stdout: '', stderr: 'grok failed' }
@@ -111,10 +114,10 @@ test('claude and cursor commands use the verified model ids', () => {
   assert.ok(cursorArgs('auto', '/tmp/york').includes('ask'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('/tmp/york'))
   assert.equal(cursorArgs('auto', '/tmp/york').includes('--force'), false)
-  assert.deepEqual(codexArgs(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config'])
+  assert.deepEqual(codexArgs(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config', '--ephemeral', '--ignore-rules'])
   assert.equal(codexLaunchArgsOk(codexArgs()), true)
-  assert.equal(codexLaunchArgsOk(['exec', '--skip-git-repo-check']), false)
-  const forced = buildAdapters({ YORK_CODEX: '1' }, {
+  assert.equal(codexLaunchArgsOk(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config']), false)
+  const forced = buildAdapters({ YORK_SANDBOX: 'ready', YORK_CODEX: '1' }, {
     async run() {
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
     },

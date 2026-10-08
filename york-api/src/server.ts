@@ -24,11 +24,40 @@ export function readTier(value: string): CliTier | null {
   return null
 }
 
-/** The only-tier header is honored after a long proxy secret matches. */
-export function yorkOnlyFrom(headers: NodeJS.Dict<string | string[] | undefined>, secret: string): CliTier | null {
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+export function isLoopback(addr: string | null | undefined): boolean {
+  return LOOPBACK.has((addr ?? '').trim().toLowerCase())
+}
+
+/**
+ * The only-tier header is honored when YORK_ALLOW_TIER_OVERRIDE=1, the socket
+ * is loopback, and the proxy secret matches. Caddy strips the header. The
+ * LaunchAgent does not set the flag.
+ */
+export function yorkOnlyFrom(
+  headers: NodeJS.Dict<string | string[] | undefined>,
+  secret: string,
+  env: NodeJS.ProcessEnv,
+  socketAddr: string | null | undefined,
+): CliTier | null {
+  if (env.YORK_ALLOW_TIER_OVERRIDE !== '1') return null
+  if (!isLoopback(socketAddr)) return null
   if (!proxySecretConfigured(secret)) return null
   if (!proxySecretOk(headerText(headers['x-york-proxy-secret']), secret)) return null
   return readTier(headerText(headers['x-york-only']))
+}
+
+type YorkRoute = 'health' | 'chat' | 'denied' | 'miss'
+
+/** Route only. The request handler stays a switch over this result. */
+export function yorkRoute(method: string | undefined, url: string, ip: string | null): YorkRoute {
+  const path = url.split('?')[0] ?? ''
+  if (path !== '/api/york/health' && path !== '/api/york/chat') return 'miss'
+  if (!ip) return 'denied'
+  if (method === 'GET' && path === '/api/york/health') return 'health'
+  if (method === 'POST' && path === '/api/york/chat') return 'chat'
+  return 'miss'
 }
 
 export interface YorkServerOptions {
@@ -114,21 +143,35 @@ export function createYorkServer(options: YorkServerOptions = {}) {
   const proxySecret = options.proxySecret ?? ''
   return createServer((req, res) => {
     const url = req.url ?? ''
-    const york = url.startsWith('/api/york/health') || url.startsWith('/api/york/chat')
-    const ip = york ? clientIp(req, proxySecret) : 'local'
-    if (york && !ip) {
-      send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })
-      return
+    const ip = clientIp(req, proxySecret)
+    const route = yorkRoute(req.method, url, ip)
+    switch (route) {
+      case 'health':
+        send(res, 200, { ok: true })
+        return
+      case 'chat':
+        void onChat(
+          req,
+          res,
+          options,
+          budget,
+          inflight,
+          ip ?? 'local',
+          yorkOnlyFrom(req.headers, proxySecret, process.env, req.socket.remoteAddress),
+        )
+        return
+      case 'denied':
+        send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })
+        return
+      case 'miss':
+        send(res, 404, { status: 'error', answer: UNAVAILABLE })
+        return
+      default: {
+        const neverRoute: never = route
+        send(res, 404, { status: 'error', answer: UNAVAILABLE })
+        return neverRoute
+      }
     }
-    if (req.method === 'GET' && (url === '/api/york/health' || url.startsWith('/api/york/health?'))) {
-      send(res, 200, { ok: true })
-      return
-    }
-    if (req.method === 'POST' && (url === '/api/york/chat' || url.startsWith('/api/york/chat?'))) {
-      void onChat(req, res, options, budget, inflight, ip ?? 'local', yorkOnlyFrom(req.headers, proxySecret))
-      return
-    }
-    send(res, 404, { status: 'error', answer: UNAVAILABLE })
   })
 }
 

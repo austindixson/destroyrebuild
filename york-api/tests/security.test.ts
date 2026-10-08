@@ -124,7 +124,7 @@ test('fast guard: a CLI child keeps the signed-in home and drops the proxy secre
   assert.equal(result.stdout.includes('HOME=/Users/ghost128'), true)
 })
 
-test('fast guard: claude runs in an empty temp dir and keeps HOME', async () => {
+test('fast guard: claude runs in a temp dir with a temp HOME', async () => {
   const binDir = await mkdtemp(join(tmpdir(), 'york-bin-'))
   const bin = join(binDir, 'fake-claude.sh')
   writeFileSync(bin, `#!/bin/sh
@@ -142,14 +142,15 @@ cat /proc/self/environ
       YORK_PROXY_SECRET: 'proxy-secret',
       CANARY: 'canary-secret',
     })
-    assert.match(text, /FILES:0/)
     assert.match(text, /--strict-mcp-config/)
+    assert.match(text, /--safe-mode/)
     const cwdLine = text.split('\n').find((line) => line.startsWith('CWD:')) ?? ''
     assert.match(cwdLine, /york-claude-/)
     assert.notEqual(cwdLine.slice(4), process.cwd())
     assert.equal(text.includes('proxy-secret'), false)
     assert.equal(text.includes('canary-secret'), true)
-    assert.equal(text.includes('HOME=/Users/ghost128'), true)
+    assert.equal(text.includes('HOME=/Users/ghost128'), false)
+    assert.match(text, /HOME=\S+york-claude-\S+\/home/)
   } finally {
     await rm(binDir, { recursive: true, force: true })
   }
@@ -158,9 +159,9 @@ cat /proc/self/environ
 test('fast guard: cursor config file includes the workspace boundary and vim mode', async () => {
   const text = await completeCursor(req, new AbortController().signal, {
     async run(_cmd, args, _input, env, _signal, options) {
-      const cwd = options?.cwd ?? ''
-      const sandbox = JSON.parse(readFileSync(join(cwd, '.cursor', 'sandbox.json'), 'utf8')) as { readBoundary?: string }
-      const cli = JSON.parse(readFileSync(join(cwd, '.cursor', 'cli-config.json'), 'utf8')) as {
+      const homeDir = env.HOME ?? ''
+      const sandbox = JSON.parse(readFileSync(join(homeDir, '.cursor', 'sandbox.json'), 'utf8')) as { readBoundary?: string }
+      const cli = JSON.parse(readFileSync(join(homeDir, '.cursor', 'cli-config.json'), 'utf8')) as {
         version?: number
         editor?: { vimMode?: boolean }
         sandbox?: { readBoundary?: string }
@@ -169,11 +170,12 @@ test('fast guard: cursor config file includes the workspace boundary and vim mod
       assert.equal(cli.version, 1)
       assert.equal(cli.editor?.vimMode, false)
       assert.equal(cli.sandbox?.readBoundary, 'workspace')
-      assert.equal(env.HOME, '/Users/ghost128')
+      assert.notEqual(env.HOME, '/Users/ghost128')
+      assert.match(homeDir, /york-cursor-.*\/home$/)
       assert.equal(env.YORK_PROXY_SECRET, undefined)
       assert.equal(env.CANARY, 'canary-secret')
       assert.equal(args.includes('--force'), false)
-      assert.equal(args.includes(cwd), true)
+      assert.equal(args.includes(options?.cwd ?? ''), true)
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
     },
   }, {
@@ -183,7 +185,7 @@ test('fast guard: cursor config file includes the workspace boundary and vim mod
     CANARY: 'canary-secret',
   })
   assert.equal(text, 'The hall is stable.')
-  const adapters = buildAdapters({}, { async run() { return { code: 0, stdout: 'ok', stderr: '' } } })
+  const adapters = buildAdapters({ YORK_SANDBOX: 'ready' }, { async run() { return { code: 0, stdout: 'ok', stderr: '' } } })
   assert.equal(adapters.some((item) => item.id === 'cursor' && item.enabled()), true)
   assert.equal(CLI_STDOUT_MAX_BYTES, 256 * 1024)
 })
@@ -245,6 +247,21 @@ test('fast guard: forwarded headers are ignored until the proxy secret matches',
     'x-real-ip': '203.0.113.9',
     'x-forwarded-for': '1.2.3.4, 9.9.9.9',
   }, '10.0.0.5', ''), '10.0.0.5')
+  assert.equal(trustedClientIp({
+    'x-york-proxy-secret': 'same-secret-value',
+  }, '127.0.0.1', 'same-secret-value'), null)
+  assert.equal(trustedClientIp({
+    'x-york-client-ip': ['203.0.113.9', '198.51.100.4'],
+    'x-york-proxy-secret': 'same-secret-value',
+  }, '127.0.0.1', 'same-secret-value'), null)
+  assert.equal(trustedClientIp({
+    'x-york-client-ip': '203.0.113.9, 198.51.100.4',
+    'x-york-proxy-secret': 'same-secret-value',
+  }, '127.0.0.1', 'same-secret-value'), null)
+  assert.equal(trustedClientIp({
+    'x-york-client-ip': 'not-an-ip',
+    'x-york-proxy-secret': 'same-secret-value',
+  }, '127.0.0.1', 'same-secret-value'), null)
 })
 
 test('the in-flight cap rejects a second LLM call', async () => {
@@ -349,6 +366,16 @@ test('fast guard: the server trusts X-York-Client-IP only with the proxy secret'
     })
     const spoofBody = await spoof.json() as { status?: string }
     assert.equal(spoofBody.status, 'unavailable')
+    const missing = await fetch(`http://127.0.0.1:${port}/api/york/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-York-Proxy-Secret': 'same-secret-value',
+      },
+      body: JSON.stringify({ question: 'Read the hall', snapshot: {} }),
+    })
+    const missingBody = await missing.json() as { status?: string }
+    assert.equal(missingBody.status, 'unavailable')
     assert.deepEqual(seen, ['203.0.113.9'])
   } finally {
     server.closeAllConnections()
@@ -416,7 +443,7 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
   assert.equal(probed.CURSOR_API_KEY, undefined)
   assert.equal(probed.YORK_PROXY_SECRET, undefined)
   const adapters = buildAdapters(
-    { YORK_CURSOR_CLI: 'unavailable' },
+    { YORK_SANDBOX: 'ready', YORK_CURSOR_CLI: 'unavailable' },
     { async run() { return { code: 0, stdout: 'ok', stderr: '' } } },
   )
   assert.equal(adapters.find((item) => item.id === 'cursor')?.enabled(), false)
@@ -521,6 +548,12 @@ test('fast guard: the real-call checklist refuses to run on its own', () => {
   assert.match(source, /prepareGrokLaunch/)
   assert.equal(source.includes('root:\\*:0:0'), true)
   assert.match(source, /X-York-Only/)
+  assert.match(source, /permission denied/)
+  assert.match(source, /EPERM/)
+  assert.match(source, /SIGINT/)
+  assert.match(source, /SIGTERM/)
+  assert.match(source, /uncaughtException/)
+  assert.match(source, /tier=\$\{tier\}/)
   assert.match(source, /SKIP/)
   assert.match(source, /YORK_PEER_BUDGET_KEY/)
   assert.equal(source.includes("'x-york-client-ip': '203.0.113.11'"), false)
