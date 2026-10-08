@@ -42,6 +42,17 @@ const CHAOS_FAULTS: Record<ChaosIncident, { label: string; tone: 'amber' | 'rose
   'bms-fight': { label: 'BMS and panel disagree', tone: 'amber', info: 'chaos-bms-fight' },
 }
 
+interface ExplorerSceneModule {
+  webglAvailable(): boolean
+  isLowPowerClient(): boolean
+  ChillerScene: new (
+    canvas: HTMLCanvasElement,
+    onSelect: (id: ComponentId | null) => void,
+    lowPower?: boolean,
+    onBoot?: (text: string) => void,
+  ) => ChillerScene
+}
+
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live plant', icon: 'home' },
   { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
@@ -731,7 +742,7 @@ export class App {
             <span class="pill">CH-01 · N+1</span>
             <span class="pill" id="canvas-status">The 3D view starts.</span>
           </div>
-          <div class="canvas-boot" id="canvas-boot">The plant model starts.</div>
+          <div class="canvas-boot" id="canvas-boot" role="status">The plant model starts.</div>
           <canvas id="chiller-canvas"></canvas>
         </div>
         <aside class="detail-pane" id="detail" ${infoAttr(this.selected ? componentInfoId(this.selected) : 'detail-ready')}>${this.detailHtml()}</aside>
@@ -885,38 +896,120 @@ export class App {
     }
   }
 
+  private sceneImportTimeoutMs(): number {
+    const win = window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }
+    const override = win.__YORK_SCENE_IMPORT_TIMEOUT_MS
+    if (typeof override === 'number' && Number.isFinite(override) && override >= 250 && override <= 60_000) {
+      return override
+    }
+    return 20_000
+  }
+
+  private importChillerScene() {
+    const timeoutMs = this.sceneImportTimeoutMs()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+    return new Promise<ExplorerSceneModule | null>((resolve, reject) => {
+      timer = window.setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(null)
+      }, timeoutMs)
+      import('./3d/chillerScene').then(
+        (mod) => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          resolve(mod)
+        },
+        (err: unknown) => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          reject(err)
+        },
+      )
+    })
+  }
+
+  private explorerVisitLive(canvas: HTMLCanvasElement): boolean {
+    return this.view === 'explorer' && canvas.isConnected
+  }
+
+  private createExplorerScene(mod: ExplorerSceneModule, canvas: HTMLCanvasElement) {
+    const boot = canvas.closest('.canvas-wrap')?.querySelector('#canvas-boot')
+    const scene = new mod.ChillerScene(
+      canvas,
+      (id) => {
+        if (id) this.onExplorerSelect(id)
+      },
+      mod.isLowPowerClient(),
+      (text) => {
+        if (!canvas.isConnected || !boot) return
+        boot.textContent = text
+      },
+    )
+    this.scene = scene
+    scene.onInstrument = (id) => this.highlightPipe(id)
+    return scene
+  }
+
+  private showSceneFailure(
+    canvas: HTMLCanvasElement,
+    statusText = 'The 3D view failed.',
+    bootText = 'The 3D view failed. Use the buttons.',
+  ) {
+    if (!canvas.isConnected) return
+    const wrap = canvas.closest('.canvas-wrap')
+    const status = wrap?.querySelector('#canvas-status')
+    const boot = wrap?.querySelector('#canvas-boot')
+    if (status) status.textContent = statusText
+    if (boot) boot.textContent = bootText
+    canvas.style.display = 'none'
+  }
+
+  private applySceneState(scene: ChillerScene) {
+    const canvas = scene.renderer.domElement
+    if (!canvas.isConnected) return
+    scene.setValve('chw', this.controller.chwValvePct)
+    scene.setValve('cw', this.controller.cwValvePct)
+    scene.setValve('gly', this.controller.glycolValvePct)
+    scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
+    scene.setReadings(this.sceneReadings())
+    if (this.selected) scene.select(this.selected)
+    const wrap = canvas.closest('.canvas-wrap')
+    const status = wrap?.querySelector('#canvas-status')
+    if (status) status.textContent = scene.statusLine()
+    wrap?.querySelector('#canvas-boot')?.remove()
+  }
+
   private async bindExplorer(el: Element) {
     this.bindExplorerRail(el.querySelector('#hotspot-rail')!)
-    const canvas = el.querySelector<HTMLCanvasElement>('#chiller-canvas')!
-    const status = el.querySelector('#canvas-status')
-    const boot = el.querySelector('#canvas-boot')
+    const canvas = el.querySelector<HTMLCanvasElement>('#chiller-canvas')
+    if (!canvas) return
     try {
-      const mod = await import('./3d/chillerScene')
-      if (this.view !== 'explorer') return
-      if (!mod.webglAvailable()) {
-        if (status) status.textContent = 'The 3D view is not available.'
-        if (boot) boot.textContent = 'WebGL is not available. Use the buttons.'
-        canvas.style.display = 'none'
+      const mod = await this.importChillerScene()
+      if (!this.explorerVisitLive(canvas)) return
+      if (!mod) {
+        this.showSceneFailure(canvas, 'The 3D view failed.', 'The 3D view did not start. Use the buttons.')
         return
       }
-      this.scene = new mod.ChillerScene(canvas, (id) => id && this.onExplorerSelect(id), mod.isLowPowerClient())
-      this.scene.onInstrument = (id) => this.highlightPipe(id)
+      if (!mod.webglAvailable()) {
+        this.showSceneFailure(canvas, 'The 3D view is not available.', 'WebGL is not available. Use the buttons.')
+        return
+      }
+      const scene = this.createExplorerScene(mod, canvas)
       this.bindPipeBoard(el)
-      await this.scene.ready
-      if (this.view !== 'explorer') return
-      this.scene.setValve('chw', this.controller.chwValvePct)
-      this.scene.setValve('cw', this.controller.cwValvePct)
-      this.scene.setValve('gly', this.controller.glycolValvePct)
-      this.scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
-      this.scene.setReadings(this.sceneReadings())
-      if (this.selected) this.scene.select(this.selected)
-      if (status) status.textContent = mod.isLowPowerClient() ? 'Low-detail 3D' : 'Turn the model. Select a part.'
-      boot?.remove()
-    } catch (e) {
-      console.error(e)
-      if (status) status.textContent = 'The 3D view failed.'
-      if (boot) boot.textContent = 'The 3D view failed. Use the buttons.'
-      canvas.style.display = 'none'
+      await scene.ready
+      if (!this.explorerVisitLive(canvas) || this.scene !== scene) return
+      if (scene.bootFailed) {
+        this.showSceneFailure(canvas, 'The 3D view failed.', 'The plant model did not open. Use the buttons.')
+        return
+      }
+      this.applySceneState(scene)
+    } catch (err) {
+      console.error(err)
+      this.showSceneFailure(canvas)
     }
   }
 
