@@ -930,6 +930,7 @@ export const INFO = {
       'The outdoor dry-bulb drives the dry cooler. The cooling tower follows the wet-bulb, and this sim keeps the wet-bulb below the dry-bulb.',
       'The 40°F, 75°F, and 100°F presets on the live board are the same outdoor setting as the field slider.',
       'Cold air lets the glycol loop remove part of the load. Hot air puts the cooling tower on the critical path.',
+      'A change of the dry-bulb moves the trainer LCHLT target and the valve targets.',
       'Read the plant note under the mimic before you respond to one chiller alarm.',
     ],
     ['outdoor', 'wetBulb'],
@@ -1059,7 +1060,7 @@ export const INFO = {
     [
       'These buttons apply a fault to the live sim. The buttons are drills. The buttons are not remedies.',
       'After a fault, read the alarm banner and the tiles before you change a valve or a setpoint.',
-      'Clear incident returns CH-01 to lead and CH-02 to standby in this trainer.',
+      'Clear the incident restores the plant to the state before the fault.',
       'Open the incident clock if you want the same fault as a timed decision.',
     ],
   ),
@@ -1101,11 +1102,49 @@ export const INFO = {
   'chaos-clear': point(
     'Clear incident',
     [
-      'This action removes the injected fault. CH-01 returns to lead and CH-02 returns to standby.',
-      'Use this action when you want a clean board. The action does not undo a setpoint or a valve that you moved.',
+      'Clear the incident restores the plant to the state before the fault.',
+      'The clock, the setpoints, the valves, and the chiller run state return to that state.',
       'On a real plant, record the as-left state and update the ticket. A button does not erase the event.',
     ],
     ['alarm', 'mode'],
+  ),
+  'chaos-bms-fight': point(
+    'BMS and panel disagree',
+    [
+      'The LCHLT actual moves up and down. The setpoint on the panel stays in place.',
+      'The period is 12 seconds and the swing is 1.5°F. These are trainer values.',
+      'Make the plant stable in one control mode. Then name the single writer for the setpoint.',
+    ],
+    ['lchltAct', 'lchltSet'],
+  ),
+  'plant-controls': point(
+    'Plant controls',
+    [
+      'These controls operate CH-01 and CH-02 on this board. The trainer can hold more units.',
+      'Running capacity is the sum of the units that are in operation. Each unit uses a trainer value of 5 MW.',
+      'A stop asks you to confirm. Clear the incident restores the plant to the state before the fault.',
+      'Outdoor air sets a trainer LCHLT target. A setpoint that fights the target raises an alarm.',
+      'A later trainer slice can show a bank of 18 units, then 36. This board does not show that bank yet.',
+    ],
+    ['itLoad', 'hallSupply'],
+  ),
+  'slider-it-load': point(
+    'IT load target',
+    [
+      'Set the IT load target. The live load still moves a small amount around the target.',
+      'The numbers are trainer values. They are not a chiller rating from a manual.',
+      'If the load is above the running capacity, the hall supply temperature increases.',
+      'Start another chiller or decrease the target to bring the hall supply down.',
+    ],
+    ['itLoad'],
+  ),
+  'opti-ch02': point(
+    'CH-02 on this board',
+    [
+      'Start CH-02 when the IT load is above the capacity of CH-01.',
+      'A soft stop and a safety stop ask you to confirm. The stop takes CH-02 offline.',
+      'The live board uses the same commands. Capacity is the sum of the running units.',
+    ],
   ),
   'chain-it': point(
     'IT load',
@@ -1297,6 +1336,7 @@ export const INFO = {
       'This slider sets the outdoor dry-bulb from 20°F to 110°F. The live-board presets use the same setting at 40°F, 75°F, and 100°F.',
       'The dry-bulb drives the dry cooler. The wet-bulb drives the cooling tower. The plant note and the cooling tower card show the wet-bulb.',
       'The CHW ΔP target on the CHW card changes with this temperature. The target is higher in extreme heat and lower in cold weather.',
+      'A new dry-bulb moves the trainer LCHLT target and the valve targets unless you already set them.',
       'Change the weather, then read the plant note before you adjust the valves.',
     ],
     ['outdoor', 'wetBulb'],
@@ -1500,6 +1540,7 @@ export const INFO = {
     'LCHLT setpoint slider',
     [
       'This slider sets the LCHLT from 42°F to 65°F. The sim starts at 55°F.',
+      'The outdoor dry-bulb sets a trainer target. If this slider fights that target, the plant shows an alarm.',
       'The plant tries to make that water. The hall supply air follows the water temperature.',
       'On a live campus, this move is under change control. Do not move the slider to respond to one rack.',
       'If the BMS owns the setpoint, write the value in one place. If you write the value in two places, the valves move too often.',

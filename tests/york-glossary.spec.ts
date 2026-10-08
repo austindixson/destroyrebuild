@@ -104,7 +104,7 @@ test('wet-bulb, LCHLT, and % FLA open glossary definitions', async ({ page }) =>
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
 
-  await page.getByRole('button', { name: 'Show the meaning of LCHLT' }).click()
+  await page.locator('#kpi-strip').getByRole('button', { name: 'Show the meaning of LCHLT' }).click()
   await expect(dialog.locator('#info-title')).toHaveText('LCHLT')
   await expect(dialog).toContainText('leaving chilled liquid temperature')
   await expect(dialog).toContainText('55°F')
