@@ -1,25 +1,23 @@
-import { glycolHeaderDpPsi } from './plantSim'
+import { cwHeaderDpPsi, chwHeaderDpPsi, glycolHeaderDpPsi } from './plantSim'
 
 /**
  * Balance-valve red zones for the trainer.
  *
- * These are trainer limits, not a York manual table. The pipe board paints a
- * reading red at the same steady differential-pressure marks (the live reading
- * also has a small sine, which this zone ignores so the alert does not flicker):
- * - CHW ΔP below 12 psi or above 24 psi
- * - CW ΔP below 8 psi (the curve never reaches the 18 psi high mark)
- * - Glycol ΔP below 8 psi when outdoor dry-bulb is at or below 48°F
+ * These are trainer limits, not a York manual table. The zone is the steady
+ * header curve compared with these marks. The pipe board prints that same
+ * steady value, so the red number and this alert describe one opening.
+ * The live snapshot still adds a sine (CHW ±0.3 psi, CW ±0.2 psi) for the
+ * mimic. That sine is not used here, and it does not change the pipe-board red.
  *
- * Steady openings from chwDpAt / cwDpAt / glycolDpAt in plantSim.ts:
- * - CHW 40% is 11.81 psi and 41% is 12.00 psi, so 40% and below is the low zone
- * - CHW 92% is 23.87 psi and 93% is 24.13 psi, so 93% and above is the high zone
- * - CW 44% is 7.96 psi and 45% is 8.08 psi, so 44% and below is the low zone
- * - A wide CW valve stays under 18 psi. It is not a red zone.
- * - Glycol red depends on outdoor temperature because cold glycol is thicker.
+ * Steady edges from chwHeaderDpPsi / cwHeaderDpPsi / glycolHeaderDpPsi:
+ * - CHW 40% is 11.81 psi and 41% is 12.00 psi
+ * - CHW 92% is 23.87 psi and 93% is 24.13 psi
+ * - CW 44% is 7.96 psi and 45% is 8.08 psi
+ * - A wide CW valve stays under 18 psi, so CW has no high zone
+ * - Glycol red depends on outdoor temperature because cold glycol is thicker
  *
  * applyFlowAlarm uses CHW below 42% and CW below 40%. Those faults sit next to
- * these marks. The alert follows the red ΔP mark so the panel and the red
- * number describe the same opening.
+ * these marks.
  */
 export const VALVE_RED = {
   chwDpLowPsi: 12,
@@ -28,9 +26,6 @@ export const VALVE_RED = {
   cwDpHighPsi: 18,
   glyDpLowPsi: 8,
   glyOatAtOrBelow: 48,
-  chwLowAtOrBelow: 40,
-  chwHighAtOrAbove: 93,
-  cwLowAtOrBelow: 44,
 } as const
 
 export type ValveLoop = 'chw' | 'cw' | 'gly'
@@ -67,16 +62,16 @@ export interface ValveAlertResult {
 }
 
 const CHW_LOW =
-  'The hall supply temperature rises, and the CRAHs do not get enough flow. The CHW valve is too far closed, so the CHW ΔP falls below 12 psi.'
+  'The hall supply temperature rises, and the CRAHs do not get enough flow. The CHW valve is too far closed, so the CHW ΔP falls below the trainer limit of 12 psi.'
 
 const CHW_HIGH =
-  'The CHW ΔP is above 24 psi. The CHW valve is almost fully open, and the piping and the coils are the restriction.'
+  'The CHW ΔP is above the trainer limit of 24 psi. The CHW valve is almost fully open, and the piping and the coils are the restriction.'
 
 const CW_LOW =
-  'Condenser pressure and the condenser approach rise. The CW valve is too far closed, so cooling tower flow is low and the CW ΔP is below 8 psi.'
+  'Condenser pressure and the CW return temperature rise. The CW valve is too far closed, so cooling tower flow is low and the CW ΔP is below the trainer limit of 8 psi.'
 
 const GLY_LOW =
-  'Flow to the dry cooler is low. The glycol valve is too far closed for this outdoor temperature, so the glycol ΔP is below 8 psi.'
+  'Flow to the dry cooler is low. The glycol valve is too far closed for this outdoor temperature, so the glycol ΔP is below the trainer limit of 8 psi.'
 
 export function seedValveAlert(reading: ValveReading): ValveAlertState {
   return { zones: zonesFor(reading), shown: null, dismissed: false }
@@ -134,13 +129,16 @@ function zonesFor(reading: ValveReading): Record<ValveLoop, ValveZone> {
 }
 
 function chwZone(pct: number): ValveZone {
-  if (pct <= VALVE_RED.chwLowAtOrBelow) return 'low'
-  if (pct >= VALVE_RED.chwHighAtOrAbove) return 'high'
+  const dp = chwHeaderDpPsi(pct)
+  if (dp < VALVE_RED.chwDpLowPsi) return 'low'
+  if (dp > VALVE_RED.chwDpHighPsi) return 'high'
   return 'ok'
 }
 
 function cwZone(pct: number): ValveZone {
-  if (pct <= VALVE_RED.cwLowAtOrBelow) return 'low'
+  const dp = cwHeaderDpPsi(pct)
+  if (dp < VALVE_RED.cwDpLowPsi) return 'low'
+  if (dp > VALVE_RED.cwDpHighPsi) return 'high'
   return 'ok'
 }
 

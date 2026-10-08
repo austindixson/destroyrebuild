@@ -91,14 +91,6 @@ function liveText(id: InfoId, ctx: LiveContext): string {
 
 type PanelMode = 'info' | 'glossary'
 
-/** Keyboard target for a glossary span inside another button. A real jargon button uses click. */
-function spanJargonFromKey(target: EventTarget | null): HTMLElement | null {
-  if (!(target instanceof HTMLElement)) return null
-  const jargon = target.closest('.jargon')
-  if (!(jargon instanceof HTMLElement) || jargon instanceof HTMLButtonElement) return null
-  return jargon
-}
-
 /** One info button and one panel. Glossary terms reuse this same popover and sheet. */
 export class InfoDock {
   private layer: HTMLElement
@@ -147,7 +139,6 @@ export class InfoDock {
     this.closeBtn.addEventListener('click', () => this.close(true))
     this.appRoot.addEventListener('click', (event) => this.onGlossaryClick(event), true)
     this.panel.addEventListener('click', (event) => this.onGlossaryClick(event), true)
-    this.appRoot.addEventListener('keydown', (event) => this.onGlossaryKey(event), true)
     this.onKey = (event) => this.onKeyDown(event)
     this.onResize = () => {
       if (!this.mode) return
@@ -240,16 +231,6 @@ export class InfoDock {
     event.preventDefault()
     event.stopPropagation()
     this.toggleGlossary(id, btn)
-  }
-
-  /** A span inside a fault button must not activate that button. */
-  private onGlossaryKey(event: KeyboardEvent) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    const jargon = spanJargonFromKey(event.target)
-    if (!jargon) return
-    event.preventDefault()
-    event.stopPropagation()
-    jargon.click()
   }
 
   private toggleInfo(id: InfoId, btn: HTMLElement) {

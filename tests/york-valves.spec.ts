@@ -54,7 +54,7 @@ test('a balance valve dragged into red shows one alert until it leaves', async (
   await expect(alert).toBeVisible()
   await expect(alert).toContainText('hall supply temperature rises')
   await expect(alert).toContainText('too far closed')
-  await expect(alert).toContainText('12 psi')
+  await expect(alert).toContainText('below the trainer limit of 12 psi')
   const dialog = page.getByRole('dialog')
   await alert.getByRole('button', { name: 'Show the meaning of CHW' }).click()
   await expect(dialog.locator('#info-title')).toHaveText('CHW')

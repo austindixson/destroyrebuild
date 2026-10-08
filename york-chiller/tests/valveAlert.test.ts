@@ -39,6 +39,7 @@ test('a red entry alerts once, and later ticks in that zone do not enter again',
   assert.equal(first.show?.zone, 'low')
   assert.match(first.show?.text ?? '', /hall supply temperature rises/)
   assert.match(first.show?.text ?? '', /too far closed/)
+  assert.match(first.show?.text ?? '', /trainer limit of 12 psi/)
   assert.doesNotMatch(first.show?.text ?? '', /%RLA|%TSLA|freeze|flow switch/)
 
   const held = [25, 20, 15].reduce((current, chw) => {
@@ -69,7 +70,9 @@ test('leaving red clears the alert, and another red valve downgrades the panel',
   const both = step(chw.state, { chw: 20, cw: 30 })
   assert.equal(both.entered, true)
   assert.equal(both.show?.loop, 'cw')
-  assert.match(both.show?.text ?? '', /condenser approach/)
+  assert.match(both.show?.text ?? '', /CW return temperature rise/)
+  assert.match(both.show?.text ?? '', /trainer limit of 8 psi/)
+  assert.doesNotMatch(both.show?.text ?? '', /approach/)
   assert.match(both.show?.text ?? '', /cooling tower flow is low/)
 
   const chwLeft = step(both.state, { chw: 72, cw: 30 })
@@ -83,7 +86,7 @@ test('leaving red clears the alert, and another red valve downgrades the panel',
   const high = step(clear.state, { chw: 100 })
   assert.equal(high.entered, true)
   assert.equal(high.show?.zone, 'high')
-  assert.match(high.show?.text ?? '', /above 24 psi/)
+  assert.match(high.show?.text ?? '', /trainer limit of 24 psi/)
   assert.match(high.show?.text ?? '', /restriction/)
 
   const cwStill = step(high.state, { chw: 72, cw: 30 })
@@ -92,7 +95,7 @@ test('leaving red clears the alert, and another red valve downgrades the panel',
   const downgrade = step(chwAgain.state, { chw: 72, cw: 30 })
   assert.equal(downgrade.entered, false)
   assert.equal(downgrade.show?.loop, 'cw')
-  assert.match(downgrade.show?.text ?? '', /condenser approach/)
+  assert.match(downgrade.show?.text ?? '', /CW return temperature rise/)
 })
 
 test('glycol red follows outdoor temperature and does not repeat while the valve stays shut', () => {
@@ -105,7 +108,7 @@ test('glycol red follows outdoor temperature and does not repeat while the valve
   assert.equal(cold.entered, true)
   assert.equal(cold.show?.loop, 'gly')
   assert.match(cold.show?.text ?? '', /dry cooler is low/)
-  assert.match(cold.show?.text ?? '', /glycol ΔP is below 8 psi/)
+  assert.match(cold.show?.text ?? '', /trainer limit of 8 psi/)
 
   const held = step(cold.state, { gly: 16, oatF: 40 })
   assert.equal(held.entered, false)

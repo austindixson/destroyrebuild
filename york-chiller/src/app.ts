@@ -25,7 +25,15 @@ import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { openTroubleView, shuffleChoices, troubleStep, type TroubleDestination } from './troubleOrder'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantController, type PlantChangeDetail } from './sim/controller'
-import { isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
+import {
+  chwHeaderDpPsi,
+  cwHeaderDpPsi,
+  glycolHeaderDpPsi,
+  isIncidentKind,
+  rankFor,
+  type IncidentKind,
+  type PlantSnapshot,
+} from './sim/plantSim'
 import {
   dismissValveAlert,
   reduceValveAlert,
@@ -858,17 +866,20 @@ export class App {
     const chw = this.root.querySelector('#chw-dp-read')
     const cw = this.root.querySelector('#cw-dp-read')
     const gly = this.root.querySelector('#gly-dp-read')
+    const chwDp = chwHeaderDpPsi(s.chwValvePct)
+    const cwDp = cwHeaderDpPsi(s.cwValvePct)
+    const glyDp = glycolHeaderDpPsi(s.glycolValvePct, s.oatF)
     if (chw) {
-      chw.textContent = `ΔP ${s.chwDpPsi.toFixed(1)} psi · target ${s.chwTargetPsi}`
-      chw.classList.toggle('bad', s.chwDpPsi < VALVE_RED.chwDpLowPsi || s.chwDpPsi > VALVE_RED.chwDpHighPsi)
+      chw.textContent = `ΔP ${chwDp.toFixed(1)} psi · target ${s.chwTargetPsi}`
+      chw.classList.toggle('bad', chwDp < VALVE_RED.chwDpLowPsi || chwDp > VALVE_RED.chwDpHighPsi)
     }
     if (cw) {
-      cw.textContent = `ΔP ${s.cwDpPsi.toFixed(1)} psi · fans ${s.towerFanPct}%`
-      cw.classList.toggle('bad', s.cwDpPsi < VALVE_RED.cwDpLowPsi || s.cwDpPsi > VALVE_RED.cwDpHighPsi)
+      cw.textContent = `ΔP ${cwDp.toFixed(1)} psi · fans ${s.towerFanPct}%`
+      cw.classList.toggle('bad', cwDp < VALVE_RED.cwDpLowPsi || cwDp > VALVE_RED.cwDpHighPsi)
     }
     if (gly) {
-      gly.textContent = `ΔP ${s.glycolDpPsi.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
-      gly.classList.toggle('bad', s.oatF <= VALVE_RED.glyOatAtOrBelow && s.glycolDpPsi < VALVE_RED.glyDpLowPsi)
+      gly.textContent = `ΔP ${glyDp.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
+      gly.classList.toggle('bad', s.oatF <= VALVE_RED.glyOatAtOrBelow && glyDp < VALVE_RED.glyDpLowPsi)
     }
     set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% of stem`)
     const cwGain = this.root.querySelector('#cw-gain')
@@ -877,9 +888,9 @@ export class App {
     const note = this.root.querySelector('#pipe-note')
     if (note) {
       const warn =
-        s.chwDpPsi < VALVE_RED.chwDpLowPsi
+        chwDp < VALVE_RED.chwDpLowPsi
           ? 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
-          : s.chwDpPsi > VALVE_RED.chwDpHighPsi
+          : chwDp > VALVE_RED.chwDpHighPsi
             ? 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
             : ''
       this.relinkText(note, warn + s.reason)

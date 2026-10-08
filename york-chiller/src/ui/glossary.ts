@@ -1,7 +1,10 @@
 import { GLOSSARY, type GlossaryId } from '../data/content'
 
 const SKIP_SELECTOR =
-  'input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot'
+  'button, a, input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot'
+
+/** Clickable cards keep their own action. Glossary for their text sits beside the card. */
+const BESIDE_SELECTOR = '.chaos-cmd, .maint-item, .mimic-node, .mission, .plant-node'
 
 /** Each of these is one "card" for the first-occurrence rule. Inner cards own their own text. */
 const CARD_SELECTOR = [
@@ -27,7 +30,6 @@ const CARD_SELECTOR = [
   '.plant-reason',
   '.alarm-banner',
   '.chaos-status',
-  '.chaos-cmd',
   '.valve-alert',
   '#pipe-note',
   '.opti-screen',
@@ -72,14 +74,11 @@ export function glossaryIdsIn(text: string, skip?: readonly GlossaryId[]): Gloss
   return hits
 }
 
-/** A button card cannot hold a nested button, so that card gets a span control. */
-function jargonControl(id: GlossaryId, visible: string, nested: boolean): HTMLElement {
-  const el = nested ? document.createElement('span') : document.createElement('button')
-  if (el instanceof HTMLButtonElement) el.type = 'button'
-  else el.tabIndex = 0
+function jargonControl(id: GlossaryId, visible: string): HTMLButtonElement {
+  const el = document.createElement('button')
+  el.type = 'button'
   el.className = 'jargon'
   el.dataset.glossary = id
-  el.setAttribute('role', 'button')
   el.setAttribute('aria-label', `Show the meaning of ${GLOSSARY[id].term}`)
   el.setAttribute('aria-haspopup', 'dialog')
   el.setAttribute('aria-expanded', 'false')
@@ -98,14 +97,12 @@ function acceptGlossaryText(node: Node, card: Element): number {
   const parent = node.parentElement
   if (!parent) return NodeFilter.FILTER_REJECT
   if (parent.closest(SKIP_SELECTOR)) return NodeFilter.FILTER_REJECT
-  const host = parent.closest('button, a')
-  if (host && host !== card) return NodeFilter.FILTER_REJECT
   if (closestCard(parent) !== card) return NodeFilter.FILTER_REJECT
   if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT
   return NodeFilter.FILTER_ACCEPT
 }
 
-function linkText(node: Text, seen: Set<GlossaryId>, nested: boolean) {
+function linkText(node: Text, seen: Set<GlossaryId>) {
   const text = node.data
   if (!text.trim()) return
   GLOSSARY_RE.lastIndex = 0
@@ -119,7 +116,7 @@ function linkText(node: Text, seen: Set<GlossaryId>, nested: boolean) {
     seen.add(id)
     linked = true
     if (match.index > last) frag.append(text.slice(last, match.index))
-    frag.append(jargonControl(id, match[0], nested))
+    frag.append(jargonControl(id, match[0]))
     last = match.index + match[0].length
   }
   if (!linked) return
@@ -129,7 +126,6 @@ function linkText(node: Text, seen: Set<GlossaryId>, nested: boolean) {
 
 function linkCard(card: Element, skip?: GlossaryId) {
   if (card.matches('.match-tile')) return
-  const nested = card.matches('button, a')
   const seen = new Set<GlossaryId>()
   if (skip) seen.add(skip)
   card.querySelectorAll<HTMLElement>('.jargon').forEach((btn) => {
@@ -144,17 +140,37 @@ function linkCard(card: Element, skip?: GlossaryId) {
   })
   const nodes: Text[] = []
   while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-  for (const node of nodes) linkText(node, seen, nested)
+  for (const node of nodes) linkText(node, seen)
+}
+
+function placeBeside(card: Element) {
+  const next = card.nextElementSibling
+  if (next?.classList.contains('jargon-beside')) next.remove()
+  const ids = glossaryIdsIn(card.textContent ?? '')
+  if (ids.length === 0) return
+  const row = document.createElement('div')
+  row.className = 'jargon-beside'
+  for (const id of ids) row.append(jargonControl(id, GLOSSARY[id].term))
+  card.after(row)
+}
+
+/** Terms inside a clickable card stay plain text. One glossary button sits beside that card. */
+function placeGlossaryBeside(scope: ParentNode) {
+  const cards: Element[] = []
+  if (scope instanceof Element && scope.matches(BESIDE_SELECTOR)) cards.push(scope)
+  cards.push(...scope.querySelectorAll(BESIDE_SELECTOR))
+  for (const card of cards) placeBeside(card)
 }
 
 /**
  * One pass over trainer text. Wraps the first whole-word match of each glossary
- * term. Skips inputs, quiz choices, links, nested buttons, and 3D labels.
- * A button that is its own card keeps the term as a span, not a nested button.
+ * term. Skips inputs, quiz choices, buttons, links, and 3D labels.
+ * A clickable card keeps that term beside the card, not inside it.
  */
 export function linkGlossary(scope: ParentNode, options?: { skip?: GlossaryId }) {
   const cards: Element[] = []
   if (scope instanceof Element && scope.matches(CARD_SELECTOR)) cards.push(scope)
   cards.push(...scope.querySelectorAll(CARD_SELECTOR))
   for (const card of cards) linkCard(card, options?.skip)
+  placeGlossaryBeside(scope)
 }

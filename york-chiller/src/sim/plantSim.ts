@@ -1021,7 +1021,18 @@ function glycolDpAt(pct: number, oat: number) {
   return (3.5 + Math.pow(f, 1.4) * 12) * thicker
 }
 
-/** Glycol header ΔP in psi. Same curve the pipe board prints. */
+/**
+ * Steady header ΔP in psi. The pipe board and the red-zone alert print these
+ * curves. The snapshot sine on CHW and CW is a separate live wobble.
+ */
+export function chwHeaderDpPsi(pct: number): number {
+  return chwDpAt(pct)
+}
+
+export function cwHeaderDpPsi(pct: number): number {
+  return cwDpAt(pct)
+}
+
 export function glycolHeaderDpPsi(pct: number, oatF: number): number {
   return glycolDpAt(pct, oatF)
 }
