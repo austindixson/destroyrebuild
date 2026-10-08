@@ -224,6 +224,43 @@ test('unknown unit ids do not change the plant', () => {
   assert.equal(controller.unitRunning('CH-01'), true)
 })
 
+test('outdoor air moves unpinned targets, and a conflicting LCHLT raises an alarm', () => {
+  const controller = new PlantController({ seed: 0 })
+  assert.equal(controller.snapshot.lchltSet, 55)
+  assert.equal(controller.snapshot.lchltTargetF, 55)
+  assert.equal(controller.snapshot.alarm, null)
+
+  controller.setOutdoorDryBulb(40)
+  assert.equal(controller.snapshot.lchltSet, 60)
+  assert.equal(controller.snapshot.lchltTargetF, 60)
+  assert.equal(controller.snapshot.chwValvePct, 51)
+  assert.equal(controller.snapshot.cwValvePct, 70)
+  assert.equal(controller.snapshot.glycolValvePct, 90)
+  assert.equal(controller.snapshot.alarm, null)
+
+  controller.setLchltSetpoint(64)
+  assert.equal(controller.snapshot.lchltSet, 64)
+  assert.match(controller.snapshot.alarm ?? '', /LCHLT setpoint fights/)
+
+  controller.setOutdoorDryBulb(100)
+  assert.equal(controller.snapshot.lchltSet, 64)
+  assert.equal(controller.snapshot.lchltTargetF, 50)
+  assert.equal(controller.snapshot.glycolValvePct, 25)
+  assert.match(controller.snapshot.alarm ?? '', /LCHLT setpoint fights/)
+
+  controller.setLchltSetpoint(50)
+  assert.equal(controller.snapshot.lchltSet, 50)
+  assert.equal(controller.snapshot.alarm, null)
+})
+
+test('a pinned open glycol valve on a hot day raises a trainer alarm', () => {
+  const controller = new PlantController({ seed: 0 })
+  controller.setOutdoorDryBulb(100)
+  controller.setValve('gly', 80)
+  assert.equal(controller.snapshot.glycolValvePct, 80)
+  assert.match(controller.snapshot.alarm ?? '', /glycol valve fights/)
+})
+
 test('every incident-clock case maps once, including bms-fight', () => {
   for (const item of TROUBLE_CASES) {
     assert.equal(isTroubleCaseId(item.id), true, item.id)

@@ -93,6 +93,11 @@ function shuffle<T>(arr: T[]): T[] {
   return a
 }
 
+function lchltHint(s: PlantSnapshot): string {
+  if (s.alarm && s.alarm.includes('LCHLT setpoint fights')) return s.alarm
+  return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
+}
+
 export class App {
   private root: HTMLElement
   private view: ViewId = 'home'
@@ -855,6 +860,18 @@ export class App {
     }
     this.scene?.setFans(s.dryFanPct, s.towerFanPct)
     this.scene?.setReadings(this.sceneReadings())
+    this.syncFollowedValve('chw', s.chwValvePct)
+    this.syncFollowedValve('cw', s.cwValvePct)
+    this.syncFollowedValve('gly', s.glycolValvePct)
+  }
+
+  private syncFollowedValve(loop: 'chw' | 'cw' | 'gly', pct: number) {
+    const slider = this.root.querySelector<HTMLInputElement>(`#${loop}-valve`)
+    const out = this.root.querySelector(`#${loop}-valve-out`)
+    if (slider && document.activeElement !== slider) {
+      slider.value = String(pct)
+      if (out) out.textContent = `${pct}%`
+    }
   }
 
   private sceneReadings(): SceneReadings {
@@ -1112,6 +1129,7 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
         <div class="gauge" ${infoAttr('gauge-cond')}><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span style="font-size:.75rem"> psig</span></div></div>
         <div class="gauge" ${infoAttr('gauge-hall')}><div class="label">HALL SA</div><div class="value" data-ov="hall">${s.hallSupplyF}°F</div></div>
       </div>
+      <p data-ov="lchlt-target">${lchltHint(s)}</p>
       <div class="schematic">EVAP ══╗
        ║  COMP ▶ VSD ▶ MBC ${s.ch01.mbc}
 COND ══╝     CHW → CRAH → HALL</div>
@@ -1137,6 +1155,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       set('rla', `${this.controller.running ? s.ch01.rla : 0}%`)
       set('cond', `${s.ch01.condPsig}`)
       set('hall', `${s.hallSupplyF}°F`)
+      set('lchlt-target', lchltHint(s))
     }
     const chip = this.root.querySelector('#opti-run-chip')
     if (chip) chip.textContent = `${this.controller.running ? 'In operation' : 'Stopped'} · ${this.snap.ch01.mbc}`
@@ -1487,6 +1506,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         </label>
         <p class="empty-state" id="it-load-note">Trainer value. The live load moves a small amount around this target.</p>
         <p id="capacity-read">Running capacity ${runningMw.toFixed(1)} MW.</p>
+        <p id="weather-target">Trainer LCHLT target is ${this.snap.lchltTargetF.toFixed(0)}°F for this dry-bulb.</p>
         ${this.unitRowHtml('CH-01')}
         ${this.unitRowHtml('CH-02')}
         <div class="clock-row">
@@ -1566,34 +1586,55 @@ COND ══╝     CHW → CRAH → HALL</div>
   private patchPlantControls() {
     const root = this.root.querySelector('#plant-controls')
     if (!root) return
-    const set = (id: string, text: string) => {
-      const el = root.querySelector(`#${id}`)
-      if (el) el.textContent = text
-    }
+    this.patchItSlider(root)
+    this.patchUnitRows(root)
+    this.patchClockRow(root)
+  }
+
+  private patchItSlider(root: Element) {
     const center = this.controller.itLoadCenterMw
-    set('it-load-out', `${center.toFixed(1)} MW`)
-    set('capacity-read', `Running capacity ${this.snap.runningCapacityMw.toFixed(1)} MW.`)
-    set('sim-time', `Sim time ${Math.round(this.snap.t)} s`)
+    this.setControlText(root, 'it-load-out', `${center.toFixed(1)} MW`)
+    this.setControlText(root, 'capacity-read', `Running capacity ${this.snap.runningCapacityMw.toFixed(1)} MW.`)
+    this.setControlText(root, 'weather-target', `Trainer LCHLT target is ${this.snap.lchltTargetF.toFixed(0)}°F for this dry-bulb.`)
     const slider = root.querySelector<HTMLInputElement>('#it-load')
     if (slider && document.activeElement !== slider) slider.value = String(center)
+  }
+
+  private patchUnitRows(root: Element) {
+    for (const id of ['CH-01', 'CH-02']) this.patchUnitRow(root, id)
+  }
+
+  private patchUnitRow(root: Element, id: string) {
+    const row = root.querySelector(`[data-unit="${id}"]`)
+    if (!row) return
+    const running = this.controller.unitRunning(id)
+    const state = row.querySelector('[data-unit-state]')
+    if (state) state.textContent = running ? 'In operation' : 'Standby'
+    const start = row.querySelector<HTMLButtonElement>('[data-ch-start]')
+    const soft = row.querySelector<HTMLButtonElement>('[data-ch-soft]')
+    if (start) start.disabled = running
+    if (soft) soft.disabled = !running
+  }
+
+  private patchClockRow(root: Element) {
+    this.setControlText(root, 'sim-time', `Sim time ${Math.round(this.snap.t)} s`)
     const clock = root.querySelector('#clock-toggle')
     if (clock) clock.textContent = this.controller.paused ? 'Resume' : 'Pause'
-    for (const scale of [1, 2, 5] as const) {
-      root.querySelector(`[data-scale="${scale}"]`)?.classList.toggle('on', this.controller.timeScale === scale && !this.controller.paused)
-    }
+    this.markTimeScale(root, 1)
+    this.markTimeScale(root, 2)
+    this.markTimeScale(root, 5)
     const undo = root.querySelector<HTMLButtonElement>('[data-undo]')
     if (undo) undo.disabled = !this.controller.canUndo
-    for (const id of ['CH-01', 'CH-02']) {
-      const row = root.querySelector(`[data-unit="${id}"]`)
-      if (!row) continue
-      const running = this.controller.unitRunning(id)
-      const state = row.querySelector('[data-unit-state]')
-      if (state) state.textContent = running ? 'In operation' : 'Standby'
-      const start = row.querySelector<HTMLButtonElement>('[data-ch-start]')
-      const soft = row.querySelector<HTMLButtonElement>('[data-ch-soft]')
-      if (start) start.disabled = running
-      if (soft) soft.disabled = !running
-    }
+  }
+
+  private markTimeScale(root: Element, scale: 1 | 2 | 5) {
+    const on = this.controller.timeScale === scale && !this.controller.paused
+    root.querySelector(`[data-scale="${scale}"]`)?.classList.toggle('on', on)
+  }
+
+  private setControlText(root: Element, id: string, text: string) {
+    const el = root.querySelector(`#${id}`)
+    if (el) el.textContent = text
   }
 
   private commandStart(unitId: string) {

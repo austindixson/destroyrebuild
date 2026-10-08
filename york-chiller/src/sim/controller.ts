@@ -36,6 +36,13 @@
  *   The visible board still operates CH-01 and CH-02. Running capacity is the sum.
  *
  * Fans stay read-only. There is no fan write method.
+ *
+ * Outdoor targets
+ *   setOutdoor and setWeather move the trainer LCHLT target and the valve targets
+ *   while those loops are not pinned. An operator setpoint pins that loop.
+ *   A pinned value that fights the outdoor target raises an alarm. It does not snap back.
+ *
+ * Landing and failover clear CH-01 once inside injectIncident. tick() does not write run state.
  */
 
 import {
@@ -110,6 +117,10 @@ const WEATHER_F: Record<WeatherPreset, number> = {
   cold: 40,
   mild: 75,
   hot: 100,
+}
+
+function outdoorMessage(applied: number): string {
+  return `Outdoor dry bulb is ${applied}°F. Trainer targets follow this dry-bulb unless you already set them.`
 }
 
 export class PlantController extends EventTarget {
@@ -219,7 +230,7 @@ export class PlantController extends EventTarget {
     const f = WEATHER_F[preset]
     return this.mutate('setWeather', { preset }, actor, () => {
       const applied = this.sim.setOutdoor(f)
-      return `Outdoor dry bulb is ${applied}°F.`
+      return outdoorMessage(applied)
     })
   }
 
@@ -227,7 +238,7 @@ export class PlantController extends EventTarget {
     const clamped = clamp(Math.round(f), 20, 110)
     return this.mutate('setOutdoorDryBulb', { f: clamped }, actor, () => {
       const applied = this.sim.setOutdoor(clamped)
-      return `Outdoor dry bulb is ${applied}°F.`
+      return outdoorMessage(applied)
     })
   }
 
@@ -315,6 +326,7 @@ export class PlantController extends EventTarget {
       if (this.sim.getIncident() === null) this.preIncident = this.capture()
       if (options?.forceUnitOff) this.sim.setUnitRunning(options.forceUnitOff, false)
       this.sim.setIncident(kind)
+      this.sim.applyIncidentRunState()
       this.pushOpti('The incident is active. The board is live.', 'alarm')
       return 'The incident is active. The board is live.'
     })

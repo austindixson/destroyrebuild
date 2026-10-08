@@ -24,6 +24,14 @@
  *
  * Fans (tower and dry cooler) stay computed outputs. Phase 0 does not write them.
  *
+ * Outdoor coupling (trainer values, not a York operating manual):
+ *   oat <= 48°F: LCHLT target 60°F (band 58–62). CHW valve 51%. CW valve 70%. Glycol valve 90%.
+ *   48°F < oat < 92°F: LCHLT target 55°F (band 52–58). Valves stay at 72% / 78% / 70%.
+ *   oat >= 92°F: LCHLT target 50°F (band 46–52). CHW valve 77%. CW valve 90%. Glycol valve 25%.
+ *   setOutdoor moves a target only while that loop is not pinned.
+ *   An operator write pins the loop. A value outside the LCHLT band, or a valve that
+ *   fights the weather target, raises an alarm. The alarm does not change the write.
+ *
  * fleet: N units — the unit list is the extension point. The next slice is a bank
  * of N=18, then 36, with lead/lag staging. That slice is not built here.
  * Phase 0 still draws only CH-01 and CH-02. Capacity already sums every running unit.
@@ -61,6 +69,21 @@ export const TRAINER = {
   unmetAlarmMw: 0.15,
   lchltMinF: 42,
   lchltMaxF: 65,
+  /** Outdoor dry-bulb at or below this uses the cold trainer band. */
+  coldOatF: 48,
+  /** Outdoor dry-bulb at or above this uses the hot trainer band. */
+  hotOatF: 92,
+  lchltColdCenterF: 60,
+  lchltColdLoF: 58,
+  lchltColdHiF: 62,
+  lchltMildCenterF: 55,
+  lchltMildLoF: 52,
+  lchltMildHiF: 58,
+  lchltHotCenterF: 50,
+  lchltHotLoF: 46,
+  lchltHotHiF: 52,
+  /** Valve percent away from the weather target that raises a fight alarm. */
+  valveFightPct: 15,
 } as const
 
 export interface ChillerUnitState {
@@ -72,6 +95,7 @@ export interface ChillerUnitState {
 
 export interface UnitSnapshot extends ChillerUnitState {
   mode: ChillerMode
+  /** Percent full-load amps. The board labels this % FLA. */
   rla: number
   condPsig: number
   mbc: 'LEVITATED' | 'LANDED' | 'FAULT'
@@ -83,6 +107,10 @@ export interface PlantSnapshot {
   hallSupplyF: number
   hallReturnF: number
   lchltSet: number
+  /** Trainer LCHLT target for this dry-bulb. Not a York manual value. */
+  lchltTargetF: number
+  lchltBandLoF: number
+  lchltBandHiF: number
   lchltAct: number
   cwetF: number
   oatF: number
@@ -145,6 +173,10 @@ export interface PlantState {
   rampStartT: number
   rampSeconds: number
   capacityLagF: number
+  lchltPinned: boolean
+  chwPinned: boolean
+  cwPinned: boolean
+  glycolPinned: boolean
 }
 
 export interface PlantSimOptions {
@@ -182,6 +214,11 @@ export class PlantSim {
   private timeScale: TimeScale = 1
   private seed: number
   private lchltSet = 55
+  /** True after an operator write that is not the weather target. */
+  private lchltPinned = false
+  private chwPinned = false
+  private cwPinned = false
+  private glycolPinned = false
   /** Balancing-valve opening. Header ΔP follows flow through the valve. */
   private chwValvePct = 72
   private cwValvePct = 78
@@ -225,6 +262,10 @@ export class PlantSim {
       rampStartT: this.rampStartT,
       rampSeconds: this.rampSeconds,
       capacityLagF: this.capacityLagF,
+      lchltPinned: this.lchltPinned,
+      chwPinned: this.chwPinned,
+      cwPinned: this.cwPinned,
+      glycolPinned: this.glycolPinned,
     }
   }
 
@@ -247,6 +288,10 @@ export class PlantSim {
     this.rampStartT = state.rampStartT
     this.rampSeconds = state.rampSeconds
     this.capacityLagF = state.capacityLagF
+    this.lchltPinned = state.lchltPinned
+    this.chwPinned = state.chwPinned
+    this.cwPinned = state.cwPinned
+    this.glycolPinned = state.glycolPinned
   }
 
   getIncident(): IncidentKind | null {
@@ -341,22 +386,51 @@ export class PlantSim {
 
   setHeaderValve(loop: 'chw' | 'cw' | 'gly', pct: number): number {
     const v = Math.max(15, Math.min(100, Math.round(pct)))
-    if (loop === 'chw') this.chwValvePct = v
-    else if (loop === 'cw') this.cwValvePct = v
-    else this.glycolValvePct = v
+    const targets = weatherValveTargets(this.oatF)
+    if (loop === 'chw') {
+      this.chwValvePct = v
+      this.chwPinned = v !== targets.chw
+    } else if (loop === 'cw') {
+      this.cwValvePct = v
+      this.cwPinned = v !== targets.cw
+    } else {
+      this.glycolValvePct = v
+      this.glycolPinned = v !== targets.gly
+    }
     return v
   }
 
   setOutdoor(f: number): number {
     this.oatF = Math.max(15, Math.min(110, Math.round(f)))
-    this.weather = this.oatF >= 95 ? 'extreme' : this.oatF >= 78 ? 'design' : 'mild'
+    this.weather = weatherBand(this.oatF)
+    this.followWeather()
     return this.oatF
   }
 
   setLchlt(f: number): number {
     const stepped = Math.round(f * 2) / 2
     this.lchltSet = Math.max(TRAINER.lchltMinF, Math.min(TRAINER.lchltMaxF, stepped))
+    this.lchltPinned = this.lchltSet !== lchltBand(this.oatF).center
     return this.lchltSet
+  }
+
+  /**
+   * Landing and failover take CH-01 offline once, when the incident is injected.
+   * tick() does not write run state.
+   */
+  applyIncidentRunState(): void {
+    if (this.incident === 'landing' || this.incident === 'failover') {
+      this.setUnitRunning('CH-01', false)
+    }
+  }
+
+  private followWeather(): void {
+    const band = lchltBand(this.oatF)
+    const valves = weatherValveTargets(this.oatF)
+    if (!this.lchltPinned) this.lchltSet = band.center
+    if (!this.chwPinned) this.chwValvePct = valves.chw
+    if (!this.cwPinned) this.cwValvePct = valves.cw
+    if (!this.glycolPinned) this.glycolValvePct = valves.gly
   }
 
   /**
@@ -408,266 +482,498 @@ export class PlantSim {
   }
 
   private compute(dt: number): PlantSnapshot {
+    const draft = this.sampleBoard()
+    this.applyIncident(draft)
+    this.applyCapacity(draft, dt)
+    this.applyFlowAlarm(draft)
+    this.applyFightAlarm(draft)
+    this.applyCapacityAlarm(draft)
+    return this.assembleSnapshot(draft)
+  }
+
+  private sampleBoard(): BoardDraft {
     const t = this.t
     const oat = this.oatF
-    const wb = Math.min(oat - 8, oat - 4 - Math.max(0, 70 - oat) * 0.15)
+    const wb = wetBulbF(oat)
     const itLoadMw = this.itLoadMwNow()
-    let lchltAct = this.lchltSet + 0.4 + Math.sin((t + this.seed) / 5) * 0.25
-    let hallSupplyF = 72 + (lchltAct - this.lchltSet) * TRAINER.hallPerLchltF
-    let hallReturnF = hallSupplyF + 14 + itLoadMw * 0.35
+    const lchltAct = this.lchltSet + 0.4 + Math.sin((t + this.seed) / 5) * 0.25
+    const hallSupplyF = 72 + (lchltAct - this.lchltSet) * TRAINER.hallPerLchltF
+    const hallReturnF = hallSupplyF + 14 + itLoadMw * 0.35
     const chwFlow = this.chwValvePct / 100
     const cwFlow = this.cwValvePct / 100
     const glyFlow = this.glycolValvePct / 100
-    let chwDpPsi = chwDpAt(this.chwValvePct) + Math.sin((t + this.seed) / 9) * 0.3
-    let cwDpPsi = cwDpAt(this.cwValvePct) + Math.sin((t + this.seed) / 11) * 0.2
-    let glycolDpPsi = glycolDpAt(this.glycolValvePct, oat)
     const chwrGuess = lchltAct + 10
-    let dryFanPct = oat + 12 < chwrGuess ? Math.max(25, Math.min(100, 55 + (55 - oat) * 1.4)) : 20
-    let towerFanPct = Math.max(18, Math.min(100, 25 + (wb - 58) * 2.2 + Math.max(0, itLoadMw - 3.5) * 10))
+    const dryFanPct = dryFanFor(oat, chwrGuess)
+    const towerFanPct = Math.max(18, Math.min(100, 25 + (wb - 58) * 2.2 + Math.max(0, itLoadMw - 3.5) * 10))
     const glyOffCooler = oat + 9 + (100 - dryFanPct) * 0.1
     const freeLift = Math.max(0, chwrGuess - glyOffCooler)
-    let freeCoolPct = Math.max(0, Math.min(65, freeLift * glyFlow * 4.2))
-    let chillerMw = itLoadMw * (1 - freeCoolPct / 100)
-    let approach = 6 + (100 - towerFanPct) * 0.09 + (1 - cwFlow) * 5
-    let cwsF = wb + approach
-    let range = (6 + chillerMw * 1.3) / Math.max(cwFlow, 0.28)
-    let cwrF = cwsF + range
-    let condTemp = cwrF + 3
-    let cond = 71 + (condTemp - 70) * 1.75
-    let alarm: string | null = null
-    let capacityApplies = false
-    let ch01RlaExtra = 0
-    let ch01RlaScale = 1
-    let ch01RlaFloor = 0
-    let ch01RlaForce: number | null = null
-    let failoverLeadId: string | null = null
-    const modeOverride = new Map<string, ChillerMode>()
-    const mbcOverride = new Map<string, UnitSnapshot['mbc']>()
+    const freeCoolPct = Math.max(0, Math.min(65, freeLift * glyFlow * 4.2))
+    const chillerMw = itLoadMw * (1 - freeCoolPct / 100)
+    const approach = 6 + (100 - towerFanPct) * 0.09 + (1 - cwFlow) * 5
+    const cwsF = wb + approach
+    const range = (6 + chillerMw * 1.3) / Math.max(cwFlow, 0.28)
+    const cwrF = cwsF + range
+    const condTemp = cwrF + 3
+    return {
+      t,
+      oat,
+      wb,
+      itLoadMw,
+      lchltAct,
+      hallSupplyF,
+      hallReturnF,
+      chwDpPsi: chwDpAt(this.chwValvePct) + Math.sin((t + this.seed) / 9) * 0.3,
+      cwDpPsi: cwDpAt(this.cwValvePct) + Math.sin((t + this.seed) / 11) * 0.2,
+      glycolDpPsi: glycolDpAt(this.glycolValvePct, oat),
+      dryFanPct,
+      towerFanPct,
+      glyOffCooler,
+      freeCoolPct,
+      chillerMw,
+      cwsF,
+      cwrF,
+      condTemp,
+      cond: 71 + (condTemp - 70) * 1.75,
+      range,
+      cwFlow,
+      chwFlow,
+      glyFlow,
+      capacityApplies: false,
+      alarm: null,
+      ch01RlaExtra: 0,
+      ch01RlaScale: 1,
+      ch01RlaFloor: 0,
+      ch01RlaForce: null,
+      failoverLeadId: null,
+      modeOverride: new Map(),
+      mbcOverride: new Map(),
+      runningCapacityMw: 0,
+      unmetMw: 0,
+    }
+  }
 
+  private applyIncident(draft: BoardDraft): void {
     switch (this.incident) {
       case null:
-        capacityApplies = true
+        draft.capacityApplies = true
         break
       case 'high-head':
-        towerFanPct = 100
-        cwsF += 10
-        cwrF += 10
-        cond += 28
-        ch01RlaExtra = 22
-        alarm = 'High condenser pressure. The cooling tower cannot reject enough heat.'
-        modeOverride.set('CH-01', 'alarm')
+        applyHighHead(draft)
         break
       case 'hall-hot':
-        hallSupplyF += 9
-        hallReturnF += 11
-        chwDpPsi = 9.5
-        ch01RlaScale = 0.45
-        ch01RlaFloor = 18
-        lchltAct = this.lchltSet + 0.2
-        alarm = 'The hall is hot. Examine the CHW path and the CRAHs. The chiller load is low.'
+        applyHallHot(draft, this.lchltSet)
         break
       case 'landing':
-        this.setUnitRunning('CH-01', false)
-        modeOverride.set('CH-01', 'alarm')
-        mbcOverride.set('CH-01', 'LANDED')
-        ch01RlaForce = 0
-        alarm = 'The MBC recorded a power-fail landing. Examine the UPS and the ATS.'
+        applyLanding(draft)
         break
-      case 'failover': {
-        this.setUnitRunning('CH-01', false)
-        modeOverride.set('CH-01', 'offline')
-        mbcOverride.set('CH-01', 'LANDED')
-        ch01RlaForce = 0
-        const others = this.units.filter((unit) => unit.id !== 'CH-01' && unit.running)
-        if (others.length === 0) {
-          alarm = 'The lead chiller is offline. The standby start has an inhibit.'
-          modeOverride.set('CH-02', 'alarm')
-          hallSupplyF += 6
-        } else {
-          failoverLeadId = others[0].id
-          alarm =
-            others[0].id === 'CH-02'
-              ? 'Failover is active. CH-02 has the load.'
-              : `Failover is active. ${others[0].id} has the load.`
-        }
+      case 'failover':
+        this.applyFailover(draft)
         break
-      }
       case 'bms-fight':
-        capacityApplies = true
-        alarm = 'The LCHLT actual moves up and down. The panel setpoint stays in place.'
+        draft.capacityApplies = true
+        draft.alarm = 'The LCHLT actual moves up and down. The panel setpoint stays in place.'
         break
       default: {
         const unknown: never = this.incident
         throw new Error(`Unknown incident ${String(unknown)}`)
       }
     }
+  }
 
-    const runningCapacityMw = this.units.reduce((sum, unit) => sum + (unit.running ? unit.capacityMw : 0), 0)
-    const unmetMw = Math.max(0, chillerMw - runningCapacityMw)
-    if (capacityApplies && dt > 0) {
-      const target = unmetMw * TRAINER.lchltRiseFPerMw
-      const alpha = 1 - Math.exp(-dt / TRAINER.hallTauS)
-      this.capacityLagF += (target - this.capacityLagF) * alpha
+  private applyFailover(draft: BoardDraft): void {
+    draft.modeOverride.set('CH-01', 'offline')
+    draft.mbcOverride.set('CH-01', 'LANDED')
+    draft.ch01RlaForce = 0
+    const others = this.standbyUnits()
+    if (others.length === 0) {
+      draft.alarm = 'The lead chiller is offline. The standby start has an inhibit.'
+      draft.modeOverride.set('CH-02', 'alarm')
+      draft.hallSupplyF += 6
+      return
     }
-    if (capacityApplies) {
-      lchltAct += this.capacityLagF
-      if (this.incident === 'bms-fight') {
-        lchltAct +=
-          TRAINER.bmsFightAmplitudeF * Math.sin((2 * Math.PI * t) / TRAINER.bmsFightPeriodS)
-      }
-      hallSupplyF = 72 + (lchltAct - this.lchltSet) * TRAINER.hallPerLchltF
-      hallReturnF = hallSupplyF + 14 + itLoadMw * 0.35
-    }
+    const lead = others[0]
+    draft.failoverLeadId = lead.id
+    draft.alarm = failoverLoadAlarm(lead.id)
+  }
 
-    if (!this.incident && this.chwValvePct < 42) {
+  private standbyUnits(): ChillerUnitState[] {
+    return this.units.filter((unit) => unit.id !== 'CH-01' && unit.running)
+  }
+
+  private applyCapacity(draft: BoardDraft, dt: number): void {
+    draft.runningCapacityMw = sumRunningMw(this.units)
+    draft.unmetMw = Math.max(0, draft.chillerMw - draft.runningCapacityMw)
+    if (!draft.capacityApplies) return
+    this.integrateLag(dt, draft.unmetMw)
+    draft.lchltAct += this.capacityLagF
+    if (this.incident === 'bms-fight') {
+      draft.lchltAct +=
+        TRAINER.bmsFightAmplitudeF * Math.sin((2 * Math.PI * draft.t) / TRAINER.bmsFightPeriodS)
+    }
+    draft.hallSupplyF = 72 + (draft.lchltAct - this.lchltSet) * TRAINER.hallPerLchltF
+    draft.hallReturnF = draft.hallSupplyF + 14 + draft.itLoadMw * 0.35
+  }
+
+  private integrateLag(dt: number, unmetMw: number): void {
+    if (dt <= 0) return
+    const target = unmetMw * TRAINER.lchltRiseFPerMw
+    const alpha = 1 - Math.exp(-dt / TRAINER.hallTauS)
+    this.capacityLagF += (target - this.capacityLagF) * alpha
+  }
+
+  private applyFlowAlarm(draft: BoardDraft): void {
+    if (this.incident || draft.alarm) return
+    if (this.chwValvePct < 42) {
       const starve = (42 - this.chwValvePct) / 42
-      hallSupplyF += starve * 6
-      hallReturnF += starve * 7
-      alarm = 'The CHW ΔP is low. The header valve does not give the CRAHs enough flow.'
-    } else if (!this.incident && this.cwValvePct < 40) {
-      cond += (40 - this.cwValvePct) * 0.55
-      alarm = 'The CW ΔP is low. The cooling tower flow is low, and the head will increase.'
-    } else if (!this.incident && oat < 48 && this.glycolValvePct < 30 && freeCoolPct < 8) {
-      alarm = 'The glycol valve is shut. The dry cooler can remove part of this load.'
-    } else if (capacityApplies && !alarm && unmetMw > TRAINER.unmetAlarmMw) {
-      alarm = 'The IT load is above the running chiller capacity. Start the standby chiller or decrease the load.'
+      draft.hallSupplyF += starve * 6
+      draft.hallReturnF += starve * 7
+      draft.alarm = 'The CHW ΔP is low. The header valve does not give the CRAHs enough flow.'
+      return
     }
+    if (this.cwValvePct < 40) {
+      draft.cond += (40 - this.cwValvePct) * 0.55
+      draft.alarm = 'The CW ΔP is low. The cooling tower flow is low, and the head will increase.'
+      return
+    }
+    if (this.oatF < TRAINER.coldOatF && this.glycolValvePct < 30 && draft.freeCoolPct < 8) {
+      draft.alarm = 'The glycol valve is shut. The dry cooler can remove part of this load.'
+    }
+  }
 
-    const units = this.composeUnits({
-      chillerMw,
-      condTemp,
-      cond,
-      ch01RlaExtra,
-      ch01RlaScale,
-      ch01RlaFloor,
-      ch01RlaForce,
-      failoverLeadId,
-      itLoadMw,
-      modeOverride,
-      mbcOverride,
-      runningCapacityMw,
+  private applyFightAlarm(draft: BoardDraft): void {
+    if (this.incident || draft.alarm) return
+    const fight = fightAlarmText({
+      oatF: this.oatF,
+      lchltSet: this.lchltSet,
+      lchltPinned: this.lchltPinned,
+      glycolValvePct: this.glycolValvePct,
+      glycolPinned: this.glycolPinned,
+      freeCoolPct: draft.freeCoolPct,
+      chwValvePct: this.chwValvePct,
+      chwPinned: this.chwPinned,
+      cwValvePct: this.cwValvePct,
+      cwPinned: this.cwPinned,
     })
+    if (!fight) return
+    draft.alarm = fight
+  }
+
+  private applyCapacityAlarm(draft: BoardDraft): void {
+    if (this.incident || draft.alarm) return
+    if (!draft.capacityApplies || draft.unmetMw <= TRAINER.unmetAlarmMw) return
+    draft.alarm = 'The IT load is above the running chiller capacity. Start the standby chiller or decrease the load.'
+  }
+
+  private assembleSnapshot(draft: BoardDraft): PlantSnapshot {
+    const units = this.composeUnits(draft)
     const ch01 = unitFace(units, 'CH-01')
     const ch02 = unitFace(units, 'CH-02')
-
-    const chwTargetPsi = oat >= 92 ? 20 : oat <= 48 ? 14 : 17
+    const band = lchltBand(draft.oat)
+    const chwTargetPsi = chwTargetPsiFor(draft.oat)
     const chwGain = gainPer10(chwDpAt, this.chwValvePct)
-    const glycolGain = gainPer10((pct) => glycolDpAt(pct, oat), this.glycolValvePct)
-    const fansPinned = towerFanPct >= 98 && oat >= 90
-    const cwHeadGain =
-      Math.round(((range - (range * cwFlow) / Math.min(cwFlow + 0.1, 1)) * 1.75 * (fansPinned ? 0.35 : 1)) * 10) / 10
+    const glycolGain = gainPer10((pct) => glycolDpAt(pct, draft.oat), this.glycolValvePct)
+    const fansPinned = fansArePinned(draft.towerFanPct, draft.oat)
+    const cwHeadGain = cwHeadGainPsi(draft.range, draft.cwFlow, fansPinned)
     const reason = plantReason({
-      oat,
-      wb,
+      oat: draft.oat,
+      wb: draft.wb,
       chwTargetPsi,
       chwValve: this.chwValvePct,
       chwGain,
       glycolGain,
       cwHeadGain,
-      freeCoolPct,
+      freeCoolPct: draft.freeCoolPct,
       fansPinned,
-      dryFanPct,
+      dryFanPct: draft.dryFanPct,
     })
-
-    towerFanPct = Math.max(0, Math.min(100, towerFanPct))
-
+    const towerFanPct = Math.max(0, Math.min(100, draft.towerFanPct))
     return {
-      t,
-      itLoadMw: round(itLoadMw, 2),
-      hallSupplyF: round(hallSupplyF, 1),
-      hallReturnF: round(hallReturnF, 1),
+      t: draft.t,
+      itLoadMw: round(draft.itLoadMw, 2),
+      hallSupplyF: round(draft.hallSupplyF, 1),
+      hallReturnF: round(draft.hallReturnF, 1),
       lchltSet: this.lchltSet,
-      lchltAct: round(lchltAct, 1),
-      cwetF: round(wb, 1),
-      oatF: oat,
-      wbF: round(wb, 1),
+      lchltTargetF: band.center,
+      lchltBandLoF: band.lo,
+      lchltBandHiF: band.hi,
+      lchltAct: round(draft.lchltAct, 1),
+      cwetF: round(draft.wb, 1),
+      oatF: draft.oat,
+      wbF: round(draft.wb, 1),
       towerFanPct: round(towerFanPct, 0),
-      dryFanPct: round(dryFanPct, 0),
-      chwDpPsi: round(chwDpPsi, 1),
-      cwDpPsi: round(cwDpPsi, 1),
-      glycolDpPsi: round(glycolDpPsi, 1),
+      dryFanPct: round(draft.dryFanPct, 0),
+      chwDpPsi: round(draft.chwDpPsi, 1),
+      cwDpPsi: round(draft.cwDpPsi, 1),
+      glycolDpPsi: round(draft.glycolDpPsi, 1),
       chwValvePct: this.chwValvePct,
       cwValvePct: this.cwValvePct,
       glycolValvePct: this.glycolValvePct,
       chwGain: round(chwGain, 1),
       cwHeadGain,
       glycolGain: round(glycolGain, 1),
-      freeCoolPct: round(freeCoolPct, 0),
+      freeCoolPct: round(draft.freeCoolPct, 0),
       chwTargetPsi,
-      chwsF: round(lchltAct, 1),
-      chwrF: round(lchltAct + 8 + (1 - chwFlow) * 10, 1),
+      chwsF: round(draft.lchltAct, 1),
+      chwrF: round(draft.lchltAct + 8 + (1 - draft.chwFlow) * 10, 1),
       chwrPsi: 52,
-      chwsPsi: round(52 - chwDpPsi, 1),
-      cwsF: round(cwsF, 1),
-      cwrF: round(cwrF, 1),
+      chwsPsi: round(52 - draft.chwDpPsi, 1),
+      cwsF: round(draft.cwsF, 1),
+      cwrF: round(draft.cwrF, 1),
       cwsPsi: round(48, 1),
-      cwrPsi: round(48 - cwDpPsi, 1),
-      glyS: round(glyOffCooler, 1),
-      glyR: round(glyOffCooler + 6 + chillerMw * (1 - glyFlow) * 2, 1),
-      glySPsi: round(36 + glycolDpPsi, 1),
+      cwrPsi: round(48 - draft.cwDpPsi, 1),
+      glyS: round(draft.glyOffCooler, 1),
+      glyR: round(draft.glyOffCooler + 6 + draft.chillerMw * (1 - draft.glyFlow) * 2, 1),
+      glySPsi: round(36 + draft.glycolDpPsi, 1),
       glyRPsi: 36,
-      reason,
+      reason: `${reason} Trainer LCHLT target is ${band.center.toFixed(0)}°F.`,
       ch01: { mode: ch01.mode, rla: ch01.rla, condPsig: ch01.condPsig, mbc: ch01.mbc },
       ch02: { mode: ch02.mode, rla: ch02.rla, condPsig: ch02.condPsig, mbc: ch02.mbc },
       units,
-      runningCapacityMw: round(runningCapacityMw, 2),
-      unmetMw: round(unmetMw, 2),
-      alarm,
+      runningCapacityMw: round(draft.runningCapacityMw, 2),
+      unmetMw: round(draft.unmetMw, 2),
+      alarm: draft.alarm,
       weather: this.weather,
     }
   }
 
-  private composeUnits(input: {
-    chillerMw: number
-    condTemp: number
-    cond: number
-    ch01RlaExtra: number
-    ch01RlaScale: number
-    ch01RlaFloor: number
-    ch01RlaForce: number | null
-    failoverLeadId: string | null
-    itLoadMw: number
-    modeOverride: Map<string, ChillerMode>
-    mbcOverride: Map<string, UnitSnapshot['mbc']>
-    runningCapacityMw: number
-  }): UnitSnapshot[] {
-    let leadAssigned = false
-    return this.units.map((unit) => {
-      let mode: ChillerMode
-      if (!unit.running) mode = 'standby'
-      else if (!leadAssigned) {
-        mode = 'lead'
-        leadAssigned = true
-      } else mode = 'lag'
-      const share =
-        unit.running && input.runningCapacityMw > 0
-          ? input.chillerMw * (unit.capacityMw / input.runningCapacityMw)
-          : 0
-      const head = unit.id === 'CH-01' ? Math.max(0, input.condTemp - 85) * 0.85 : 0
-      let rla = unit.running ? 28 + share * 9 + head : 0
-      if (unit.id === 'CH-01') {
-        rla = rla * input.ch01RlaScale + input.ch01RlaExtra
-        if (input.ch01RlaFloor > 0) rla = Math.max(input.ch01RlaFloor, rla)
-        if (input.ch01RlaExtra > 0) rla = Math.min(105, rla)
-        if (input.ch01RlaForce !== null) rla = input.ch01RlaForce
-      }
-      if (input.failoverLeadId === unit.id) rla = 55 + input.itLoadMw * 5
-      const overridden = input.modeOverride.get(unit.id)
-      if (overridden) mode = overridden
-      const mbc = input.mbcOverride.get(unit.id) ?? (unit.running ? 'LEVITATED' : 'LANDED')
-      const condPsig =
-        unit.id === 'CH-01' ? input.cond : input.cond - (unit.running ? 4 : 12)
-      return {
-        id: unit.id,
-        running: unit.running,
-        capacityMw: unit.capacityMw,
-        mode,
-        rla: round(Math.max(0, Math.min(110, rla)), 0),
-        condPsig: round(condPsig, 0),
-        mbc,
-      }
-    })
+  private composeUnits(draft: BoardDraft): UnitSnapshot[] {
+    return rankRunning(this.units).map((unit) => unitSnapshot(unit, draft))
   }
+}
+
+interface BoardDraft {
+  t: number
+  oat: number
+  wb: number
+  itLoadMw: number
+  lchltAct: number
+  hallSupplyF: number
+  hallReturnF: number
+  chwDpPsi: number
+  cwDpPsi: number
+  glycolDpPsi: number
+  dryFanPct: number
+  towerFanPct: number
+  glyOffCooler: number
+  freeCoolPct: number
+  chillerMw: number
+  cwsF: number
+  cwrF: number
+  condTemp: number
+  cond: number
+  range: number
+  cwFlow: number
+  chwFlow: number
+  glyFlow: number
+  capacityApplies: boolean
+  alarm: string | null
+  ch01RlaExtra: number
+  ch01RlaScale: number
+  ch01RlaFloor: number
+  ch01RlaForce: number | null
+  failoverLeadId: string | null
+  modeOverride: Map<string, ChillerMode>
+  mbcOverride: Map<string, UnitSnapshot['mbc']>
+  runningCapacityMw: number
+  unmetMw: number
+}
+
+interface FightInput {
+  oatF: number
+  lchltSet: number
+  lchltPinned: boolean
+  glycolValvePct: number
+  glycolPinned: boolean
+  freeCoolPct: number
+  chwValvePct: number
+  chwPinned: boolean
+  cwValvePct: number
+  cwPinned: boolean
+}
+
+interface RankedUnit extends ChillerUnitState {
+  role: ChillerMode
+}
+
+export function lchltBand(oatF: number): { center: number; lo: number; hi: number } {
+  if (oatF <= TRAINER.coldOatF) {
+    return { center: TRAINER.lchltColdCenterF, lo: TRAINER.lchltColdLoF, hi: TRAINER.lchltColdHiF }
+  }
+  if (oatF >= TRAINER.hotOatF) {
+    return { center: TRAINER.lchltHotCenterF, lo: TRAINER.lchltHotLoF, hi: TRAINER.lchltHotHiF }
+  }
+  return { center: TRAINER.lchltMildCenterF, lo: TRAINER.lchltMildLoF, hi: TRAINER.lchltMildHiF }
+}
+
+function weatherValveTargets(oatF: number): { chw: number; cw: number; gly: number } {
+  if (oatF <= TRAINER.coldOatF) return { chw: 51, cw: 70, gly: 90 }
+  if (oatF >= TRAINER.hotOatF) return { chw: 77, cw: 90, gly: 25 }
+  return { chw: 72, cw: 78, gly: 70 }
+}
+
+function weatherBand(oat: number): PlantSnapshot['weather'] {
+  if (oat >= 95) return 'extreme'
+  if (oat >= 78) return 'design'
+  return 'mild'
+}
+
+function wetBulbF(oat: number): number {
+  return Math.min(oat - 8, oat - 4 - Math.max(0, 70 - oat) * 0.15)
+}
+
+function dryFanFor(oat: number, chwrGuess: number): number {
+  if (oat + 12 < chwrGuess) return Math.max(25, Math.min(100, 55 + (55 - oat) * 1.4))
+  return 20
+}
+
+function applyHighHead(draft: BoardDraft): void {
+  draft.towerFanPct = 100
+  draft.cwsF += 10
+  draft.cwrF += 10
+  draft.cond += 28
+  draft.ch01RlaExtra = 22
+  draft.alarm = 'High condenser pressure. The cooling tower cannot reject enough heat.'
+  draft.modeOverride.set('CH-01', 'alarm')
+}
+
+function applyHallHot(draft: BoardDraft, lchltSet: number): void {
+  draft.hallSupplyF += 9
+  draft.hallReturnF += 11
+  draft.chwDpPsi = 9.5
+  draft.ch01RlaScale = 0.45
+  draft.ch01RlaFloor = 18
+  draft.lchltAct = lchltSet + 0.2
+  draft.alarm = 'The hall is hot. Examine the CHW path and the CRAHs. The chiller load is low.'
+}
+
+function applyLanding(draft: BoardDraft): void {
+  draft.modeOverride.set('CH-01', 'alarm')
+  draft.mbcOverride.set('CH-01', 'LANDED')
+  draft.ch01RlaForce = 0
+  draft.alarm = 'The MBC recorded a power-fail landing. Examine the UPS and the ATS.'
+}
+
+function failoverLoadAlarm(id: string): string {
+  if (id === 'CH-02') return 'Failover is active. CH-02 has the load.'
+  return `Failover is active. ${id} has the load.`
+}
+
+function sumRunningMw(units: ChillerUnitState[]): number {
+  return units.reduce((sum, unit) => sum + (unit.running ? unit.capacityMw : 0), 0)
+}
+
+function fightAlarmText(input: FightInput): string | null {
+  if (input.lchltPinned && lchltOutsideBand(input.lchltSet, input.oatF)) {
+    const center = lchltBand(input.oatF).center
+    return `The LCHLT setpoint fights the outdoor target. The trainer target is ${center.toFixed(0)}°F.`
+  }
+  const valves = weatherValveTargets(input.oatF)
+  if (input.chwPinned && Math.abs(input.chwValvePct - valves.chw) > TRAINER.valveFightPct) {
+    return `The CHW valve fights the outdoor target. The trainer target is ${valves.chw}%.`
+  }
+  if (input.cwPinned && input.oatF >= TRAINER.hotOatF && input.cwValvePct < 60) {
+    return 'The CW valve fights the outdoor target. The cooling tower needs flow in hot weather.'
+  }
+  if (input.glycolPinned && input.oatF >= TRAINER.hotOatF && input.glycolValvePct > 50 && input.freeCoolPct < 8) {
+    return 'The glycol valve fights the outdoor target. Hot air cannot give free cooling.'
+  }
+  return null
+}
+
+function lchltOutsideBand(setpoint: number, oatF: number): boolean {
+  const band = lchltBand(oatF)
+  return setpoint < band.lo || setpoint > band.hi
+}
+
+function chwTargetPsiFor(oat: number): number {
+  if (oat >= TRAINER.hotOatF) return 20
+  if (oat <= TRAINER.coldOatF) return 14
+  return 17
+}
+
+function fansArePinned(towerFanPct: number, oat: number): boolean {
+  return towerFanPct >= 98 && oat >= 90
+}
+
+function cwHeadGainPsi(range: number, cwFlow: number, fansPinned: boolean): number {
+  const scale = fansPinned ? 0.35 : 1
+  const next = (range * cwFlow) / Math.min(cwFlow + 0.1, 1)
+  return Math.round((range - next) * 1.75 * scale * 10) / 10
+}
+
+function rankRunning(units: ChillerUnitState[]): RankedUnit[] {
+  let leadAssigned = false
+  const ranked: RankedUnit[] = []
+  for (const unit of units) {
+    const role = baseRole(unit.running, leadAssigned)
+    if (role === 'lead') leadAssigned = true
+    ranked.push({ id: unit.id, running: unit.running, capacityMw: unit.capacityMw, role })
+  }
+  return ranked
+}
+
+function baseRole(running: boolean, leadAssigned: boolean): ChillerMode {
+  if (!running) return 'standby'
+  if (!leadAssigned) return 'lead'
+  return 'lag'
+}
+
+function unitSnapshot(unit: RankedUnit, draft: BoardDraft): UnitSnapshot {
+  return {
+    id: unit.id,
+    running: unit.running,
+    capacityMw: unit.capacityMw,
+    mode: modeForUnit(unit, draft.modeOverride),
+    rla: rlaForUnit(unit, draft),
+    condPsig: condForUnit(unit, draft.cond),
+    mbc: mbcForUnit(unit, draft.mbcOverride),
+  }
+}
+
+function modeForUnit(unit: RankedUnit, override: Map<string, ChillerMode>): ChillerMode {
+  const forced = override.get(unit.id)
+  if (forced) return forced
+  return unit.role
+}
+
+function rlaForUnit(unit: RankedUnit, draft: BoardDraft): number {
+  const share = shareMw(unit, draft)
+  const head = headForUnit(unit.id, draft.condTemp)
+  let rla = unit.running ? 28 + share * 9 + head : 0
+  if (unit.id === 'CH-01') rla = adjustCh01Rla(rla, draft)
+  if (draft.failoverLeadId === unit.id) rla = 55 + draft.itLoadMw * 5
+  return round(clamp(rla, 0, 110), 0)
+}
+
+function shareMw(unit: RankedUnit, draft: BoardDraft): number {
+  if (!unit.running || draft.runningCapacityMw <= 0) return 0
+  return draft.chillerMw * (unit.capacityMw / draft.runningCapacityMw)
+}
+
+function headForUnit(id: string, condTemp: number): number {
+  if (id !== 'CH-01') return 0
+  return Math.max(0, condTemp - 85) * 0.85
+}
+
+function adjustCh01Rla(rla: number, draft: BoardDraft): number {
+  let next = rla * draft.ch01RlaScale + draft.ch01RlaExtra
+  if (draft.ch01RlaFloor > 0) next = Math.max(draft.ch01RlaFloor, next)
+  if (draft.ch01RlaExtra > 0) next = Math.min(105, next)
+  if (draft.ch01RlaForce !== null) return draft.ch01RlaForce
+  return next
+}
+
+function mbcForUnit(unit: RankedUnit, override: Map<string, UnitSnapshot['mbc']>): UnitSnapshot['mbc'] {
+  const forced = override.get(unit.id)
+  if (forced) return forced
+  if (unit.running) return 'LEVITATED'
+  return 'LANDED'
+}
+
+function condForUnit(unit: RankedUnit, cond: number): number {
+  if (unit.id === 'CH-01') return round(cond, 0)
+  const offset = unit.running ? 4 : 12
+  return round(cond - offset, 0)
 }
 
 function unitFace(units: UnitSnapshot[], id: string): UnitSnapshot {
