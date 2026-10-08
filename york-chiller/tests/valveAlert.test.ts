@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { INFO } from '../src/data/content'
 import { PlantController } from '../src/sim/controller'
-import { CHW_DP_LOW_PSI, HALL_HOT_CHW_DP_PSI, printedChwDpPsi } from '../src/sim/plantSim'
+import { CHW_DP_LOW_PSI, HALL_HOT_CHW_DP_PSI, chwLowFlowLesson, chwLowOpenPct, printedChwDpPsi } from '../src/sim/plantSim'
 import {
   dismissValveAlert,
   reduceValveAlert,
@@ -148,6 +149,22 @@ test('the CHW low banner matches the printed board at every slider point', () =>
     assert.equal(valveZone('chw', pct, snap.oatF) === 'low', low)
     assert.equal((snap.alarm ?? '').includes('The CHW ΔP is low'), low, `banner at ${pct}%`)
   }
+})
+
+test('the CHW slider lesson uses the printed low opening', () => {
+  const pct = chwLowOpenPct()
+  assert.equal(printedChwDpPsi(pct) < CHW_DP_LOW_PSI, true)
+  assert.equal(printedChwDpPsi(pct + 1) < CHW_DP_LOW_PSI, false)
+  const lesson = chwLowFlowLesson()
+  assert.equal(
+    lesson,
+    `At ${pct}% open and below, the CHW ΔP is below the trainer limit of ${CHW_DP_LOW_PSI} psi. This sim then gives the CRAHs too little flow, and the hall gets warmer.`,
+  )
+  assert.equal(INFO['slider-chw'].points.includes(lesson), true)
+  assert.equal(
+    INFO['pipe-chw'].points.some((line) => line.includes('If a fault holds the ΔP, a valve move does not change it.')),
+    true,
+  )
 })
 
 test('hall-hot holds the CHW ΔP at 9.5 psi when the valve is fully open', () => {

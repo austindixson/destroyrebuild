@@ -1028,6 +1028,19 @@ export function printedChwDpPsi(pct: number): number {
   return round(chwDpAt(pct), 1)
 }
 
+/** Highest CHW slider percent whose printed ΔP is below the trainer low limit. */
+export function chwLowOpenPct(): number {
+  for (let pct = 100; pct >= 15; pct -= 1) {
+    if (printedChwDpPsi(pct) < CHW_DP_LOW_PSI) return pct
+  }
+  return 15
+}
+
+/** Slider lesson. The percent is the same printed-ΔP mark the board and the banner use. */
+export function chwLowFlowLesson(): string {
+  return `At ${chwLowOpenPct()}% open and below, the CHW ΔP is below the trainer limit of ${CHW_DP_LOW_PSI} psi. This sim then gives the CRAHs too little flow, and the hall gets warmer.`
+}
+
 function cwDpAt(pct: number) {
   const f = Math.max(15, Math.min(100, pct)) / 100
   return 4 + Math.pow(f, 1.35) * 12

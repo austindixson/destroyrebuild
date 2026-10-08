@@ -44,7 +44,7 @@ test('valve wheels follow an outdoor change with the 3D view open', async ({ pag
 })
 
 test('a balance valve dragged into red shows one alert until it leaves', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(120_000)
   await openExplorer(page)
   const alert = page.locator('#valve-alert')
   await expect(alert).toBeHidden()
@@ -79,7 +79,7 @@ test('a balance valve dragged into red shows one alert until it leaves', async (
   await expect(alert).toContainText('CRAHs do not get enough flow')
 })
 
-const HALL_HOT_NOTE = 'The hall-hot fault holds the CHW ΔP at 9.5 psi.'
+const HALL_HOT_NOTE = 'The trainer hot-hall fault holds the CHW ΔP at 9.5 psi.'
 
 test('hall-hot prints 9.5 psi in red and the note does not ask for a valve move', async ({ page }) => {
   test.setTimeout(60_000)

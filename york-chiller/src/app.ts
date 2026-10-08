@@ -120,7 +120,9 @@ function homeChwDpText(s: PlantSnapshot): string {
 
 /** Hall-hot holds the printed CHW ΔP. The note states that fact and does not ask for a valve move. */
 function pipeChwNote(dp: number, incident: IncidentKind | null): string {
-  if (incident === 'hall-hot') return `The hall-hot fault holds the CHW ΔP at ${HALL_HOT_CHW_DP_PSI.toFixed(1)} psi. `
+  if (incident === 'hall-hot') {
+    return `The trainer hot-hall fault holds the CHW ΔP at ${HALL_HOT_CHW_DP_PSI.toFixed(1)} psi. `
+  }
   if (dp < VALVE_RED.chwDpLowPsi) return 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
   if (dp > VALVE_RED.chwDpHighPsi) return 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
   return ''

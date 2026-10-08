@@ -1,3 +1,5 @@
+import { chwLowFlowLesson } from '../sim/plantSim.ts'
+
 export type ComponentId =
   | 'evaporator'
   | 'condenser'
@@ -1275,7 +1277,7 @@ export const INFO = {
       gloss('chws').definition,
       'The valve on this card is the balance valve for the whole CHW loop, so both rows move together.',
       gloss('chw').why,
-      'If the differential pressure is low and the hall gets warmer, open the valve. If the differential pressure is high, decrease the valve opening.',
+      'If the differential pressure is low and the hall gets warmer, open the valve. If the differential pressure is high, decrease the valve opening. If a fault holds the ΔP, a valve move does not change it.',
     ],
     ['chwr', 'chws', 'chwDp', 'chwValve'],
   ),
@@ -1305,7 +1307,7 @@ export const INFO = {
     [
       'This slider is the CHW balance valve. In the trainer the valve moves from 15% open to 100% open.',
       'More stem increases flow and ΔP until the piping and the coils, not the valve, are the restriction.',
-      'Below about 42% open, this sim gives the CRAHs too little flow and the hall gets warmer.',
+      chwLowFlowLesson(),
       'Move the valve while you watch the ΔP and the hall supply. The gain line shows the psi change for a 10% move at this position.',
     ],
     ['chwValve', 'chwDp'],
