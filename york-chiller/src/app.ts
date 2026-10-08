@@ -107,6 +107,7 @@ export class App {
   private quizIndex = 0
   private quizScore = 0
   private quizAnswered = false
+  private quizPick: number | null = null
   private troubleIndex = 0
   private troublePicked: number | null = null
   private troubleSeconds = 45
@@ -418,38 +419,59 @@ export class App {
 
   private patchLiveBoard() {
     const s = this.snap
+    this.patchAlarmBanner(s.alarm)
+    this.patchKpiStrip(s)
+    this.patchMimicBodies(s)
+    const reason = this.root.querySelector('#plant-reason')
+    if (reason) this.relinkText(reason, s.reason)
+    this.markMimicAlarms(s)
+  }
+
+  private patchAlarmBanner(alarm: string | null) {
     const banner = this.root.querySelector('#alarm-banner')
-    if (banner) {
-      banner.classList.toggle('show', Boolean(s.alarm))
-      this.relinkText(banner, s.alarm ?? '')
-    }
+    if (!banner) return
+    banner.classList.toggle('show', Boolean(alarm))
+    this.relinkText(banner, alarm ?? '')
+  }
+
+  private patchKpiStrip(s: PlantSnapshot) {
     const strip = this.root.querySelector('#kpi-strip')
-    if (strip) {
-      const active = document.activeElement
-      const focusedInfo =
-        active instanceof HTMLButtonElement && active.classList.contains('info-btn') && strip.contains(active)
-          ? active.dataset.infoBtn
-          : undefined
-      const focusedGlossary =
-        active instanceof HTMLButtonElement && active.classList.contains('jargon') && strip.contains(active)
-          ? active.dataset.glossary
-          : undefined
-      const focusedHost =
-        active instanceof HTMLButtonElement && strip.contains(active)
-          ? active.closest<HTMLElement>('.kpi')?.dataset.info
-          : undefined
-      strip.innerHTML = this.kpiHtml(s)
-      this.info.mount(strip)
-      if (focusedInfo) {
-        strip.querySelector<HTMLButtonElement>(`.info-btn[data-info-btn="${CSS.escape(focusedInfo)}"]`)?.focus()
-      } else if (focusedGlossary && focusedHost) {
-        strip
-          .querySelector<HTMLButtonElement>(
-            `.kpi[data-info="${CSS.escape(focusedHost)}"] button.jargon[data-glossary="${CSS.escape(focusedGlossary)}"]`,
-          )
-          ?.focus()
-      }
+    if (!strip) return
+    const focus = this.captureStripFocus(strip)
+    strip.innerHTML = this.kpiHtml(s)
+    this.info.mount(strip)
+    this.restoreStripFocus(strip, focus)
+  }
+
+  private captureStripFocus(strip: Element) {
+    const active = document.activeElement
+    if (!(active instanceof HTMLButtonElement) || !strip.contains(active)) return null
+    if (active.classList.contains('info-btn')) return { info: active.dataset.infoBtn }
+    if (!active.classList.contains('jargon')) return null
+    return {
+      glossary: active.dataset.glossary,
+      host: active.closest<HTMLElement>('.kpi')?.dataset.info,
     }
+  }
+
+  private restoreStripFocus(
+    strip: Element,
+    focus: { info?: string; glossary?: string; host?: string } | null,
+  ) {
+    if (!focus) return
+    if (focus.info) {
+      strip.querySelector<HTMLButtonElement>(`.info-btn[data-info-btn="${CSS.escape(focus.info)}"]`)?.focus()
+      return
+    }
+    if (!focus.glossary || !focus.host) return
+    strip
+      .querySelector<HTMLButtonElement>(
+        `.kpi[data-info="${CSS.escape(focus.host)}"] button.jargon[data-glossary="${CSS.escape(focus.glossary)}"]`,
+      )
+      ?.focus()
+  }
+
+  private patchMimicBodies(s: PlantSnapshot) {
     const bodies: Record<string, string> = {
       it: `${s.itLoadMw} MW of IT heat`,
       crah: `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`,
@@ -462,11 +484,13 @@ export class App {
       const el = this.root.querySelector(`[data-mimic-body="${id}"]`)
       if (el) el.textContent = text
     }
-    const reason = this.root.querySelector('#plant-reason')
-    if (reason) this.relinkText(reason, s.reason)
+  }
+
+  private markMimicAlarms(s: PlantSnapshot) {
     this.root.querySelectorAll('.mimic-node').forEach((n) => {
       const id = (n as HTMLElement).dataset.mimic
-      n.classList.toggle('alarm', (id === 'ch1' && s.ch01.mode === 'alarm') || (id === 'noc' && Boolean(s.alarm)))
+      const alarm = id === 'ch1' ? s.ch01.mode === 'alarm' : id === 'noc' && Boolean(s.alarm)
+      n.classList.toggle('alarm', alarm)
     })
   }
 
@@ -1048,7 +1072,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         if (a === 'start') {
           this.running = true
           this.sim.ch01Running = true
-          this.optiLog.push({ text: 'The start is accepted. The MBC levitates the rotor. The VSD increases speed.' })
+          this.optiLog.push({ text: 'The panel accepts the start. The MBC levitates the rotor. The VSD increases speed.' })
         } else if (a === 'soft') {
           this.running = false
           this.sim.ch01Running = false
@@ -1090,7 +1114,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           ${this.matchIcons
             .map((p) => {
               const locked = this.matchLocked.has(p.id)
-              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${infoAttr(componentInfoId(p.id as ComponentId))} ${locked ? 'disabled' : ''}>
+              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${infoAttr('mission-match')} ${locked ? 'disabled' : ''}>
                 <span class="card-icon" style="color:${COMPONENTS.find((c) => c.id === p.id)?.color}">${iconSvg(p.icon, 28)}</span>
                 <span style="color:var(--muted);font-family:var(--mono);font-size:.78rem">${locked ? 'Matched' : 'Select'}</span>
               </button>`
@@ -1101,7 +1125,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           ${this.matchLabels
             .map((p) => {
               const locked = this.matchLocked.has(p.id)
-              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''}" data-label="${p.id}" ${infoAttr(componentInfoId(p.id as ComponentId))} ${locked ? 'disabled' : ''}><strong>${p.label}</strong></button>`
+              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''}" data-label="${p.id}" ${infoAttr('mission-match')} ${locked ? 'disabled' : ''}><strong>${p.label}</strong></button>`
             })
             .join('')}
         </div></div>
@@ -1159,16 +1183,27 @@ COND ══╝     CHW → CRAH → HALL</div>
         <div class="quiz-card" ${infoAttr('quiz-done')}><button class="btn" type="button" data-quiz-restart>Retry the questions</button></div>`
     }
     const q = this.quizOrder[this.quizIndex]
+    const answered = this.quizAnswered && this.quizPick !== null
+    const pick = this.quizPick
+    const choices = q.choices
+      .map((choice, i) => {
+        const mark = !answered ? '' : i === q.answer ? 'correct' : i === pick ? 'wrong' : ''
+        return `<button type="button" class="choice ${mark}" data-choice="${i}">${choice}</button>`
+      })
+      .join('')
+    const feedback = answered
+      ? `<div class="feedback">${pick === q.answer ? 'That answer is correct. ' : 'That answer is not correct. '}${q.explain}</div>`
+      : ''
     return `
       <div class="view-head">
         <div><h2>Knowledge gate</h2><p>${q.topic} · ${this.quizIndex + 1}/${this.quizOrder.length}</p></div>
         <span class="chip">Score ${this.quizScore}</span>
       </div>
-      <div class="quiz-card" ${infoAttr(quizInfoId(q.id))}>
+      <div class="quiz-card" ${answered ? infoAttr(quizInfoId(q.id)) : ''}>
         <h3 style="margin-top:0">${q.prompt}</h3>
-        <div class="choices">${q.choices.map((c, i) => `<button type="button" class="choice" data-choice="${i}">${c}</button>`).join('')}</div>
-        <div id="quiz-feedback"></div>
-        <div style="margin-top:14px"><button class="btn" type="button" data-quiz-next style="display:none">Next</button></div>
+        <div class="choices">${choices}</div>
+        <div id="quiz-feedback">${feedback}</div>
+        <div style="margin-top:14px"><button class="btn" type="button" data-quiz-next style="display:${answered ? 'inline-flex' : 'none'}">Next</button></div>
       </div>`
   }
 
@@ -1178,6 +1213,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       this.quizIndex = 0
       this.quizScore = 0
       this.quizAnswered = false
+      this.quizPick = null
       this.renderView()
     })
     if (this.quizIndex >= this.quizOrder.length) {
@@ -1186,25 +1222,20 @@ COND ══╝     CHW → CRAH → HALL</div>
     }
     const q = this.quizOrder[this.quizIndex]
     const next = el.querySelector<HTMLButtonElement>('[data-quiz-next]')!
-    const feedback = el.querySelector('#quiz-feedback')!
     el.querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (this.quizAnswered) return
-        this.quizAnswered = true
         const i = Number(btn.dataset.choice)
-        el.querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((b, idx) => {
-          if (idx === q.answer) b.classList.add('correct')
-          else if (idx === i) b.classList.add('wrong')
-        })
+        this.quizAnswered = true
+        this.quizPick = i
         if (i === q.answer) this.quizScore += 1
-        feedback.innerHTML = `<div class="feedback">${i === q.answer ? 'That answer is correct. ' : 'That answer is not correct. '}${q.explain}</div>`
-        linkGlossary(feedback)
-        next.style.display = 'inline-flex'
+        this.renderView()
       })
     })
     next.addEventListener('click', () => {
       this.quizIndex += 1
       this.quizAnswered = false
+      this.quizPick = null
       if (this.quizIndex >= this.quizOrder.length) {
         if (this.quizScore > this.progress.quizBest) this.progress.quizBest = this.quizScore
         this.progress = addXp(this.progress, this.quizScore * 5)
@@ -1257,7 +1288,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       </div>
       <div class="alarm-banner show">${this.snap.alarm ?? t.title}</div>
       <div class="kpi-strip">${this.kpiHtml(this.snap)}</div>
-      <div class="trouble-card" ${infoAttr(troubleInfoId(t.id))}>
+      <div class="trouble-card" ${this.troublePicked !== null ? infoAttr(troubleInfoId(t.id)) : ''}>
         <h3 style="margin-top:0">${t.title}</h3>
         <ul>${t.symptoms.map((s) => `<li>${s}</li>`).join('')}</ul>
         <div class="choices">

@@ -7,7 +7,7 @@
  * - procedural sentences over 20 words (imperative, including "Do not" and "Make sure")
  * - other sentences over 25 words
  * - contractions
- * - passive "is/are/was/were ... by"
+ * - passive "is/are/was/were/been" plus a past participle, with or without "by"
  * - a fixed list of common phrasal verbs
  */
 import fs from 'node:fs'
@@ -160,10 +160,20 @@ const PHRASALS = [
   'points out',
   'call out',
   'calls out',
+  'run out',
+  'runs out',
+  'ran out',
+  'running out',
+  'move apart',
+  'moves apart',
+  'moved apart',
+  'turn into',
+  'turns into',
+  'turned into',
 ]
 
 const PASSIVE =
-  /\b(?:is|are|was|were)(?:\s+being)?\s+(?:[a-z]+ed|held|made|seen|done|given|taken|known|shown|found|left|sent|lost|written|driven|begun|kept|met|built|fed|led|read|run|set|cut|put|paid|said|bound|caught|brought|bought|thought|taught|sought|felt|heard|meant|sold|told|stood|understood|become)\s+by\b/i
+  /\b(?:is|are|was|were|been)(?:\s+being)?\s+(?:[a-z]+ed|held|made|seen|done|given|taken|known|shown|found|left|sent|lost|written|driven|begun|kept|met|built|fed|led|read|run|set|cut|put|paid|said|bound|caught|brought|bought|thought|taught|sought|felt|heard|meant|sold|told|stood|understood|become)\b/i
 
 const CONTRACTION =
   /\b(?:i'm|i've|i'd|i'll|you're|you've|you'd|you'll|we're|we've|we'd|we'll|they're|they've|they'd|they'll|he's|she's|it's|that's|there's|what's|who's|here's|where's|how's|let's|can't|won't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't|couldn't|shouldn't|wouldn't|mustn't|needn't|[a-z]+n't)\b/i

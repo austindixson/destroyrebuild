@@ -37,7 +37,7 @@ test('glossary definitions stay short and aliases do not collide', () => {
   expect(glossaryIdsIn('Tell the NOC.')).toEqual(['noc'])
 })
 
-test('NOC is clickable and shows its definition', async ({ page }) => {
+test('NOC is clickable and shows its definition', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/york-chiller/')
   await page.locator('.nav [data-nav="operation"]').click()
@@ -74,7 +74,7 @@ test('NOC is clickable and shows its definition', async ({ page }) => {
   await expect(dialog).toBeVisible()
   await expect(dialog).toHaveClass(/sheet/)
   await expect(dialog.locator('#info-title')).toHaveText('NOC')
-  await page.screenshot({ path: '/opt/cursor/artifacts/glossary-mobile-390x844.png', fullPage: false })
+  await page.screenshot({ path: testInfo.outputPath('glossary-mobile-390x844.png'), fullPage: false })
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
 })

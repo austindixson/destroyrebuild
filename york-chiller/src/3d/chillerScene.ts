@@ -18,6 +18,18 @@ type LoopKind = 'chw' | 'cw' | 'gly'
 
 type PlantTag = 'CHWS' | 'CHWR' | 'CWS' | 'CWR' | 'GLS' | 'GLR' | 'TOWER · WATER' | 'GLYCOL DRY'
 
+/** Screen-pixel nudge so tags that share a projection do not stack. */
+const TAG_OFFSET: Record<PlantTag, { x: number; y: number }> = {
+  CHWS: { x: 28, y: -112 },
+  CHWR: { x: 28, y: -56 },
+  CWS: { x: 28, y: 4 },
+  CWR: { x: 28, y: 62 },
+  GLS: { x: -72, y: -24 },
+  GLR: { x: -72, y: 52 },
+  'TOWER · WATER': { x: 128, y: -18 },
+  'GLYCOL DRY': { x: -16, y: -92 },
+}
+
 /** Live loop readings the plant sim actually publishes. */
 export interface SceneReadings {
   chwsF: number
@@ -78,6 +90,10 @@ export class ChillerScene {
   private model: THREE.Object3D | null = null
   private labelRenderer: CSS2DRenderer
   private labelValues = new Map<PlantTag, HTMLElement>()
+  private labelAnchors = new Map<PlantTag, CSS2DObject>()
+  private occlusionAt = 0
+  private readonly occlusionDir = new THREE.Vector3()
+  private readonly occlusionAnchor = new THREE.Vector3()
   private readings: SceneReadings | null = null
   private instruments: { id: InstrumentId; mesh: THREE.Object3D; wheel: THREE.Object3D; kind: LoopKind }[] = []
   private fans: { mesh: THREE.Object3D; sink: 'dry' | 'tower' }[] = []
@@ -99,7 +115,7 @@ export class ChillerScene {
       powerPreference: lowPower ? 'low-power' : 'high-performance',
       failIfMajorPerformanceCaveat: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 2 : 1.5))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2))
     this.renderer.setSize(w, h, false)
     this.labelRenderer = new CSS2DRenderer()
     const labels = this.labelRenderer.domElement
@@ -350,6 +366,7 @@ export class ChillerScene {
   setFans(dryPct: number, towerPct: number) {
     this.drySpin = Math.max(0, dryPct) / 100 * 9
     this.towerSpin = Math.max(0, towerPct) / 100 * 7
+    this.poseFans(this.clock.getElapsedTime())
     this.needsRender = true
   }
 
@@ -373,7 +390,7 @@ export class ChillerScene {
     chws: new THREE.Vector3(-0.2382, -0.165, 0.903),
     chwr: new THREE.Vector3(-0.238, -0.3625, 0.895),
     cwr: new THREE.Vector3(0.0049, -0.224, 0.945),
-    cws: new THREE.Vector3(0.1439, -0.3364, 0.937),
+    cws: new THREE.Vector3(0.1634, -0.3529, 0.937),
   }
 
   /**
@@ -510,12 +527,12 @@ export class ChillerScene {
       this.steel(0x4c3d6e, 0.5, 0.42),
     )
     drum.rotation.x = Math.PI / 2
-    drum.position.y = 0.52
+    drum.position.y = 0.49
     g.add(drum)
     const faces: THREE.Vector3[] = []
     for (const spec of [
-      { z: -0.28, y: 0.4 },
-      { z: 0.28, y: 0.64 },
+      { z: -0.28, y: 0.47 },
+      { z: 0.28, y: 0.525 },
     ]) {
       const nozzle = new THREE.Mesh(
         new THREE.CylinderGeometry(0.075, 0.075, 0.2, this.segs(12, 8)),
@@ -708,6 +725,11 @@ export class ChillerScene {
   }
 
   private tagLabel(text: PlantTag, color: string) {
+    const anchor = document.createElement('div')
+    anchor.className = 'plant-tag-anchor'
+    const leader = document.createElement('span')
+    leader.className = 'plant-leader'
+    leader.style.background = color
     const root = document.createElement('div')
     root.className = 'plant-tag'
     root.style.borderColor = color
@@ -718,8 +740,39 @@ export class ChillerScene {
     value.className = 'plant-tag-value'
     if (this.readings) value.textContent = readingText(text, this.readings)
     root.append(name, value)
+    anchor.append(leader, root)
     this.labelValues.set(text, value)
-    return new CSS2DObject(root)
+    const object = new CSS2DObject(anchor)
+    this.labelAnchors.set(text, object)
+    this.placeTag(text)
+    return object
+  }
+
+  private tagOffset(tag: PlantTag) {
+    const width = this.renderer.domElement.clientWidth || 800
+    if (width >= 480) return TAG_OFFSET[tag]
+    if (tag === 'TOWER · WATER') return { x: -8, y: 108 }
+    const base = TAG_OFFSET[tag]
+    return { x: Math.round(base.x * 0.42), y: Math.round(base.y * 0.74) }
+  }
+
+  private placeTag(tag: PlantTag) {
+    const object = this.labelAnchors.get(tag)
+    if (!object) return
+    const offset = this.tagOffset(tag)
+    const tagEl = object.element.querySelector('.plant-tag')
+    const leader = object.element.querySelector('.plant-leader')
+    if (!(tagEl instanceof HTMLElement) || !(leader instanceof HTMLElement)) return
+    tagEl.style.left = `${offset.x}px`
+    tagEl.style.top = `${offset.y}px`
+    const length = Math.hypot(offset.x, offset.y)
+    leader.hidden = length < 8
+    leader.style.width = `${length}px`
+    leader.style.transform = `rotate(${Math.atan2(offset.y, offset.x)}rad)`
+  }
+
+  private placeAllTags() {
+    for (const tag of this.labelAnchors.keys()) this.placeTag(tag)
   }
 
   private placeProxyHotspots(box: THREE.Box3) {
@@ -972,6 +1025,7 @@ export class ChillerScene {
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h, false)
     this.labelRenderer.setSize(w, h)
+    this.placeAllTags()
     this.needsRender = true
   }
 
@@ -991,6 +1045,86 @@ export class ChillerScene {
     return canvas.style.display !== 'none'
   }
 
+  /** Low-power clients stay idle unless the operator is moving the view or a part is selected. */
+  private frameIsAwake() {
+    if (!this.lowPower) return true
+    return this.interacting || this.highlightRing.visible
+  }
+
+  private poseFans(t: number) {
+    for (const fan of this.fans) {
+      fan.mesh.rotation.y = t * (fan.sink === 'dry' ? this.drySpin : this.towerSpin)
+    }
+  }
+
+  private spinAssemblies(t: number) {
+    if (this.rotor) this.rotor.rotation.x = t * (this.lowPower ? 3.5 : 6)
+    this.poseFans(t)
+    if (this.highlightRing.visible) {
+      this.highlightRing.rotation.z = t * 1.1
+      ;(this.highlightRing.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(t * 3) * 0.2
+    }
+    if (!this.particles || !this.particleVel) return
+    const pos = this.particles.geometry.getAttribute('position') as THREE.BufferAttribute
+    for (let i = 0; i < pos.count; i++) {
+      const a = Math.atan2(pos.getZ(i), pos.getX(i)) + 0.01 * this.particleVel[i]
+      const r = 1.3 + 0.3 * Math.sin(a * 2 + t)
+      const y = 1.4 + 0.45 * Math.sin(a * 2) + 0.1 * Math.sin(t * 2 + i)
+      pos.setXYZ(i, Math.cos(a) * r, y, Math.sin(a) * r * 0.85)
+    }
+    pos.needsUpdate = true
+  }
+
+  private animateFrame(t: number) {
+    if (!this.frameIsAwake()) {
+      if (this.controls.enableDamping) this.controls.update()
+      return
+    }
+    this.controls.update()
+    this.spinAssemblies(t)
+    this.needsRender = true
+  }
+
+  private syncLabelLayer() {
+    const layer = this.labelRenderer.domElement
+    if (!this.labelsInView()) {
+      layer.style.visibility = 'hidden'
+      return
+    }
+    layer.style.visibility = ''
+    this.labelRenderer.render(this.scene, this.camera)
+  }
+
+  /** Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag. */
+  private fadeOccludedLabels(now: number) {
+    if (now - this.occlusionAt < 0.25) return
+    this.occlusionAt = now
+    const model = this.model
+    if (!model) return
+    const origin = this.camera.position
+    const savedFar = this.raycaster.far
+    for (const object of this.labelAnchors.values()) {
+      object.getWorldPosition(this.occlusionAnchor)
+      this.occlusionDir.subVectors(this.occlusionAnchor, origin)
+      const dist = this.occlusionDir.length()
+      if (dist < 0.5) continue
+      this.occlusionDir.multiplyScalar(1 / dist)
+      this.raycaster.set(origin, this.occlusionDir)
+      this.raycaster.far = dist - 0.35
+      const blocked = this.raycaster.intersectObject(model, true).length > 0
+      object.element.classList.toggle('is-occluded', blocked)
+    }
+    this.raycaster.far = savedFar
+  }
+
+  private renderFrame(t: number) {
+    if (!this.needsRender) return
+    this.renderer.render(this.scene, this.camera)
+    this.syncLabelLayer()
+    this.fadeOccludedLabels(t)
+    if (this.lowPower && !this.interacting) this.needsRender = false
+  }
+
   private tick = () => {
     if (this.disposed) return
     this.animId = requestAnimationFrame(this.tick)
@@ -998,46 +1132,9 @@ export class ChillerScene {
       this.labelRenderer.domElement.style.visibility = 'hidden'
       return
     }
-
     const t = this.clock.getElapsedTime()
-    const animate = !this.lowPower || this.interacting || this.highlightRing.visible
-    const fansMoving = this.drySpin > 0.15 || this.towerSpin > 0.15
-    if (animate || fansMoving) {
-      this.controls.update()
-      if (this.rotor) this.rotor.rotation.x = t * (this.lowPower ? 3.5 : 6)
-      for (const fan of this.fans) {
-        fan.mesh.rotation.y = t * (fan.sink === 'dry' ? this.drySpin : this.towerSpin)
-      }
-      if (this.highlightRing.visible) {
-        this.highlightRing.rotation.z = t * 1.1
-        ;(this.highlightRing.material as THREE.MeshBasicMaterial).opacity =
-          0.55 + Math.sin(t * 3) * 0.2
-      }
-      if (this.particles && this.particleVel) {
-        const pos = this.particles.geometry.getAttribute('position') as THREE.BufferAttribute
-        for (let i = 0; i < pos.count; i++) {
-          const a = Math.atan2(pos.getZ(i), pos.getX(i)) + 0.01 * this.particleVel[i]
-          const r = 1.3 + 0.3 * Math.sin(a * 2 + t)
-          const y = 1.4 + 0.45 * Math.sin(a * 2) + 0.1 * Math.sin(t * 2 + i)
-          pos.setXYZ(i, Math.cos(a) * r, y, Math.sin(a) * r * 0.85)
-        }
-        pos.needsUpdate = true
-      }
-      this.needsRender = true
-    } else if (this.controls.enableDamping) {
-      this.controls.update()
-    }
-
-    if (this.needsRender) {
-      this.renderer.render(this.scene, this.camera)
-      if (this.labelsInView()) {
-        this.labelRenderer.domElement.style.visibility = ''
-        this.labelRenderer.render(this.scene, this.camera)
-      } else {
-        this.labelRenderer.domElement.style.visibility = 'hidden'
-      }
-      if (this.lowPower && !this.interacting) this.needsRender = false
-    }
+    this.animateFrame(t)
+    this.renderFrame(t)
   }
 
   dispose() {
@@ -1048,6 +1145,7 @@ export class ChillerScene {
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointer)
     this.labelRenderer.domElement.remove()
     this.labelValues.clear()
+    this.labelAnchors.clear()
     this.controls.dispose()
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh

@@ -62,7 +62,7 @@ export const COMPONENTS: ComponentInfo[] = [
       'The compressor is an oil-free centrifugal machine with active magnetic bearings. Plants that run all day use this type for efficiency and for less maintenance.',
     details: [
       'Part-load efficiency is important. A data center rarely stays at the design load all day.',
-      'A landing after a utility blip or an ATS transfer needs a ticket. Power quality is a facilities issue.',
+      'An ATS transfer can cause a landing if the bearing hold-up power does not carry the bearings. That landing needs a ticket.',
       'Use a soft stop only for planned work. For an unplanned stop, tell the NOC and the facilities lead.',
     ],
     operatorTip:
@@ -82,7 +82,7 @@ export const COMPONENTS: ComponentInfo[] = [
       'Voltage imbalance on a generator feed or a UPS feed can look like a compressor fault.',
     ],
     operatorTip:
-      'After a generator test or UPS maintenance, make sure that the VSD is healthy. Make sure that the phases are balanced before you call the plant normal.',
+      'After a generator test or UPS maintenance, make sure that the VSD is healthy. Make sure of the phase balance before you call the plant normal.',
   },
   {
     id: 'optiview',
@@ -173,7 +173,7 @@ export const PLANT_NODES = [
   {
     id: 'tower',
     label: 'Cooling tower / CW',
-    detail: 'Heat leaves the building here. On a peak wet-bulb day, the plant usually runs out of heat rejection first.',
+    detail: 'Heat leaves the building here. On a peak wet-bulb day, heat rejection is the first limit.',
   },
   {
     id: 'bms',
@@ -186,7 +186,7 @@ export const STARTUP_STEPS = [
   {
     id: 'mop',
     title: 'MOP and change ticket',
-    body: 'Make sure that the MOP is approved, that the window is open, and that the NOC knows. Do this before you touch a production chiller.',
+    body: 'Make sure that someone approved the MOP, that the window is open, and that the NOC knows. Do this before you touch a production chiller.',
   },
   {
     id: 'redundancy',
@@ -290,11 +290,11 @@ export const QUIZ: QuizQuestion[] = [
     choices: [
       'They engage all the time at full IT load',
       'They engage only during an oil flush',
-      'They engage on a stop landing or when magnetic-bearing power is lost',
+      'They engage on a stop landing or when the machine loses magnetic-bearing power',
       'They engage when a CRAH valve opens',
     ],
     answer: 2,
-    explain: 'Touchdown bearings engage when rotation stops or when magnetic support is lost. A power event is one example.',
+    explain: 'Touchdown bearings engage when rotation stops or when the machine loses magnetic support. A power event is one example.',
     topic: 'components',
   },
   {
@@ -354,7 +354,7 @@ export const QUIZ: QuizQuestion[] = [
     prompt: 'A peak outdoor wet-bulb day is a threat to a data-center plant. What is the main reason?',
     choices: [
       'The day changes the OptiView units to metric',
-      'The cooling tower can reject less heat, so the head increases and capacity is limited',
+      'The cooling tower can reject less heat, so the head increases and the tower limits capacity',
       'The magnetic bearing gap increases automatically',
       'Server idle power decreases only',
     ],
@@ -417,7 +417,7 @@ export const TROUBLE_CASES: TroubleCase[] = [
     id: 'high-head',
     title: 'High head on a peak weather day',
     symptoms: [
-      'Condenser pressure is high and capacity is limited',
+      'Condenser pressure is high and the plant has little spare capacity',
       'The outdoor wet-bulb is near the design value',
       'The NOC reports warm-aisle alarms',
     ],
@@ -490,7 +490,7 @@ export const TROUBLE_CASES: TroubleCase[] = [
       {
         text: 'Force the compressor to 100% speed with no regard for the LCHLT',
         correct: false,
-        feedback: 'If the LCHLT is satisfied, more speed does not repair a hall loop with low flow.',
+        feedback: 'If the LCHLT already matches the setpoint, more speed does not repair a hall loop with low flow.',
       },
       {
         text: 'Stop all redundant chillers to focus the flow',
@@ -590,7 +590,7 @@ export const CYCLE_NODES = [
     id: 'feed',
     label: 'Level and feed',
     phase: 'Liquid returns to the evaporator',
-    detail: 'Level control feeds the evaporator so the LCHLT stays stable for the hall.',
+    detail: 'Level control meters liquid refrigerant from the condenser to the evaporator. The VSD and the VGD hold the LCHLT.',
   },
 ]
 
@@ -601,7 +601,7 @@ export const MAINT_ITEMS = [
   { id: 'w1', when: 'Weekly', text: 'Make sure that the CHW flow, the CW flow, and the header ΔP are in the normal band' },
   { id: 'w2', when: 'Weekly', text: 'Examine the cooling towers and the strainers. Record the basin level and the fan status.' },
   { id: 'm1', when: 'Monthly', text: 'Examine the balance of the three-phase voltage and current' },
-  { id: 'm2', when: 'Monthly', text: 'Tighten the electrical connections. Use LOTO when the procedure requires it.' },
+  { id: 'm2', when: 'Monthly', text: 'Only qualified electrical workers tighten these connections, with the circuit de-energized under LOTO.' },
   { id: 'm3', when: 'Monthly', text: 'Make sure that the setpoints and the cutouts match the live SOP' },
   { id: 'm4', when: 'Monthly', text: 'Record which unit is lead, which unit is lag, and which unit is standby' },
   { id: 'y1', when: 'Yearly', text: 'Clean the VSD heat exchanger and service the coolant' },
@@ -685,7 +685,7 @@ export const GLOSSARY = {
     term: 'NOC',
     aliases: ['NOC'],
     definition:
-      'The NOC owns the incident clock when the IT load is at risk. Operators operate the plant and tell the NOC what they see.',
+      'The NOC is the network operations center. The NOC owns the incident clock when the IT load is at risk, and operators tell the NOC what they see.',
     why: 'Tell the NOC what changed and what you do.',
   },
   bms: {
@@ -693,7 +693,7 @@ export const GLOSSARY = {
     aliases: ['BMS'],
     definition:
       'The BMS is the building management system. The BMS reads the plant, sends the sequence, and can write a setpoint and an enable.',
-    why: 'Trust the instruments if the BMS and OptiView do not agree.',
+    why: 'If the BMS and OptiView do not agree, read the local instruments, then reconcile the points, and do not guess.',
   },
   crah: {
     term: 'CRAH',
@@ -710,7 +710,7 @@ export const GLOSSARY = {
   chw: {
     term: 'CHW',
     aliases: ['chilled-water', 'chilled water', 'CHW'],
-    definition: 'CHW is chilled water. Pumps, headers, and valves move the CHW between the chillers and the hall.',
+    definition: 'CHW means chilled water. Pumps, headers, and valves move the CHW between the chillers and the hall.',
     why: 'This trainer flags differential pressure below 12 psi or above 24 psi.',
   },
   chws: {
@@ -723,7 +723,7 @@ export const GLOSSARY = {
     term: 'CHWR',
     aliases: ['CHWR'],
     definition: 'CHWR is the chilled-water return. This warmer water leaves the hall and enters the evaporator.',
-    why: 'The dry cooler can remove heat only when outdoor air is colder than this return.',
+    why: 'In this plant, the dry cooler gives free cooling only when outdoor air is well below the CHWR.',
   },
   cw: {
     term: 'CW',
@@ -747,13 +747,13 @@ export const GLOSSARY = {
     term: 'MOP',
     aliases: ['MOPs', 'MOP'],
     definition: 'A MOP is a method of procedure. The MOP gives the approved steps, the window, and the change ticket.',
-    why: 'Make sure that the MOP is approved and that the NOC knows before you touch the chiller.',
+    why: 'Make sure that someone approved the MOP and that the NOC knows before you touch the chiller.',
   },
   ats: {
     term: 'ATS',
     aliases: ['ATS'],
     definition: 'An ATS is an automatic transfer switch. An ATS moves a feeder from one source to another source.',
-    why: 'An ATS transfer can land the magnetic bearings, and that landing still needs a ticket.',
+    why: 'An ATS transfer can cause a landing if the bearing hold-up power does not carry the bearings.',
   },
   'n-plus-1': {
     term: 'N+1',
@@ -777,7 +777,7 @@ export const GLOSSARY = {
     term: 'MBC',
     aliases: ['MBC'],
     definition: 'The MBC is the magnetic bearing controller. The MBC levitates the rotor and reports vibration and landings.',
-    why: 'Touchdown bearings engage on a stop or when magnetic support is lost.',
+    why: 'Touchdown bearings engage on a stop or when the machine loses magnetic support.',
   },
   'delta-t': {
     term: 'ΔT',
@@ -794,21 +794,22 @@ export const GLOSSARY = {
   glycol: {
     term: 'Glycol',
     aliases: ['glycol'],
-    definition: 'Glycol is the fluid in the loop between the plant and the dry cooler. This loop is separate from cooling tower water.',
-    why: 'This loop can remove heat only when outdoor air is colder than the CHWR.',
+    definition:
+      'Glycol is an antifreeze mixed with water. In this plant it fills the loop to the dry cooler, and that loop is separate from cooling tower water.',
+    why: 'In this plant, the dry cooler gives free cooling only when outdoor air is well below the CHWR.',
   },
   'dry-cooler': {
     term: 'Dry cooler',
     aliases: ['dry coolers', 'dry-cooler', 'dry cooler'],
     definition: 'A dry cooler rejects glycol heat to outdoor air. A dry cooler does not use cooling tower water.',
-    why: 'A dry cooler can remove heat only in cold weather.',
+    why: 'In this plant, the dry cooler gives free cooling only when outdoor air is well below the CHWR.',
   },
   'cooling-tower': {
     term: 'Cooling tower',
     aliases: ['cooling towers', 'cooling tower', 'towers', 'tower'],
     definition:
       'A cooling tower rejects condenser-water heat to the outdoors. The limit of a cooling tower follows the wet-bulb temperature.',
-    why: 'On a peak wet-bulb day the plant can run out of heat rejection first.',
+    why: 'On a peak wet-bulb day, heat rejection is the first limit.',
   },
   lift: {
     term: 'Lift',
@@ -882,7 +883,7 @@ export const INFO = {
       'LCHLT is the primary control target of the chiller.',
       'The trainer starts the setpoint at 55°F. The actual temperature stays near that setpoint while the plant has load.',
       'A correct LCHLT with a hot hall means the cold water does not reach the coils.',
-      'A setpoint change affects the hall supply air and the density margin. Use change control.',
+      'A setpoint change affects the hall supply air and the rack power-density margin. Use change control.',
     ],
     ['lchltAct', 'lchltSet'],
   ),
@@ -1014,12 +1015,12 @@ export const INFO = {
   ]),
   'mission-match': point('Icon match', [
     'Match the mark to the system until the eight assemblies are immediate for you.',
-    'The information button names the system. Use the button to learn the name. Then shuffle the board and try without the button.',
+    'The information button explains this drill. It does not name a pair.',
     'A complete board is trainer credit. The credit is not permission to skip the walkdown.',
   ]),
   'mission-quiz': point('Knowledge gate', [
     'Ten questions cover operation, components, maintenance, and data-center practice.',
-    'The information button teaches the idea. Answer from that text, then read the feedback.',
+    'Answer first. The information button appears after your choice. Then read the feedback.',
     'Eight of ten is the bar in this trainer. The site SOP is the bar on a live plant.',
   ]),
   'mission-trouble': point('Incident clock', [
@@ -1135,7 +1136,7 @@ export const INFO = {
     [
       'The evaporator makes CHW for the CRAH loops, the CRAC loops, and the CDU loops.',
       'LCHLT is the control target. In this trainer the setpoint starts at 55°F.',
-      'A high approach often means deposits, low flow, or air in the loop. Examine the cause before the hall gets hot.',
+      'A high approach often means deposits, low flow, air in the loop, or low refrigerant charge. Charge is a service item. Examine the cause before the hall gets hot.',
       'Compare the LCHLT with the hall return air and the CRAH valve position.',
     ],
     ['lchltAct', 'lchltSet'],
@@ -1157,7 +1158,7 @@ export const INFO = {
       'This compressor is oil-free and has active magnetic bearings. Plants that run all day often use this type.',
       gloss('lift').definition,
       gloss('surge').definition,
-      'A landing after a utility blip or an ATS transfer needs a ticket. Power quality is a facilities issue.',
+      'An ATS transfer can cause a landing if the bearing hold-up power does not carry the bearings. That landing needs a ticket.',
     ],
     ['rla', 'mode'],
   ),
@@ -1310,8 +1311,8 @@ export const INFO = {
   'cycle-feed': point(
     'Level and feed',
     [
-      'The system sends liquid refrigerant to the evaporator so the CHWS temperature stays stable.',
-      'Level control keeps the LCHLT stable while the IT load changes.',
+      'Level control meters liquid refrigerant from the condenser to the evaporator.',
+      'The VSD and the VGD hold the LCHLT.',
       'Do not invent a feed setpoint that the panel does not show. Use the LCHLT setpoint that the trainer has.',
     ],
     ['lchltSet', 'lchltAct'],
@@ -1324,14 +1325,14 @@ export const INFO = {
   ]),
   'mop-power': point('Power path', [
     'Examine the drive power, the control power, and the UPS feed. Make sure that no other electrical job uses the same window.',
-    'Bearing hold-up power is part of this task. A dead hold-up battery turns a short outage into a landing.',
+    'Bearing hold-up power is part of this task. A dead hold-up battery makes a short outage a landing.',
     'After generator work or UPS work, make sure of the drive before you call the start normal.',
   ]),
   'mop-water': point(
     'CHW and CW proof',
     [
       'Start the pumps in sequence. Prove the flow switches. Make sure of the cooling tower and the header valves.',
-      'A chiller that starts without proven water flow can damage tubes and seals.',
+      'A chiller that starts without proven water flow can freeze and damage the evaporator tubes.',
       'The field cards are the proof. Use the ΔP and the valve position. Do not use a green light alone.',
     ],
     ['chwDp', 'cwDp'],
@@ -1424,7 +1425,7 @@ export const INFO = {
     'Evaporator pressure',
     [
       'This gauge is the evaporator refrigerant pressure on the trainer panel.',
-      'While CH-01 is in operation, the panel shows 36 psig. When CH-01 is stopped, the panel shows 48 psig.',
+      'While CH-01 is in operation, the panel shows 36 psig. When CH-01 is not in operation, the panel shows 48 psig.',
       'Use the pressure with the LCHLT. Do not use the pressure instead of the water temperatures. The hall depends on the water.',
     ],
     ['evapPsig'],
@@ -1451,7 +1452,7 @@ export const INFO = {
     'Bearing state',
     [
       'LEVITATED means the magnets hold the rotor. LANDED means the rotor is on the touchdown bearings.',
-      'A landing is normal at a controlled stop. A landing during a power blip is an event to record.',
+      'At a controlled stop, the rotor rests on the touchdown bearings after rotation stops. That set-down is normal. A counted landing is contact while the rotor turns.',
       'FAULT is not a state that you clear and then ignore. Read the message and tell the NOC.',
     ],
     ['mbc'],
@@ -1487,7 +1488,7 @@ export const INFO = {
   'opti-start': point(
     'Start',
     [
-      'Start levitates the bearings and increases the drive speed if the interlocks are met.',
+      'Start levitates the bearings and increases the drive speed if the interlocks pass.',
       'Prove the water flow and the redundant capacity before you start a machine that you just isolated.',
       'Watch the LCHLT move toward the setpoint. A start that never takes load is an inhibit, not a success.',
     ],
@@ -1519,72 +1520,72 @@ export const INFO = {
     'On a real panel, the end of the task is an as-left log. The trainer button is not that log.',
   ]),
   'quiz-q1': point('Stop of an online chiller', [
-    'Before you stop a machine that supplies a hall, the redundant capacity must be online and must have load.',
-    'N+1 on a drawing does not count if the other chiller has an inhibit.',
-    'The panel language and an empty cooling tower basin are not the gate.',
+    'A spare machine on a drawing does not carry the hall until that machine is in service.',
+    'Read the inhibits on the other chillers before you isolate the one that supplies the hall.',
+    'Panel language and an empty cooling tower basin are not the gate.',
   ]),
   'quiz-q2': point(
     'Primary temperature target',
     [
-      'The controlled temperature on this chiller is the LCHLT.',
-      'CW inlet temperature, hot-aisle air, and an oil sump are different measurements.',
-      'Hall air is downstream, after the CRAHs and the CDUs.',
+      'This chiller holds one water temperature at the evaporator outlet.',
+      'Condenser inlet water, aisle air, and an oil sump are different measurements.',
+      'Hall air is downstream of the air handlers and the liquid distribution units.',
     ],
     ['lchltSet', 'lchltAct'],
   ),
   'quiz-q3': point('Touchdown bearings', [
-    'Magnetic bearings hold the rotor while the rotor spins. Touchdown bearings are the backup.',
-    'The touchdown bearings engage when rotation stops or when magnetic support is lost, for example in a power event.',
-    'The touchdown bearings are not in contact at a normal IT load. This oil-free machine has no oil flush.',
+    'Magnetic bearings hold the rotor clear of the housing while the shaft turns.',
+    'Touchdown bearings are the backup surfaces for that shaft.',
+    'They are not an oil system, and a CRAH valve does not command them.',
   ]),
   'quiz-q4': point(
     'Hot hall, low load',
     [
-      'If the hall is hot and the lead chiller is at a low %RLA, the machine does not see the heat.',
-      'Examine the pumps, the valves, the differential pressure, and the CRAHs.',
-      'More oil or an open relief valve does not deliver water to the coils.',
+      'A hot hall with a light compressor load means the heat is not at the evaporator.',
+      'Oil quantity and an open relief valve do not move water to the coils.',
+      'Compare the hall air with the water that leaves the plant.',
     ],
     ['hallSupply', 'rla'],
   ),
   'quiz-q5': point(
     'Landing after a generator test',
     [
-      'If the landing count increases after a generator test or an ATS test, the next task is power quality.',
-      'Record the event. Have service examine the UPS and the feed. Do not reset the counter to hide the trend.',
-      'You can leave the machine online if it operates safely and the redundant capacity is intact. You must still investigate the event.',
+      'A higher landing count after an electrical test is a record, not a display nuisance.',
+      'Do not erase the counter to make the trend look clean. Do not change the water setpoint to hide the count.',
+      'You can leave the machine online if it operates safely and the spare capacity is intact. You must still investigate the event.',
     ],
     ['landings'],
   ),
   'quiz-q6': point('Who owns the incident clock', [
-    'If heat removal puts the IT load at risk, the NOC and the facilities incident process own the clock.',
-    'Operators execute the plant response. A vendor does not own the incident. A person near the chiller does not own the incident.',
-    'An automatic email is not a replacement for a report to the NOC about your actions.',
+    'When the hall is at risk, the clock belongs to the operations center and the incident process.',
+    'A vendor, a passer-by, and an automatic email do not own that clock.',
+    'The people at the machine still run the plant and report what they see.',
   ]),
   'quiz-q7': point('Planned stop', [
-    'A normal planned stop is a soft stop from the operator panel, after you make sure of the redundant capacity.',
-    'Do not open the disconnect under load. Do not use the safety stop from habit. Do not stop the CHW pumps first. Those actions can cause the event that you want to avoid.',
-    'Make sure that the standby unit has the load. Then use the site MOP. This trainer is not a site procedure.',
+    'The planned stop command lets the driveline decrease speed under control.',
+    'An open disconnect under load, a protective trip from habit, or a pump stop first is the wrong sequence.',
+    'Give the hall to the spare machine first. Then follow the site MOP.',
   ]),
   'quiz-q8': point(
     'Peak wet-bulb',
     [
-      'A hot humid day reduces the heat that the cooling tower can reject.',
-      'The result is high head and a capacity limit. The limit often appears before the chiller itself has a fault.',
-      'Watch the cooling towers, the CW, and the approach early. Display units and the bearing gap are not the summer problem.',
+      'Humid outdoor air reduces what the heat-rejection plant can do.',
+      'The limit often appears as condenser pressure before the compressor itself has a fault.',
+      'Display units and the bearing gap are not the summer problem.',
     ],
     ['wetBulb', 'head'],
   ),
   'quiz-q9': point('Cycle stop versus safety stop', [
-    'A cycle stop can clear and can allow a restart. A safety stop is a hard protective trip.',
-    'The message class decides who you call and whether a restart is allowed.',
-    'Read the exact text. The two messages are not the same alarm.',
+    'One message can end by itself and can permit the machine to start again. The other message locks the machine for protection.',
+    'That class decides the call list and the restart rule.',
+    'Read the exact text on the panel. The two lines are not one alarm.',
   ]),
   'quiz-q10': point(
     'Change of LCHLT',
     [
-      'A change to the CHWS setpoint is an operational change with hall consequences.',
-      'Follow the site change process. Do not move the setpoint only to add margin. Do not disable BMS supervision to end a dispute.',
-      'In this trainer the slider is 42°F to 65°F and the start setpoint is 55°F.',
+      'A change to the water temperature target changes the hall.',
+      'Use the site process. Do not add margin by a private move. Do not remove building supervision to end a dispute.',
+      'In this trainer the slider is 42°F to 65°F and the start value is 55°F.',
     ],
     ['lchltSet'],
   ),
@@ -1597,8 +1598,8 @@ export const INFO = {
     'High head on a hot day',
     [
       'High condenser pressure with a high wet-bulb is a heat-rejection problem.',
-      'Examine the cooling towers, the CW flow, the strainer difference, and the approach. Start another chiller if the SOP says to start it.',
-      'You can raise the LCHLT later as an emergency action. That move is not the first diagnosis, and the move needs change control.',
+      'The first look is the outdoor sink and the water that feeds it, not the refrigerant charge.',
+      'The site SOP can allow a higher LCHLT as an emergency action. That is not the first diagnosis, and it needs change control.',
       'Do not vent refrigerant. Do not defeat a safety because of the weather.',
     ],
     ['head', 'wetBulb', 'alarm'],
@@ -1606,40 +1607,40 @@ export const INFO = {
   'trouble-landing': point(
     'Landing after a generator exercise',
     [
-      'The bearing controller counted a landing. The hall can still look stable.',
-      'Record the event and ask service to examine the power and the UPS health.',
-      'If you clear the counter, you hide the failure. If you take the chiller offline with no redundancy plan, that response is too strong.',
-      'Record each landing. A landing is not normal background.',
+      'The bearing controller counted a contact. The hall can still look stable.',
+      'The useful record is the electrical path that fed the machine during the exercise.',
+      'If you clear the counter, you hide the failure. If you take the chiller offline with no spare plan, that response is too strong.',
+      'Each counted contact during rotation is an event. It is not normal background.',
     ],
     ['landings', 'mbc'],
   ),
   'trouble-hall-hot-chiller-idle': point(
     'Hot hall, unloaded chiller',
     [
-      'A hot aisle, a low %RLA, and CRAH valves that are already open mean the heat does not arrive at the chiller.',
-      'Examine the CHW pumps, the header valves, the differential pressure, and the CRAH or CDU path.',
-      'Full speed against a satisfied LCHLT does not feed a loop that has too little flow.',
-      'Do not stop the redundant machines. Do not restart rack power to repair the water path.',
+      'A hot aisle with a light compressor load means the heat is not at the evaporator.',
+      'Open air-handler valves do not prove that water is moving in the headers.',
+      'Full speed against a satisfied water temperature does not feed a starved loop.',
+      'Do not stop the spare machines. Do not restart rack power to repair the water path.',
     ],
     ['hallSupply', 'rla', 'chwDp'],
   ),
   'trouble-no-start': point(
     'Standby does not start',
     [
-      'The lead machine is down and the standby start has an inhibit.',
-      'Read the inhibit. Clear the interlock that the text names. The interlock can be flow, remote enable, or a BMS stop.',
-      'Do not bypass a flow switch. Tell the NOC if you cannot clear the inhibit.',
-      'Display units do not clear an interlock.',
+      'The lead machine is down and the spare machine refuses to start.',
+      'The panel text is a list of proofs. Work that list. Do not invent a bypass.',
+      'Do not defeat a flow proof. Tell the operations center if the refusal stays.',
+      'Display units do not clear a proof.',
     ],
     ['mode', 'alarm'],
   ),
   'trouble-bms-fight': point(
     'BMS disagrees with the panel',
     [
-      'If the LCHLT moves up and down, and the BMS writes a different setpoint from OptiView, two systems are master.',
-      'Make the plant stable in the mode that the SOP names. Then decide who owns the enable and the setpoint.',
+      'If the water temperature moves up and down, two writers may own the same target.',
+      'Settle the machine in one control mode. Then name the single writer for the enable and the target.',
       'Do not disable the safeties. Do not leave the network cable disconnected as a permanent repair.',
-      'Valves that move too often waste capacity and can trip the plant. The IT load does not remove that risk.',
+      'Valves that move too often waste capacity and can trip the plant.',
     ],
     ['lchltAct', 'lchltSet'],
   ),
@@ -1694,7 +1695,7 @@ export const INFO = {
     'This task is a measurement. It is not a setpoint change.',
   ]),
   'maint-m2': point('Monthly connections', [
-    'Tighten the electrical connections on the schedule. Use lockout where the procedure requires it.',
+    'Only qualified electrical workers do this task, with the circuit de-energized under LOTO.',
     'Loose power connections cause the trips that become hall alarms.',
     'Do not do this work on a live circuit only because the calendar says monthly.',
   ]),
@@ -1703,7 +1704,7 @@ export const INFO = {
     [
       'Make sure that the setpoints and the cutouts still match the live SOP.',
       'In this trainer, LCHLT starts at 55°F. A campus plant can be different. The SOP wins.',
-      'Find a BMS value and a panel value that have moved apart.',
+      'Find a BMS value and a panel value that differ.',
     ],
     ['lchltSet'],
   ),
@@ -1723,7 +1724,7 @@ export const INFO = {
   ]),
   'maint-y2': point('Bearing hold-up batteries', [
     'The UPS or the battery that holds the magnetic bearings through a short outage gets a yearly health test.',
-    'A dead hold-up source turns a short transfer into a landing.',
+    'A dead hold-up source makes a short transfer a landing.',
     'Coordinate the test with the electrical maintenance window.',
   ]),
   'maint-y3': point('Refrigerant analysis', [
@@ -1741,7 +1742,7 @@ export const INFO = {
     ['landings', 'vibe'],
   ),
   'maint-n1': point('Tube test', [
-    'Eddy-current tests of the tubes are planned outage work, on a multi-year interval.',
+    'Eddy-current tests of the tubes belong to the planned outage, on a multi-year interval.',
     'Do the tests with the machine isolated under a MOP. Do not do the tests on a normal inspection.',
     'Deposits and approach that you logged all year are the reason this window exists.',
   ]),

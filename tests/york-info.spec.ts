@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { INFO } from '../york-chiller/src/data/content'
+import { INFO, QUIZ, TROUBLE_CASES, quizInfoId, troubleInfoId } from '../york-chiller/src/data/content'
 
 const CARD_SEL =
   '.kpi, .card, .pipe-card, .gauge, .step, .quiz-card, .trouble-card, .mission, .mimic-node, .plant-node, .match-tile, .maint-item, .detail-pane, .weather-seg'
@@ -54,8 +54,10 @@ test('every card and slider has an info button, and one opens and closes', async
   await take()
   const learn = page.getByRole('button', { name: 'Information about Hall supply' })
   const dialog = page.getByRole('dialog')
+  await expect(learn).toHaveAttribute('aria-controls', 'info-dialog')
   await learn.click()
   await expect(dialog).toBeVisible()
+  await expect(dialog).toHaveAttribute('id', 'info-dialog')
   await expect(dialog.locator('#info-title')).toHaveText('Hall supply')
   await expect(dialog.locator('.info-now')).toContainText('°F')
   await expect(dialog.locator('.info-foot')).toContainText('This text is not a site procedure or a replacement for approved service.')
@@ -117,17 +119,28 @@ test('every card and slider has an info button, and one opens and closes', async
 
   await openView(page, 'match')
   await take()
+  const matchLabels = await page.locator('.match-tiles .info-btn').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')))
+  expect(matchLabels.length).toBeGreaterThan(0)
+  for (const label of matchLabels) expect(label).toBe('Information about Icon match')
 
   await openView(page, 'quiz')
   for (let i = 0; i < 12; i++) {
-    await take()
-    if (await page.locator('[data-quiz-restart]').count()) break
+    if (await page.locator('[data-quiz-restart]').count()) {
+      await take()
+      break
+    }
+    await expect(page.locator('.quiz-card .info-btn')).toHaveCount(0)
     await page.locator('[data-choice]').first().click()
+    await expect(page.locator('.quiz-card .info-btn')).toHaveCount(1)
+    await take()
     await page.locator('[data-quiz-next]').click()
   }
 
   await openView(page, 'trouble')
   for (let i = 0; i < 5; i++) {
+    await expect(page.locator('.trouble-card .info-btn')).toHaveCount(0)
+    await page.locator('.trouble-card [data-tr]').first().click()
+    await expect(page.locator('.trouble-card .info-btn')).toHaveCount(1)
     await take()
     if (i < 4) await page.locator('[data-tr-next]').click()
   }
@@ -137,6 +150,21 @@ test('every card and slider has an info button, and one opens and closes', async
 
   const missing = Object.keys(INFO).filter((id) => !seen.has(id))
   expect(missing, `unseen info ids: ${missing.join(', ')}`).toEqual([])
+})
+
+test('lesson panels do not quote the keyed answer', () => {
+  for (const q of QUIZ) {
+    const correct = q.choices[q.answer].toLowerCase()
+    const body = INFO[quizInfoId(q.id)].points.join('\n').toLowerCase()
+    expect(body.includes(correct), q.id).toBe(false)
+  }
+  for (const item of TROUBLE_CASES) {
+    const correct = item.options.find((option) => option.correct)?.text.toLowerCase() ?? ''
+    const body = INFO[troubleInfoId(item.id)].points.join('\n').toLowerCase()
+    expect(correct.length, item.id).toBeGreaterThan(0)
+    expect(body.includes(correct), item.id).toBe(false)
+  }
+  expect(INFO['mission-quiz'].points.join(' ')).not.toContain('Answer from that text')
 })
 
 test('info panel is a bottom sheet on a phone', async ({ page }) => {

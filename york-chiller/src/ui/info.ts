@@ -44,78 +44,43 @@ const LIVE_LABEL: Record<InfoLive, string> = {
   optiRla: '%RLA',
 }
 
+const LIVE_FORMAT: Record<InfoLive, (ctx: LiveContext) => string> = {
+  hallSupply: (ctx) => `${ctx.snap.hallSupplyF}°F`,
+  hallReturn: (ctx) => `${ctx.snap.hallReturnF}°F`,
+  lchltAct: (ctx) => `${ctx.snap.lchltAct.toFixed(1)}°F`,
+  lchltSet: (ctx) => `${ctx.snap.lchltSet.toFixed(1)}°F`,
+  itLoad: (ctx) => `${ctx.snap.itLoadMw} MW`,
+  head: (ctx) => `${ctx.snap.ch01.condPsig} psig`,
+  outdoor: (ctx) => `${ctx.snap.oatF}°F`,
+  wetBulb: (ctx) => `${ctx.snap.wbF}°F`,
+  rla: (ctx) => `${ctx.snap.ch01.rla}%`,
+  mode: (ctx) => ctx.snap.ch01.mode,
+  chwDp: (ctx) => `${ctx.snap.chwDpPsi.toFixed(1)} psi · target ${ctx.snap.chwTargetPsi}`,
+  cwDp: (ctx) => `${ctx.snap.cwDpPsi.toFixed(1)} psi`,
+  glyDp: (ctx) => `${ctx.snap.glycolDpPsi.toFixed(1)} psi`,
+  chwValve: (ctx) => `${ctx.snap.chwValvePct}%`,
+  cwValve: (ctx) => `${ctx.snap.cwValvePct}%`,
+  glyValve: (ctx) => `${ctx.snap.glycolValvePct}%`,
+  chwr: (ctx) => `${ctx.snap.chwrF}°F`,
+  chws: (ctx) => `${ctx.snap.chwsF}°F`,
+  cws: (ctx) => `${ctx.snap.cwsF}°F`,
+  cwr: (ctx) => `${ctx.snap.cwrF}°F`,
+  glyS: (ctx) => `${ctx.snap.glyS}°F`,
+  glyR: (ctx) => `${ctx.snap.glyR}°F`,
+  towerFan: (ctx) => `${ctx.snap.towerFanPct}%`,
+  dryFan: (ctx) => `${ctx.snap.dryFanPct}%`,
+  freeCool: (ctx) => `${ctx.snap.freeCoolPct}%`,
+  mbc: (ctx) => ctx.snap.ch01.mbc,
+  landings: (ctx) => (ctx.landing ? '1' : '0'),
+  vibe: (ctx) => (0.12 + Math.sin(ctx.snap.t) * 0.02).toFixed(2),
+  evapPsig: (ctx) => (ctx.running ? '36 psig' : '48 psig'),
+  alarm: (ctx) => ctx.snap.alarm ?? 'none',
+  optiAct: (ctx) => (ctx.running ? `${ctx.snap.lchltAct.toFixed(1)}°F` : '58.2°F'),
+  optiRla: (ctx) => (ctx.running ? `${ctx.snap.ch01.rla}%` : '0%'),
+}
+
 function formatLive(key: InfoLive, ctx: LiveContext): string {
-  const s = ctx.snap
-  switch (key) {
-    case 'hallSupply':
-      return `${s.hallSupplyF}°F`
-    case 'hallReturn':
-      return `${s.hallReturnF}°F`
-    case 'lchltAct':
-      return `${s.lchltAct.toFixed(1)}°F`
-    case 'lchltSet':
-      return `${s.lchltSet.toFixed(1)}°F`
-    case 'itLoad':
-      return `${s.itLoadMw} MW`
-    case 'head':
-      return `${s.ch01.condPsig} psig`
-    case 'outdoor':
-      return `${s.oatF}°F`
-    case 'wetBulb':
-      return `${s.wbF}°F`
-    case 'rla':
-      return `${s.ch01.rla}%`
-    case 'mode':
-      return s.ch01.mode
-    case 'chwDp':
-      return `${s.chwDpPsi.toFixed(1)} psi · target ${s.chwTargetPsi}`
-    case 'cwDp':
-      return `${s.cwDpPsi.toFixed(1)} psi`
-    case 'glyDp':
-      return `${s.glycolDpPsi.toFixed(1)} psi`
-    case 'chwValve':
-      return `${s.chwValvePct}%`
-    case 'cwValve':
-      return `${s.cwValvePct}%`
-    case 'glyValve':
-      return `${s.glycolValvePct}%`
-    case 'chwr':
-      return `${s.chwrF}°F`
-    case 'chws':
-      return `${s.chwsF}°F`
-    case 'cws':
-      return `${s.cwsF}°F`
-    case 'cwr':
-      return `${s.cwrF}°F`
-    case 'glyS':
-      return `${s.glyS}°F`
-    case 'glyR':
-      return `${s.glyR}°F`
-    case 'towerFan':
-      return `${s.towerFanPct}%`
-    case 'dryFan':
-      return `${s.dryFanPct}%`
-    case 'freeCool':
-      return `${s.freeCoolPct}%`
-    case 'mbc':
-      return s.ch01.mbc
-    case 'landings':
-      return ctx.landing ? '1' : '0'
-    case 'vibe':
-      return (0.12 + Math.sin(s.t) * 0.02).toFixed(2)
-    case 'evapPsig':
-      return ctx.running ? '36 psig' : '48 psig'
-    case 'alarm':
-      return s.alarm ?? 'none'
-    case 'optiAct':
-      return ctx.running ? `${s.lchltAct.toFixed(1)}°F` : '58.2°F'
-    case 'optiRla':
-      return ctx.running ? `${s.ch01.rla}%` : '0%'
-    default: {
-      const unknown: never = key
-      return unknown
-    }
-  }
+  return LIVE_FORMAT[key](ctx)
 }
 
 function liveText(id: InfoId, ctx: LiveContext): string {
@@ -153,7 +118,7 @@ export class InfoDock {
     this.layer.hidden = true
     this.layer.innerHTML = `
       <div class="info-backdrop"></div>
-      <div class="info-panel" role="dialog" aria-modal="true" aria-labelledby="info-title">
+      <div class="info-panel" id="info-dialog" role="dialog" aria-modal="true" aria-labelledby="info-title">
         <header class="info-head">
           <h3 id="info-title"></h3>
           <button type="button" class="info-close" aria-label="Close">Close</button>
@@ -241,7 +206,7 @@ export class InfoDock {
     btn.setAttribute('aria-label', `Information about ${INFO[id].title}`)
     btn.setAttribute('aria-haspopup', 'dialog')
     btn.setAttribute('aria-expanded', this.mode === 'info' && this.infoId === id ? 'true' : 'false')
-    btn.setAttribute('aria-controls', 'info-title')
+    btn.setAttribute('aria-controls', 'info-dialog')
     const mark = document.createElement('span')
     mark.setAttribute('aria-hidden', 'true')
     mark.textContent = 'ⓘ'
