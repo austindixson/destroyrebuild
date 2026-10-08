@@ -20,8 +20,12 @@
 	}
 
 	# York trainer chat. Same origin. The API is a second Railway service.
+	# YORK_API_HOST is the york-api address. Forward the Railway edge X-Real-IP.
+	# Do not replace it with the proxy address. See york-api/ENV.md.
 	handle /api/york/* {
-		reverse_proxy {$YORK_API_HOST:127.0.0.1:8787}
+		reverse_proxy {$YORK_API_HOST:127.0.0.1:8787} {
+			header_up X-Real-IP {http.request.header.X-Real-IP}
+		}
 	}
 
 	# Exact path only. /york-chiller/* is the trainer app.

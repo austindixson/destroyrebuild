@@ -12,7 +12,7 @@ const chunk: Chunk = {
   text: 'Hall supply air is the air at the IT equipment after the CRAHs.',
 }
 
-function deps(complete: ChatDeps['complete'], budget = createBudget(20, 30)): ChatDeps {
+function deps(complete: ChatDeps['complete'], budget = createBudget(20, 30, 1000)): ChatDeps {
   return {
     ip: 'test',
     now: () => 1_700_000_000_000,
@@ -108,7 +108,7 @@ test('provider errors become the unavailable state', async () => {
 })
 
 test('the daily cap returns the same unavailable state', async () => {
-  const budget = createBudget(1, 30)
+  const budget = createBudget(1, 30, 1000)
   const complete = async (_req: LlmRequest): Promise<LlmAnswer> => llm('{"answer":"The board is stable.","cites":[],"tools":[]}')
   const first = await handleChat({ question: 'One', snapshot: {}, round: 0 }, deps(complete, budget))
   const second = await handleChat({ question: 'Two', snapshot: {}, round: 0 }, deps(complete, budget))

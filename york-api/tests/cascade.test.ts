@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { buildAdapters } from '../src/adapters.ts'
 import { cascade, type Adapter } from '../src/cascade.ts'
 import { claudeArgs, completeGrok, cursorArgs, GROK_MODEL } from '../src/providers.ts'
 import type { LlmRequest } from '../src/types.ts'
@@ -65,8 +66,42 @@ test('grok HTTP falls through on rate limit and parses a real body', async () =>
   assert.equal(text, 'Hall supply is high.')
 })
 
+test('cascade skips claude when that provider is off', async () => {
+  const calls: string[] = []
+  const adapters = buildAdapters(
+    { XAI_API_KEY: 'xai', CURSOR_API_KEY: 'cur', PATH: '/usr/bin' },
+    async () => {
+      calls.push('grok')
+      return { ok: false, status: 503, json: async () => ({}) }
+    },
+    {
+      async run() {
+        calls.push('cursor')
+        return { code: 0, stdout: 'The hall is stable.', stderr: '' }
+      },
+    },
+  )
+  assert.equal(adapters.find((item) => item.id === 'claude')?.enabled(), false)
+  const result = await cascade(adapters, req, new AbortController().signal)
+  assert.equal(result.provider, 'cursor')
+  assert.deepEqual(calls, ['grok', 'cursor'])
+})
+
 test('claude and cursor commands use the verified model ids', () => {
-  assert.deepEqual(claudeArgs('claude-haiku-5-5'), ['-p', '--model', 'claude-haiku-5-5', '--output-format', 'text', '--max-turns', '1', '--tools', ''])
+  assert.deepEqual(claudeArgs('claude-haiku-5-5'), [
+    '-p',
+    '--model',
+    'claude-haiku-5-5',
+    '--strict-mcp-config',
+    '--mcp-config',
+    '{"mcpServers":{}}',
+    '--output-format',
+    'text',
+    '--max-turns',
+    '1',
+    '--tools',
+    '',
+  ])
   assert.ok(cursorArgs('auto', '/tmp/york').includes('auto'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('ask'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('/tmp/york'))

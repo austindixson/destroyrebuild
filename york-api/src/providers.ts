@@ -1,10 +1,36 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
 export const CLAUDE_MODEL = 'claude-haiku-5-5'
 export const CURSOR_MODEL = 'auto'
+export const CLI_STDOUT_MAX_BYTES = 256 * 1024
+export const CLI_KILL_GRACE_MS = 200
 const GROK_URL = 'https://api.x.ai/v1/chat/completions'
+
+/**
+ * Deny rules written into the Cursor CLI config for the temp workspace.
+ * Relative globs stay inside that workspace. Absolute globs name paths that
+ * are outside it. readBoundary workspace is the general outside-read deny.
+ */
+export const CURSOR_READ_DENY = [
+  'Read(.env*)',
+  'Read(**/.env*)',
+  'Read(**/*.key)',
+  'Read(**/*.pem)',
+  'Read(/etc/**)',
+  'Read(/proc/**)',
+  'Read(/home/**)',
+  'Read(/root/**)',
+  'Read(/opt/**)',
+  'Read(/usr/**)',
+  'Read(/var/**)',
+  'Read(/run/**)',
+] as const
 
 export interface ProcessRun {
   code: number
@@ -12,8 +38,21 @@ export interface ProcessRun {
   stderr: string
 }
 
+export interface ProcessRunOptions {
+  cwd?: string
+  maxBytes?: number
+  killGraceMs?: number
+}
+
 export interface ProcessRunner {
-  run(cmd: string, args: string[], input: string, env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<ProcessRun>
+  run(
+    cmd: string,
+    args: string[],
+    input: string,
+    env: NodeJS.ProcessEnv,
+    signal: AbortSignal,
+    options?: ProcessRunOptions,
+  ): Promise<ProcessRun>
 }
 
 export interface FetchResponse {
@@ -24,17 +63,69 @@ export interface FetchResponse {
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<FetchResponse>
 
+function take(bucket: Buffer[], size: number, chunk: Buffer, max: number): number | null {
+  const next = size + chunk.length
+  if (next > max) return null
+  bucket.push(chunk)
+  return next
+}
+
+function armKill(child: ChildProcess, signal: AbortSignal, graceMs: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const onAbort = () => {
+    child.kill('SIGTERM')
+    timer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }, graceMs)
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  return () => {
+    signal.removeEventListener('abort', onAbort)
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export const nodeRunner: ProcessRunner = {
-  run(cmd, args, input, env, signal) {
-    return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, { env, stdio: ['pipe', 'pipe', 'pipe'], signal })
+  run(cmd, args, input, env, signal, options) {
+    const max = options?.maxBytes ?? CLI_STDOUT_MAX_BYTES
+    const grace = options?.killGraceMs ?? CLI_KILL_GRACE_MS
+    if (signal.aborted) return Promise.reject(new Error('aborted'))
+    return new Promise((resolveRun, reject) => {
+      const child = spawn(cmd, args, { env, cwd: options?.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
       const out: Buffer[] = []
       const err: Buffer[] = []
-      child.stdout.on('data', (chunk: Buffer) => out.push(chunk))
-      child.stderr.on('data', (chunk: Buffer) => err.push(chunk))
-      child.on('error', reject)
+      let outSize = 0
+      let errSize = 0
+      let settled = false
+      const disarm = armKill(child, signal, grace)
+      const finish = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        disarm()
+        fn()
+      }
+      const overflow = () => {
+        child.kill('SIGKILL')
+        finish(() => reject(new Error('output too large')))
+      }
+      child.stdout.on('data', (chunk: Buffer) => {
+        const next = take(out, outSize, chunk, max)
+        if (next === null) overflow()
+        else outSize = next
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        const next = take(err, errSize, chunk, max)
+        if (next === null) overflow()
+        else errSize = next
+      })
+      child.stdin.on('error', () => {})
+      child.on('error', (error) => finish(() => reject(error)))
       child.on('close', (code) => {
-        resolve({ code: code ?? 1, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') })
+        finish(() => resolveRun({
+          code: code ?? 1,
+          stdout: Buffer.concat(out).toString('utf8'),
+          stderr: Buffer.concat(err).toString('utf8'),
+        }))
       })
       child.stdin.end(input)
     })
@@ -72,11 +163,37 @@ export async function completeGrok(req: LlmRequest, signal: AbortSignal, fetchIm
 }
 
 export function claudeArgs(model: string): string[] {
-  return ['-p', '--model', model, '--output-format', 'text', '--max-turns', '1', '--tools', '']
+  return [
+    '-p',
+    '--model',
+    model,
+    '--strict-mcp-config',
+    '--mcp-config',
+    '{"mcpServers":{}}',
+    '--output-format',
+    'text',
+    '--max-turns',
+    '1',
+    '--tools',
+    '',
+  ]
 }
 
 export function cursorArgs(model: string, workspace: string): string[] {
   return ['-p', '--model', model, '--mode', 'ask', '--output-format', 'text', '--sandbox', 'enabled', '--trust', '--workspace', workspace]
+}
+
+/** HOME is the temp workspace, so the child does not load the host CLI config. */
+export function providerChildEnv(
+  env: NodeJS.ProcessEnv,
+  secretName: 'CLAUDE_CODE_OAUTH_TOKEN' | 'CURSOR_API_KEY',
+  home: string,
+): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { HOME: home, TMPDIR: home }
+  if (typeof env.PATH === 'string' && env.PATH.length > 0) next.PATH = env.PATH
+  const secret = env[secretName]
+  if (typeof secret === 'string' && secret.length > 0) next[secretName] = secret
+  return next
 }
 
 async function completeCli(
@@ -86,23 +203,120 @@ async function completeCli(
   signal: AbortSignal,
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
+  options: ProcessRunOptions,
 ): Promise<string> {
   const prompt = `${req.system}\n\n${req.user}`
-  const result = await run.run(bin, args, prompt, env, signal)
+  const result = await run.run(bin, args, prompt, env, signal, options)
   if (result.code !== 0) throw new Error(result.stderr.trim() || `${bin} failed`)
   const text = result.stdout.trim()
   if (!text) throw new Error(`${bin} empty`)
   return text
 }
 
-export function completeClaude(req: LlmRequest, signal: AbortSignal, run: ProcessRunner, env: NodeJS.ProcessEnv): Promise<string> {
-  if (!env.CLAUDE_CODE_OAUTH_TOKEN) return Promise.reject(new Error('CLAUDE_CODE_OAUTH_TOKEN missing'))
-  const bin = env.CLAUDE_BIN || 'claude'
-  return completeCli(bin, claudeArgs(CLAUDE_MODEL), req, signal, run, env)
+export async function completeClaude(
+  req: LlmRequest,
+  signal: AbortSignal,
+  run: ProcessRunner,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error('CLAUDE_CODE_OAUTH_TOKEN missing')
+  const home = await mkdtemp(join(tmpdir(), 'york-claude-'))
+  try {
+    const bin = env.CLAUDE_BIN || 'claude'
+    const childEnv = providerChildEnv(env, 'CLAUDE_CODE_OAUTH_TOKEN', home)
+    return await completeCli(bin, claudeArgs(CLAUDE_MODEL), req, signal, run, childEnv, { cwd: home })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 }
 
-export function completeCursor(req: LlmRequest, signal: AbortSignal, run: ProcessRunner, env: NodeJS.ProcessEnv, workspace: string): Promise<string> {
-  if (!env.CURSOR_API_KEY) return Promise.reject(new Error('CURSOR_API_KEY missing'))
-  const bin = env.CURSOR_BIN || 'agent'
-  return completeCli(bin, cursorArgs(CURSOR_MODEL, workspace), req, signal, run, env)
+function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string, unknown> } {
+  const sandbox = {
+    type: 'workspace_readonly',
+    readBoundary: 'workspace',
+    additionalReadPaths: [] as string[],
+    additionalReadwritePaths: [] as string[],
+    additionalReadonlyPaths: [] as string[],
+  }
+  const cli = {
+    sandbox: { readBoundary: 'workspace' },
+    permissions: { allow: [] as string[], deny: [...CURSOR_READ_DENY] },
+  }
+  return { sandbox, cli }
+}
+
+async function prepareCursorWorkspace(workspace: string): Promise<void> {
+  const dir = join(workspace, '.cursor')
+  await mkdir(dir, { recursive: true })
+  const { sandbox, cli } = cursorConfig()
+  await writeFile(join(dir, 'sandbox.json'), JSON.stringify(sandbox))
+  await writeFile(join(dir, 'cli-config.json'), JSON.stringify(cli))
+  await writeFile(join(dir, 'cli.json'), JSON.stringify({ permissions: cli.permissions }))
+}
+
+function readJson(path: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function insideWorkspace(workspace: string, target: string): boolean {
+  const root = resolve(workspace)
+  const abs = resolve(target)
+  if (abs === root) return true
+  const rel = relative(root, abs)
+  return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+function envPath(target: string): boolean {
+  return basename(target) === '.env' || basename(target).startsWith('.env')
+}
+
+function denyList(cli: Record<string, unknown>): string[] {
+  const permissions = cli.permissions
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return []
+  const deny = (permissions as { deny?: unknown }).deny
+  return Array.isArray(deny) ? deny.filter((item): item is string => typeof item === 'string') : []
+}
+
+function cursorConfigConfined(workspace: string): boolean {
+  const sandbox = readJson(join(workspace, '.cursor', 'sandbox.json'))
+  const cli = readJson(join(workspace, '.cursor', 'cli-config.json'))
+  if (!sandbox || !cli) return false
+  if (sandbox.readBoundary !== 'workspace') return false
+  if (!Array.isArray(sandbox.additionalReadPaths) || sandbox.additionalReadPaths.length > 0) return false
+  const mode = cli.sandbox
+  if (!mode || typeof mode !== 'object' || Array.isArray(mode)) return false
+  if ((mode as { readBoundary?: unknown }).readBoundary !== 'workspace') return false
+  const deny = denyList(cli)
+  return deny.includes('Read(/etc/**)') && deny.includes('Read(.env*)')
+}
+
+/** True when the temp workspace config denies a read of target. */
+export function cursorOutsideReadDenied(workspace: string, target: string): boolean {
+  if (!cursorConfigConfined(workspace)) return false
+  if (!insideWorkspace(workspace, target)) return true
+  return envPath(target)
+}
+
+export async function completeCursor(
+  req: LlmRequest,
+  signal: AbortSignal,
+  run: ProcessRunner,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  if (!env.CURSOR_API_KEY) throw new Error('CURSOR_API_KEY missing')
+  const home = await mkdtemp(join(tmpdir(), 'york-cursor-'))
+  try {
+    await prepareCursorWorkspace(home)
+    const bin = env.CURSOR_BIN || 'agent'
+    const childEnv = providerChildEnv(env, 'CURSOR_API_KEY', home)
+    return await completeCli(bin, cursorArgs(CURSOR_MODEL, home), req, signal, run, childEnv, { cwd: home })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 }

@@ -1,5 +1,6 @@
 import { gateFor } from './gates.ts'
 import { parseModelPlan } from './parse.ts'
+import { validateToolArgs } from './toolSchema.ts'
 import type { ToolCall } from './types.ts'
 
 const WRITE_CAP = 3
@@ -9,14 +10,6 @@ export type Planned =
   | { kind: 'tools'; calls: ToolCall[] }
   | { kind: 'confirm'; confirm: ToolCall }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function toolArgs(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {}
-}
-
 export function planTurn(text: string, blocksWrites: boolean): Planned {
   const plan = parseModelPlan(text)
   const calls: ToolCall[] = []
@@ -24,7 +17,9 @@ export function planTurn(text: string, blocksWrites: boolean): Planned {
     const gate = gateFor(tool.name)
     if (!gate) continue
     if (blocksWrites && gate !== 'R') continue
-    calls.push({ name: tool.name, args: toolArgs(tool.args) })
+    const args = validateToolArgs(tool.name, tool.args)
+    if (!args) continue
+    calls.push({ name: tool.name, args })
   }
   const reads = calls.filter((call) => gateFor(call.name) === 'R')
   const writes = calls.filter((call) => gateFor(call.name) === 'W').slice(0, WRITE_CAP)

@@ -4,24 +4,32 @@ import { completeWithCascade } from './adapters.ts'
 import { handleChat, defaultBudget } from './chat.ts'
 import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
+import { defaultInflight, type Inflight } from './inflight.ts'
+import { trustedClientIp } from './ip.ts'
 import { searchChunks } from './rag.ts'
-import type { Chunk } from './types.ts'
+import type { Budget } from './budget.ts'
+import type { Chunk, LlmAnswer, LlmRequest } from './types.ts'
 
 const chunks = index as Chunk[]
-const budget = defaultBudget()
 const MAX_BODY = 200_000
+const REQUEST_MS = 100_000
+
+export interface YorkServerOptions {
+  complete?: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
+  budget?: Budget
+  inflight?: Inflight
+  search?: (query: string) => Chunk[]
+}
 
 function send(res: ServerResponse, http: number, body: unknown): void {
+  if (res.writableEnded || res.destroyed) return
   const payload = JSON.stringify(body)
   res.writeHead(http, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(payload) })
   res.end(payload)
 }
 
 function clientIp(req: IncomingMessage): string {
-  const forwarded = req.headers['x-forwarded-for']
-  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded
-  if (typeof raw === 'string' && raw.trim()) return raw.split(',')[0]?.trim() || 'local'
-  return req.socket.remoteAddress ?? 'local'
+  return trustedClientIp(req.headers, req.socket.remoteAddress)
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -37,24 +45,46 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(parts).toString('utf8'))
 }
 
-async function onChat(req: IncomingMessage, res: ServerResponse): Promise<void> {
+function requestSignal(res: ServerResponse): { signal: AbortSignal; stop(): void } {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_MS)
+  const onGone = () => {
+    if (!res.writableFinished) controller.abort()
+  }
+  res.on('close', onGone)
+  return {
+    signal: controller.signal,
+    stop() {
+      clearTimeout(timer)
+      res.off('close', onGone)
+    },
+  }
+}
+
+async function onChat(req: IncomingMessage, res: ServerResponse, options: YorkServerOptions, budget: Budget, inflight: Inflight): Promise<void> {
+  const abort = requestSignal(res)
   try {
     const raw = await readJson(req)
     const result = await handleChat(raw, {
       ip: clientIp(req),
       now: () => Date.now(),
       budget,
-      search: (query) => searchChunks(chunks, query),
-      complete: (prompt, signal) => completeWithCascade(prompt, signal),
-      signal: AbortSignal.timeout(100_000),
+      inflight,
+      search: options.search ?? ((query) => searchChunks(chunks, query)),
+      complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal)),
+      signal: abort.signal,
     })
     send(res, result.http, result.body)
   } catch {
     send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })
+  } finally {
+    abort.stop()
   }
 }
 
-export function createYorkServer() {
+export function createYorkServer(options: YorkServerOptions = {}) {
+  const budget = options.budget ?? defaultBudget()
+  const inflight = options.inflight ?? defaultInflight()
   return createServer((req, res) => {
     const url = req.url ?? ''
     if (req.method === 'GET' && (url === '/api/york/health' || url.startsWith('/api/york/health?'))) {
@@ -62,7 +92,7 @@ export function createYorkServer() {
       return
     }
     if (req.method === 'POST' && (url === '/api/york/chat' || url.startsWith('/api/york/chat?'))) {
-      void onChat(req, res)
+      void onChat(req, res, options, budget, inflight)
       return
     }
     send(res, 404, { status: 'error', answer: UNAVAILABLE })

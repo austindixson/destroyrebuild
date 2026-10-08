@@ -1,4 +1,3 @@
-import { tmpdir } from 'node:os'
 import { cascade, type Adapter } from './cascade.ts'
 import {
   CLAUDE_MODEL,
@@ -13,12 +12,18 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-function withTimeout(parent: AbortSignal, ms: number): AbortSignal {
+function within<T>(parent: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
-  parent.addEventListener('abort', () => controller.abort(), { once: true })
-  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
-  return controller.signal
+  const onParent = () => controller.abort()
+  const done = () => {
+    clearTimeout(timer)
+    parent.removeEventListener('abort', onParent)
+  }
+  controller.signal.addEventListener('abort', done, { once: true })
+  if (parent.aborted) controller.abort()
+  else parent.addEventListener('abort', onParent, { once: true })
+  return run(controller.signal).finally(done)
 }
 
 export function buildAdapters(env: NodeJS.ProcessEnv, fetchImpl: FetchLike, run: ProcessRunner): Adapter[] {
@@ -27,19 +32,19 @@ export function buildAdapters(env: NodeJS.ProcessEnv, fetchImpl: FetchLike, run:
       id: 'grok',
       model: env.XAI_MODEL || GROK_MODEL,
       enabled: () => Boolean(env.XAI_API_KEY),
-      complete: (req, signal) => completeGrok(req, withTimeout(signal, 20_000), fetchImpl, env),
+      complete: (req, signal) => within(signal, 20_000, (limited) => completeGrok(req, limited, fetchImpl, env)),
     },
     {
       id: 'claude',
       model: CLAUDE_MODEL,
       enabled: () => Boolean(env.CLAUDE_CODE_OAUTH_TOKEN),
-      complete: (req, signal) => completeClaude(req, withTimeout(signal, 25_000), run, env),
+      complete: (req, signal) => within(signal, 25_000, (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
       model: CURSOR_MODEL,
       enabled: () => Boolean(env.CURSOR_API_KEY),
-      complete: (req, signal) => completeCursor(req, withTimeout(signal, 35_000), run, env, tmpdir()),
+      complete: (req, signal) => within(signal, 35_000, (limited) => completeCursor(req, limited, run, env)),
     },
   ]
 }
