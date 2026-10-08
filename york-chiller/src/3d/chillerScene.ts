@@ -18,7 +18,7 @@ type LoopKind = 'chw' | 'cw' | 'gly'
 
 type PlantTag = 'CHWS' | 'CHWR' | 'CWS' | 'CWR' | 'GLS' | 'GLR' | 'TOWER · WATER' | 'GLYCOL DRY'
 
-/** Screen-pixel nudge so tags that share a projection do not stack. */
+/** Preferred screen-pixel nudge. fitTagsInView() then keeps each tag on the canvas. */
 const TAG_OFFSET: Record<PlantTag, { x: number; y: number }> = {
   CHWS: { x: 28, y: -112 },
   CHWR: { x: 28, y: -56 },
@@ -26,7 +26,7 @@ const TAG_OFFSET: Record<PlantTag, { x: number; y: number }> = {
   CWR: { x: 28, y: 62 },
   GLS: { x: -72, y: -24 },
   GLR: { x: -72, y: 52 },
-  'TOWER · WATER': { x: 128, y: -18 },
+  'TOWER · WATER': { x: -24, y: -40 },
   'GLYCOL DRY': { x: -16, y: -92 },
 }
 
@@ -92,6 +92,7 @@ export class ChillerScene {
   private labelValues = new Map<PlantTag, HTMLElement>()
   private labelAnchors = new Map<PlantTag, CSS2DObject>()
   private occlusionAt = 0
+  private fitKey = ''
   private readonly occlusionDir = new THREE.Vector3()
   private readonly occlusionAnchor = new THREE.Vector3()
   private readings: SceneReadings | null = null
@@ -128,7 +129,11 @@ export class ChillerScene {
     labels.setAttribute('aria-hidden', 'true')
     canvas.parentElement?.appendChild(labels)
     this.labelRenderer.setSize(w, h)
-    void document.fonts.load("600 13px 'IBM Plex Mono'").catch(() => undefined)
+    void document.fonts.ready.then(() => {
+      if (this.disposed) return
+      this.fitKey = ''
+      this.needsRender = true
+    })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -375,7 +380,10 @@ export class ChillerScene {
     this.readings = readings
     for (const [tag, el] of this.labelValues) {
       const next = readingText(tag, readings)
-      if (el.textContent !== next) el.textContent = next
+      if (el.textContent !== next) {
+        el.textContent = next
+        this.fitKey = ''
+      }
     }
     this.needsRender = true
   }
@@ -756,19 +764,93 @@ export class ChillerScene {
     return { x: Math.round(base.x * 0.42), y: Math.round(base.y * 0.74) }
   }
 
-  private placeTag(tag: PlantTag) {
+  private tagNodes(tag: PlantTag) {
     const object = this.labelAnchors.get(tag)
-    if (!object) return
-    const offset = this.tagOffset(tag)
+    if (!object) return null
     const tagEl = object.element.querySelector('.plant-tag')
     const leader = object.element.querySelector('.plant-leader')
-    if (!(tagEl instanceof HTMLElement) || !(leader instanceof HTMLElement)) return
-    tagEl.style.left = `${offset.x}px`
-    tagEl.style.top = `${offset.y}px`
-    const length = Math.hypot(offset.x, offset.y)
+    if (!(tagEl instanceof HTMLElement) || !(leader instanceof HTMLElement)) return null
+    return { tagEl, leader }
+  }
+
+  private placeTag(tag: PlantTag) {
+    const nodes = this.tagNodes(tag)
+    if (!nodes) return
+    const offset = this.tagOffset(tag)
+    this.writeTagOffset(nodes.tagEl, nodes.leader, offset.x, offset.y)
+  }
+
+  private writeTagOffset(tagEl: HTMLElement, leader: HTMLElement, x: number, y: number) {
+    tagEl.style.left = `${x}px`
+    tagEl.style.top = `${y}px`
+    const length = Math.hypot(x, y)
     leader.hidden = length < 8
     leader.style.width = `${length}px`
-    leader.style.transform = `rotate(${Math.atan2(offset.y, offset.x)}rad)`
+    leader.style.transform = `rotate(${Math.atan2(y, x)}rad)`
+  }
+
+  /** Pull every tag inside the canvas and off the HUD chips. Skips repeat frames. */
+  private fitTagsInView() {
+    const canvas = this.renderer.domElement
+    const view = canvas.getBoundingClientRect()
+    if (view.width < 8 || view.height < 8) return
+    const key = [
+      canvas.clientWidth,
+      canvas.clientHeight,
+      this.camera.position.x.toFixed(2),
+      this.camera.position.y.toFixed(2),
+      this.camera.position.z.toFixed(2),
+      this.controls.target.x.toFixed(2),
+      this.controls.target.y.toFixed(2),
+      this.controls.target.z.toFixed(2),
+    ].join('|')
+    if (key === this.fitKey) return
+    this.fitKey = key
+    const bounds = insetBox(domBox(view), 4)
+    const hud = this.hudBoxes().map((box) => padBox(box, 4))
+    const fitted: FittedTag[] = []
+    for (const tag of this.labelAnchors.keys()) {
+      const fit = this.fitTag(tag, bounds, hud)
+      if (fit) fitted.push(fit)
+    }
+    untangleTags(fitted, bounds, hud)
+    for (const fit of fitted) {
+      this.writeTagOffset(fit.tagEl, fit.leader, Math.round(fit.baseX + fit.dx), Math.round(fit.baseY + fit.dy))
+    }
+  }
+
+  private hudBoxes(): ScreenBox[] {
+    const root = this.renderer.domElement.parentElement
+    if (!root) return []
+    const boxes: ScreenBox[] = []
+    for (const el of root.querySelectorAll('.canvas-hud .pill')) {
+      if (!(el instanceof HTMLElement)) continue
+      const rect = el.getBoundingClientRect()
+      if (rect.width < 1 || rect.height < 1) continue
+      boxes.push(domBox(rect))
+    }
+    return boxes
+  }
+
+  private fitTag(tag: PlantTag, bounds: ScreenBox, hud: ScreenBox[]): FittedTag | null {
+    const nodes = this.tagNodes(tag)
+    if (!nodes) return null
+    const base = this.tagOffset(tag)
+    this.writeTagOffset(nodes.tagEl, nodes.leader, base.x, base.y)
+    const start = domBox(nodes.tagEl.getBoundingClientRect())
+    const into = clampShift(start, bounds)
+    let dx = into.dx
+    let dy = into.dy
+    let cursor = shiftBox(start, dx, dy)
+    for (const block of hud) {
+      if (!boxesOverlap(cursor, block)) continue
+      const move = separateBox(cursor, block, bounds)
+      if (!move) continue
+      dx += move.dx
+      dy += move.dy
+      cursor = shiftBox(cursor, move.dx, move.dy)
+    }
+    return { tagEl: nodes.tagEl, leader: nodes.leader, baseX: base.x, baseY: base.y, dx, dy, box: cursor }
   }
 
   private placeAllTags() {
@@ -1093,6 +1175,7 @@ export class ChillerScene {
     }
     layer.style.visibility = ''
     this.labelRenderer.render(this.scene, this.camera)
+    this.fitTagsInView()
   }
 
   /** Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag. */
@@ -1158,6 +1241,141 @@ export class ChillerScene {
     })
     this.renderer.dispose()
   }
+}
+
+interface ScreenBox {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+interface FittedTag {
+  tagEl: HTMLElement
+  leader: HTMLElement
+  baseX: number
+  baseY: number
+  dx: number
+  dy: number
+  box: ScreenBox
+}
+
+function domBox(rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>): ScreenBox {
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+}
+
+function shiftBox(box: ScreenBox, dx: number, dy: number): ScreenBox {
+  return { left: box.left + dx, right: box.right + dx, top: box.top + dy, bottom: box.bottom + dy }
+}
+
+function insetBox(box: ScreenBox, pad: number): ScreenBox {
+  return { left: box.left + pad, right: box.right - pad, top: box.top + pad, bottom: box.bottom - pad }
+}
+
+function padBox(box: ScreenBox, pad: number): ScreenBox {
+  return { left: box.left - pad, right: box.right + pad, top: box.top - pad, bottom: box.bottom + pad }
+}
+
+function boxesOverlap(a: ScreenBox, b: ScreenBox) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+function boxInside(box: ScreenBox, bounds: ScreenBox) {
+  return box.left >= bounds.left && box.right <= bounds.right && box.top >= bounds.top && box.bottom <= bounds.bottom
+}
+
+function clampShift(box: ScreenBox, bounds: ScreenBox) {
+  let dx = 0
+  let dy = 0
+  if (box.left < bounds.left) dx = bounds.left - box.left
+  else if (box.right > bounds.right) dx = bounds.right - box.right
+  if (box.top < bounds.top) dy = bounds.top - box.top
+  else if (box.bottom > bounds.bottom) dy = bounds.bottom - box.bottom
+  return { dx, dy }
+}
+
+/** Smallest slide that clears one HUD chip and still sits inside the canvas. */
+function separateBox(box: ScreenBox, block: ScreenBox, bounds: ScreenBox) {
+  const moves = [
+    { dx: block.right - box.left, dy: 0 },
+    { dx: block.left - box.right, dy: 0 },
+    { dx: 0, dy: block.bottom - box.top },
+    { dx: 0, dy: block.top - box.bottom },
+  ]
+  let best: { dx: number; dy: number } | null = null
+  let bestLen = Infinity
+  for (const move of moves) {
+    const shifted = shiftBox(box, move.dx, move.dy)
+    const clamp = clampShift(shifted, bounds)
+    const next = shiftBox(shifted, clamp.dx, clamp.dy)
+    if (!boxInside(next, bounds) || boxesOverlap(next, block)) continue
+    const dx = move.dx + clamp.dx
+    const dy = move.dy + clamp.dy
+    const len = dx * dx + dy * dy
+    if (len < bestLen) {
+      bestLen = len
+      best = { dx, dy }
+    }
+  }
+  return best
+}
+
+/** Slide the tag that already moved, or the later tag on a tie, until the two no longer cover each other. */
+function untangleTags(tags: FittedTag[], bounds: ScreenBox, hud: ScreenBox[]) {
+  const gap = 6
+  for (let pass = 0; pass < tags.length; pass++) {
+    let moved = false
+    for (let i = 0; i < tags.length; i++) {
+      for (let j = i + 1; j < tags.length; j++) {
+        if (!boxesOverlap(tags[i].box, tags[j].box)) continue
+        const moveI = Math.abs(tags[i].dx) + Math.abs(tags[i].dy)
+        const moveJ = Math.abs(tags[j].dx) + Math.abs(tags[j].dy)
+        const mover = moveI > moveJ ? tags[i] : tags[j]
+        const other = mover === tags[i] ? tags[j] : tags[i]
+        const slide = slideClear(mover, other.box, tags, bounds, hud, gap)
+        if (!slide) continue
+        mover.dx += slide.dx
+        mover.dy += slide.dy
+        mover.box = shiftBox(mover.box, slide.dx, slide.dy)
+        moved = true
+      }
+    }
+    if (!moved) break
+  }
+}
+
+function slideClear(
+  mover: FittedTag,
+  other: ScreenBox,
+  tags: FittedTag[],
+  bounds: ScreenBox,
+  hud: ScreenBox[],
+  gap: number,
+) {
+  const box = mover.box
+  const moves = [
+    { dx: 0, dy: other.top - gap - box.bottom },
+    { dx: 0, dy: other.bottom + gap - box.top },
+    { dx: other.left - gap - box.right, dy: 0 },
+    { dx: other.right + gap - box.left, dy: 0 },
+  ]
+  let best: { dx: number; dy: number } | null = null
+  let bestLen = Infinity
+  for (const move of moves) {
+    const clamped = clampShift(shiftBox(box, move.dx, move.dy), bounds)
+    const dx = move.dx + clamped.dx
+    const dy = move.dy + clamped.dy
+    const next = shiftBox(box, dx, dy)
+    if (!boxInside(next, bounds) || boxesOverlap(next, other)) continue
+    if (hud.some((block) => boxesOverlap(next, block))) continue
+    if (tags.some((tag) => tag !== mover && boxesOverlap(next, tag.box))) continue
+    const len = dx * dx + dy * dy
+    if (len < bestLen) {
+      bestLen = len
+      best = { dx, dy }
+    }
+  }
+  return best
 }
 
 function readingText(tag: PlantTag, readings: SceneReadings): string {
