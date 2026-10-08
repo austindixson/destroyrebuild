@@ -3,17 +3,31 @@ import { plantModelProgressText } from '../york-chiller/src/3d/chillerScene'
 
 const SIMPLE_MODEL = 'The view shows the simple plant model.'
 
-test('plant model progress text names the percent or the bytes', () => {
+test('plant model progress text names the percent or the MB count', () => {
   expect(plantModelProgressText(0, 0)).toBe('The plant model starts.')
   expect(plantModelProgressText(42, 100)).toBe('The plant model file is at 42 percent.')
   expect(plantModelProgressText(150, 100)).toBe('The plant model file is at 100 percent.')
   expect(plantModelProgressText(Number.NaN, 100)).toBe('The plant model starts.')
-  expect(plantModelProgressText(4096, 0)).toBe('Received 4096 bytes.')
+  expect(plantModelProgressText(4096, 0)).toBe('The plant model file is at 0 MB.')
+  expect(plantModelProgressText(1_048_576, 0)).toBe('The plant model file is at 1 MB.')
+  expect(plantModelProgressText(2_500_000, 0)).toBe('The plant model file is at 2 MB.')
+  expect(plantModelProgressText(4096, 0)).toBe(plantModelProgressText(900_000, 0))
 })
 
 test('boot overlay shows download percent, then the full plant model', async ({ page }) => {
   test.setTimeout(45_000)
+  await page.addInitScript(() => {
+    ;(window as Window & { __YORK_MODEL_TIMEOUT_MS?: number }).__YORK_MODEL_TIMEOUT_MS = 3000
+  })
   await page.setViewportSize({ width: 390, height: 844 })
+  let releaseDownload = () => {}
+  const held = new Promise<void>((resolve) => {
+    releaseDownload = resolve
+  })
+  await page.route('**/models/ymc2.glb', async (route) => {
+    await held
+    await route.continue()
+  })
   const client = await page.context().newCDPSession(page)
   await client.send('Network.enable')
   await client.send('Network.emulateNetworkConditions', {
@@ -25,6 +39,7 @@ test('boot overlay shows download percent, then the full plant model', async ({ 
   await page.goto('/york-chiller/')
   await page.locator('.nav [data-nav="explorer"]').click()
   await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
+  releaseDownload()
   await expect(page.locator('#canvas-boot')).toHaveText(/The plant model file is at \d+ percent\./, {
     timeout: 12_000,
   })
@@ -32,6 +47,37 @@ test('boot overlay shows download percent, then the full plant model', async ({ 
   await expect(page.locator('.plant-tag')).toHaveCount(8, { timeout: 20_000 })
   await expect(page.locator('#canvas-status')).toHaveText('Low-detail 3D')
   await expect(page.locator('#canvas-status')).not.toHaveText(SIMPLE_MODEL)
+})
+
+test('a trickle download falls back to the simple plant model', async ({ page }) => {
+  test.setTimeout(30_000)
+  await page.addInitScript(() => {
+    ;(window as Window & { __YORK_MODEL_TIMEOUT_MS?: number }).__YORK_MODEL_TIMEOUT_MS = 1500
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  let releaseDownload = () => {}
+  const held = new Promise<void>((resolve) => {
+    releaseDownload = resolve
+  })
+  await page.route('**/models/ymc2.glb', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.goto('/york-chiller/')
+  await page.locator('.nav [data-nav="explorer"]').click()
+  await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
+  const client = await page.context().newCDPSession(page)
+  await client.send('Network.enable')
+  await client.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 20,
+    downloadThroughput: 2000,
+    uploadThroughput: 2000,
+  })
+  releaseDownload()
+  await expect(page.locator('#canvas-status')).toHaveText(SIMPLE_MODEL, { timeout: 12_000 })
+  await expect(page.locator('#canvas-boot')).toHaveCount(0)
+  await expect(page.locator('.plant-tag')).toHaveCount(0)
 })
 
 test('boot overlay clears when the plant model download stalls', async ({ page }) => {
@@ -99,6 +145,37 @@ test('a disposed scene does not mount the plant model', async ({ page }) => {
   })
   expect(mounts).toBe(0)
   expect(pageErrors).toEqual([])
+})
+
+test('a stale scene import timeout does not hide the next visit', async ({ page }) => {
+  test.setTimeout(30_000)
+  await page.addInitScript(() => {
+    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = 1500
+  })
+  let releaseChunk = () => {}
+  const gate = new Promise<void>((resolve) => {
+    releaseChunk = resolve
+  })
+  await page.route('**/assets/chillerScene-*.js', async (route) => {
+    await gate
+    await route.continue()
+  })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/york-chiller/')
+  await page.locator('.nav [data-nav="explorer"]').click()
+  await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
+  await page.locator('.nav [data-nav="home"]').click()
+  await page.evaluate(() => {
+    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = 30_000
+  })
+  await page.locator('.nav [data-nav="explorer"]').click()
+  await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
+  await page.waitForTimeout(2000)
+  releaseChunk()
+  await expect(page.locator('.plant-tag')).toHaveCount(8, { timeout: 20_000 })
+  await expect(page.locator('#chiller-canvas')).toBeVisible()
+  await expect(page.locator('#canvas-status')).toHaveText(/Low-detail 3D|Turn the model/)
+  await expect(page.locator('#canvas-status')).not.toHaveText('The 3D view failed.')
 })
 
 test('boot overlay fails when the scene chunk stalls', async ({ page }) => {

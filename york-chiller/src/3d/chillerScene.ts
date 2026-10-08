@@ -9,10 +9,15 @@ export type HotspotSelect = (id: ComponentId | null) => void
 export type BootNotice = (text: string) => void
 
 /**
- * Idle limit for the GLB transfer. Each progress event starts this window again.
- * No new bytes for this long, and the view uses the simple model.
+ * Idle limit for the GLB transfer. The window starts again only when the boot
+ * line changes (percent, or whole MB when the length is not known).
  */
 const MODEL_TIMEOUT_MS = 25_000
+
+/** Hard stop from the start of the transfer. Idle re-arms cannot extend past this. */
+const MODEL_CAP_MS = 180_000
+
+const MB = 1_048_576
 
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
 export function plantModelProgressText(loaded: number, total: number): string {
@@ -21,7 +26,10 @@ export function plantModelProgressText(loaded: number, total: number): string {
     const pct = Math.min(100, Math.max(0, Math.round((loaded / total) * 100)))
     return `The plant model file is at ${pct} percent.`
   }
-  if (loaded > 0) return `Received ${Math.round(loaded)} bytes.`
+  if (loaded > 0) {
+    const mb = Math.floor(loaded / MB)
+    return `The plant model file is at ${mb} MB.`
+  }
   return 'The plant model starts.'
 }
 
@@ -348,16 +356,18 @@ export class ChillerScene {
     return 'Turn the model. Select a part.'
   }
 
-  private reportBoot(text: string) {
-    if (this.disposed || text === this.bootText) return
+  /** Returns true when the boot line text changes. Callers re-arm the idle timer only then. */
+  private reportBoot(text: string): boolean {
+    if (this.disposed || text === this.bootText) return false
     this.bootText = text
     this.onBoot?.(text)
+    return true
   }
 
   /**
    * Download ymc2.glb, then mount it. Progress updates the boot line.
-   * Each progress event restarts the idle deadline. The promise always resolves.
-   * Dispose skips mount.
+   * The idle window restarts only when that line changes. A 180 s cap still
+   * applies from the start. The promise always resolves. Dispose skips mount.
    */
   private loadModel() {
     const url = `${import.meta.env.BASE_URL}models/ymc2.glb`
@@ -368,12 +378,14 @@ export class ChillerScene {
 
     return new Promise<void>((resolve) => {
       let settled = false
-      let timer: ReturnType<typeof setTimeout> | undefined
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      let capTimer: ReturnType<typeof setTimeout> | undefined
 
       const finish = (useFallback: boolean) => {
         if (settled) return
         settled = true
-        window.clearTimeout(timer)
+        window.clearTimeout(idleTimer)
+        window.clearTimeout(capTimer)
         this.finishLoad = null
         if (useFallback) this.modelLoader?.abort()
         if (useFallback && !this.disposed) {
@@ -392,9 +404,10 @@ export class ChillerScene {
       this.finishLoad = finish
 
       const armIdle = () => {
-        window.clearTimeout(timer)
-        timer = window.setTimeout(() => finish(true), modelTimeoutMs())
+        window.clearTimeout(idleTimer)
+        idleTimer = window.setTimeout(() => finish(true), modelTimeoutMs())
       }
+      capTimer = window.setTimeout(() => finish(true), MODEL_CAP_MS)
       armIdle()
 
       const logLoadError = (err: unknown) => {
@@ -408,8 +421,7 @@ export class ChillerScene {
             finish(false)
             return
           }
-          armIdle()
-          this.reportBoot('The plant model opens.')
+          if (this.reportBoot('The plant model opens.')) armIdle()
           try {
             gltfLoader.parse(
               data as ArrayBuffer,
@@ -433,9 +445,8 @@ export class ChillerScene {
         },
         (event) => {
           if (settled || this.disposed) return
-          armIdle()
           const total = event.lengthComputable ? event.total : 0
-          this.reportBoot(plantModelProgressText(event.loaded, total))
+          if (this.reportBoot(plantModelProgressText(event.loaded, total))) armIdle()
         },
         (err) => {
           logLoadError(err)
