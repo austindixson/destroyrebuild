@@ -28,6 +28,15 @@ import { iconSvg } from './ui/icons'
 import { linkGlossary } from './ui/glossary'
 import { InfoDock } from './ui/info'
 
+type ChaosIncident = NonNullable<PlantSim['incident']>
+
+const CHAOS_FAULTS: Record<ChaosIncident, { label: string; tone: 'amber' | 'rose'; info: InfoId }> = {
+  'high-head': { label: 'Peak weather, high head', tone: 'amber', info: 'chaos-high-head' },
+  'hall-hot': { label: 'Hot hall, low chiller load', tone: 'amber', info: 'chaos-hall-hot' },
+  landing: { label: 'ATS landing', tone: 'rose', info: 'chaos-landing' },
+  failover: { label: 'Lead trip and failover', tone: 'rose', info: 'chaos-failover' },
+}
+
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live plant', icon: 'home' },
   { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
@@ -372,13 +381,11 @@ export class App {
         </div>
         <div class="card" ${infoAttr('chaos-board')}>
           <h3>Inject chaos</h3>
+          <p class="chaos-status${this.sim.incident ? ' is-fault' : ''}" id="chaos-status" role="status">${this.chaosStatusText()}</p>
           <p class="empty-state" style="margin-bottom:12px">Apply a fault on the live board. Then open the incident clock for the same fault.</p>
-          <div style="display:grid;gap:8px">
-            <button class="btn amber" type="button" data-incident="high-head" ${infoAttr('chaos-high-head')}>Peak weather, high head</button>
-            <button class="btn amber" type="button" data-incident="hall-hot" ${infoAttr('chaos-hall-hot')}>Hot hall, low chiller load</button>
-            <button class="btn rose" type="button" data-incident="landing" ${infoAttr('chaos-landing')}>ATS landing</button>
-            <button class="btn rose" type="button" data-incident="failover" ${infoAttr('chaos-failover')}>Lead trip and failover</button>
-            <button class="btn ghost" type="button" data-incident="clear" ${infoAttr('chaos-clear')}>Clear the incident</button>
+          <div class="chaos-actions">
+            ${(Object.keys(CHAOS_FAULTS) as ChaosIncident[]).map((id) => this.chaosButton(id)).join('')}
+            ${this.chaosButton('clear')}
             <button class="btn" type="button" data-go="trouble">Open the incident clock</button>
           </div>
         </div>
@@ -425,6 +432,42 @@ export class App {
     const reason = this.root.querySelector('#plant-reason')
     if (reason) this.relinkText(reason, s.reason)
     this.markMimicAlarms(s)
+    this.patchChaosButtons()
+  }
+
+  private chaosStatusText(): string {
+    const id = this.sim.incident
+    if (!id) return 'No fault is active.'
+    return `Active fault: ${CHAOS_FAULTS[id].label}.`
+  }
+
+  private chaosButton(id: ChaosIncident | 'clear'): string {
+    const on = id === 'clear' ? this.sim.incident === null : this.sim.incident === id
+    const fault = id === 'clear' ? null : CHAOS_FAULTS[id]
+    const tone = fault?.tone ?? 'ghost'
+    const info = fault?.info ?? 'chaos-clear'
+    const label = fault?.label ?? 'Clear the incident'
+    const pressed = on ? 'true' : 'false'
+    const flag = on ? 'On' : ''
+    return `<button class="btn ${tone}${on ? ' on' : ''}" type="button" data-incident="${id}" aria-pressed="${pressed}" ${infoAttr(info)}><span class="chaos-flag" aria-hidden="true">${flag}</span>${label}</button>`
+  }
+
+  private patchChaosButtons() {
+    const incident = this.sim.incident
+    const status = this.root.querySelector('#chaos-status')
+    if (status) {
+      const text = this.chaosStatusText()
+      if (status.textContent !== text) status.textContent = text
+      status.classList.toggle('is-fault', incident !== null)
+    }
+    this.root.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((button) => {
+      const id = button.dataset.incident
+      const on = id === 'clear' ? incident === null : id === incident
+      button.classList.toggle('on', on)
+      button.setAttribute('aria-pressed', on ? 'true' : 'false')
+      const flag = button.querySelector('.chaos-flag')
+      if (flag) flag.textContent = on ? 'On' : ''
+    })
   }
 
   private patchAlarmBanner(alarm: string | null) {
