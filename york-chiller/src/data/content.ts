@@ -1059,7 +1059,7 @@ export const INFO = {
     [
       'These buttons apply a fault to the live sim. The buttons are drills. The buttons are not remedies.',
       'After a fault, read the alarm banner and the tiles before you change a valve or a setpoint.',
-      'Clear incident returns CH-01 to lead and CH-02 to standby in this trainer.',
+      'Clear the incident restores the plant to the state before the fault.',
       'Open the incident clock if you want the same fault as a timed decision.',
     ],
   ),
@@ -1101,11 +1101,48 @@ export const INFO = {
   'chaos-clear': point(
     'Clear incident',
     [
-      'This action removes the injected fault. CH-01 returns to lead and CH-02 returns to standby.',
-      'Use this action when you want a clean board. The action does not undo a setpoint or a valve that you moved.',
+      'Clear the incident restores the plant to the state before the fault.',
+      'The clock, the setpoints, the valves, and the chiller run state return to that state.',
       'On a real plant, record the as-left state and update the ticket. A button does not erase the event.',
     ],
     ['alarm', 'mode'],
+  ),
+  'chaos-bms-fight': point(
+    'BMS and panel disagree',
+    [
+      'The LCHLT actual moves up and down. The setpoint on the panel stays in place.',
+      'The period is 12 seconds and the swing is 1.5°F. These are trainer values.',
+      'Make the plant stable in one control mode. Then name the single writer for the setpoint.',
+    ],
+    ['lchltAct', 'lchltSet'],
+  ),
+  'plant-controls': point(
+    'Plant controls',
+    [
+      'These controls operate CH-01 and CH-02 on this board. The trainer can hold more units.',
+      'Running capacity is the sum of the units that are in operation. Each unit uses a trainer value of 5 MW.',
+      'A stop asks you to confirm. Clear the incident restores the plant to the state before the fault.',
+      'A later trainer slice can show a bank of 18 units, then 36. This board does not show that bank yet.',
+    ],
+    ['itLoad', 'hallSupply'],
+  ),
+  'slider-it-load': point(
+    'IT load target',
+    [
+      'Set the IT load target. The live load still moves a small amount around the target.',
+      'The numbers are trainer values. They are not a chiller rating from a manual.',
+      'If the load is above the running capacity, the hall supply temperature increases.',
+      'Start another chiller or decrease the target to bring the hall supply down.',
+    ],
+    ['itLoad'],
+  ),
+  'opti-ch02': point(
+    'CH-02 on this board',
+    [
+      'Start CH-02 when the IT load is above the capacity of CH-01.',
+      'A soft stop and a safety stop ask you to confirm. The stop takes CH-02 offline.',
+      'The live board uses the same commands. Capacity is the sum of the running units.',
+    ],
   ),
   'chain-it': point(
     'IT load',

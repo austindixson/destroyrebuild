@@ -22,6 +22,7 @@ const files = [
   'src/ui/info.ts',
   'src/ui/glossary.ts',
   'src/sim/plantSim.ts',
+  'src/sim/controller.ts',
   'src/3d/chillerScene.ts',
   'index.html',
 ]

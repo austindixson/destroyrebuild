@@ -1898,6 +1898,66 @@ button.jargon:focus-visible {
   }
 }
 
+.plant-controls {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.plant-controls label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+}
+
+.unit-row,
+.clock-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.clock-row button.on {
+  color: var(--text);
+  border-color: rgba(46, 230, 214, 0.7);
+  background: rgba(46, 230, 214, 0.12);
+}
+
+.confirm-card {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(4, 10, 16, 0.72);
+}
+
+.confirm-card[hidden] {
+  display: none;
+}
+
+.confirm-panel {
+  width: min(440px, 100%);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.confirm-panel p {
+  margin: 0 0 14px;
+  line-height: 1.45;
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .info-panel {
     transition: none;

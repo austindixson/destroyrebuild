@@ -23,27 +23,22 @@ import {
 } from './data/content'
 import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
-import { PlantSim, rankFor, type PlantSnapshot } from './sim/plantSim'
+import { PlantController, type PlantChangeDetail } from './sim/controller'
+import { isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
+import { createYorkTools } from './sim/tools'
+import { isTroubleCaseId, troubleIncident } from './sim/troubleMap'
 import { iconSvg } from './ui/icons'
 import { linkGlossary } from './ui/glossary'
 import { InfoDock } from './ui/info'
 
-type ChaosIncident = NonNullable<PlantSim['incident']>
+type ChaosIncident = IncidentKind
 
 const CHAOS_FAULTS: Record<ChaosIncident, { label: string; tone: 'amber' | 'rose'; info: InfoId }> = {
   'high-head': { label: 'Peak weather, high head', tone: 'amber', info: 'chaos-high-head' },
   'hall-hot': { label: 'Hot hall, low chiller load', tone: 'amber', info: 'chaos-hall-hot' },
   landing: { label: 'ATS landing', tone: 'rose', info: 'chaos-landing' },
   failover: { label: 'Lead trip and failover', tone: 'rose', info: 'chaos-failover' },
-}
-
-/** Scenario id to the inject the live board should show. Null clears a leftover fault. */
-const TROUBLE_INCIDENT: Record<string, ChaosIncident | null> = {
-  'high-head': 'high-head',
-  landing: 'landing',
-  'hall-hot-chiller-idle': 'hall-hot',
-  'no-start': 'failover',
-  'bms-fight': null,
+  'bms-fight': { label: 'BMS and panel disagree', tone: 'amber', info: 'chaos-bms-fight' },
 }
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
@@ -105,12 +100,14 @@ export class App {
   private scene: ChillerScene | null = null
   private selected: ComponentId | null = null
   private toastEl!: HTMLDivElement
-  private sim = new PlantSim()
-  private snap: PlantSnapshot = this.sim.tick()
+  private controller = new PlantController()
+  private snap: PlantSnapshot = this.controller.snapshot
   private raf = 0
+  private lastFrame = 0
   private lastUi = 0
   private lastInfo = 0
   private info: InfoDock
+  private pendingConfirm: (() => void) | null = null
 
   private opMode: 'start' | 'stop' = 'start'
   private opIndex = 0
@@ -132,28 +129,32 @@ export class App {
   private troubleTimer: number | null = null
   private maintChecks = new Set<string>()
   private optiTab: 'home' | 'mbc' | 'alarms' = 'home'
-  private running = true
-  private optiLog: { text: string; kind?: string }[] = [
-    { text: 'CH-01 is online. The BMS link is a simulation.' },
-    { text: 'The NOC watch is in trainer mode.', kind: 'warn' },
-  ]
 
   constructor(root: HTMLElement) {
     this.root = root
-    this.sim.ch01Running = true
     this.info = new InfoDock(document.body, this.root, () => ({
       snap: this.snap,
-      running: this.running,
-      landing: this.sim.incident === 'landing',
+      running: this.controller.running,
+      landing: this.controller.incident === 'landing',
     }))
+    this.controller.addEventListener('change', (event) => {
+      const detail = (event as CustomEvent<PlantChangeDetail>).detail
+      this.snap = detail.snapshot
+      this.onPlantChange()
+    })
+    if (import.meta.env.DEV) {
+      window.__york = { controller: this.controller, tools: createYorkTools(this.controller) }
+    }
     this.render()
     this.loop()
   }
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop)
-    this.snap = this.sim.tick()
     const now = performance.now()
+    const wallDt = this.lastFrame === 0 ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000)
+    this.lastFrame = now
+    this.snap = this.controller.tick(wallDt)
     if (this.view === 'home' && now - this.lastUi > 250) {
       this.lastUi = now
       this.patchLiveBoard()
@@ -187,9 +188,14 @@ export class App {
       clearInterval(this.troubleTimer)
       this.troubleTimer = null
     }
+    if (this.view === 'trouble' && view !== 'trouble' && TROUBLE_CASES[this.troubleIndex]?.id === 'bms-fight') {
+      const cleared = this.controller.clearIncident('user')
+      this.snap = cleared.snapshot
+    }
     this.view = view
     if (view === 'trouble') {
       this.alignTroubleToIncident()
+      this.applyTroubleIncident()
       this.startTroubleClock()
     }
     this.render()
@@ -259,8 +265,19 @@ export class App {
       </aside>
       <main class="main" id="view"></main>
       <div class="toast" id="toast"></div>
+      <div class="confirm-card" id="confirm-card" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-copy">
+        <div class="confirm-panel">
+          <p id="confirm-copy"></p>
+          <div class="confirm-actions">
+            <button class="btn" type="button" id="confirm-yes">Do the stop</button>
+            <button class="btn ghost" type="button" id="confirm-no">Cancel</button>
+          </div>
+        </div>
+      </div>
     `
     this.toastEl = this.root.querySelector('#toast')!
+    this.pendingConfirm = null
+    this.bindConfirm()
     this.root.querySelectorAll<HTMLButtonElement>('[data-nav]').forEach((btn) => {
       btn.addEventListener('click', () => this.setView(btn.dataset.nav as ViewId))
     })
@@ -360,6 +377,7 @@ export class App {
       </div>
       <div class="alarm-banner ${s.alarm ? 'show' : ''}" id="alarm-banner">${s.alarm ?? ''}</div>
       <div class="kpi-strip" id="kpi-strip">${this.kpiHtml(s)}</div>
+      ${this.plantControlsHtml()}
       <div class="mimic">
         <div class="mimic-flow"><i></i></div>
         <div class="mimic-grid">
@@ -393,8 +411,8 @@ export class App {
         </div>
         <div class="card" ${infoAttr('chaos-board')}>
           <h3>Inject chaos</h3>
-          <p class="chaos-status${this.sim.incident ? ' is-fault' : ''}" id="chaos-status" role="status">${this.chaosStatusText()}</p>
-          <p class="empty-state" style="margin-bottom:12px">Apply a fault on the live board. Then open the incident clock for the same fault.</p>
+          <p class="chaos-status${this.controller.incident ? ' is-fault' : ''}" id="chaos-status" role="status">${this.chaosStatusText()}</p>
+          <p class="empty-state" style="margin-bottom:12px">Apply a fault on the live board. Then open the incident clock for the same fault. Clear the incident restores the plant to the state before the fault.</p>
           <div class="chaos-actions">
             ${(Object.keys(CHAOS_FAULTS) as ChaosIncident[]).map((id) => this.chaosButton(id)).join('')}
             ${this.chaosButton('clear')}
@@ -445,16 +463,17 @@ export class App {
     if (reason) this.relinkText(reason, s.reason)
     this.markMimicAlarms(s)
     this.patchChaosButtons()
+    this.patchPlantControls()
   }
 
   private chaosStatusText(): string {
-    const id = this.sim.incident
+    const id = this.controller.incident
     if (!id) return 'No fault is active.'
     return `Active fault: ${CHAOS_FAULTS[id].label}.`
   }
 
   private chaosButton(id: ChaosIncident | 'clear'): string {
-    const on = id === 'clear' ? this.sim.incident === null : this.sim.incident === id
+    const on = id === 'clear' ? this.controller.incident === null : this.controller.incident === id
     const fault = id === 'clear' ? null : CHAOS_FAULTS[id]
     const tone = fault?.tone ?? 'ghost'
     const info = fault?.info ?? 'chaos-clear'
@@ -465,7 +484,7 @@ export class App {
   }
 
   private patchChaosButtons() {
-    const incident = this.sim.incident
+    const incident = this.controller.incident
     const status = this.root.querySelector('#chaos-status')
     if (status) {
       const text = this.chaosStatusText()
@@ -555,46 +574,35 @@ export class App {
     })
     el.querySelectorAll<HTMLButtonElement>('[data-oat]').forEach((b) => {
       b.addEventListener('click', () => {
-        this.sim.setOutdoor(Number(b.dataset.oat))
-        this.snap = this.sim.tick()
+        this.controller.setOutdoorDryBulb(Number(b.dataset.oat), 'user')
+        this.snap = this.controller.snapshot
         this.renderView()
       })
     })
     el.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((b) => {
       b.addEventListener('click', () => {
         const v = b.dataset.incident ?? ''
-        const active = this.isChaosIncident(v) && this.sim.incident === v
+        const active = this.isChaosIncident(v) && this.controller.incident === v
         if (v === 'clear' || active) {
-          this.clearIncident()
-          this.toast('The plant is stable.')
-        } else if (this.isChaosIncident(v)) {
-          this.applyIncident(v)
-          this.toast('The incident is active. The board is live.')
+          const result = this.controller.clearIncident('user')
+          this.snap = result.snapshot
+          this.toast(result.ok ? 'The plant is stable.' : result.message)
+          this.patchLiveBoard()
+          return
         }
-        this.snap = this.sim.tick()
+        if (!isIncidentKind(v)) return
+        if (this.controller.incident) this.controller.clearIncident('user')
+        const result = this.controller.injectIncident(v, 'user')
+        this.snap = result.snapshot
+        this.toast(result.ok ? 'The incident is active. The board is live.' : result.message)
         this.patchLiveBoard()
       })
     })
+    this.bindPlantControls(el)
   }
 
   private isChaosIncident(value: string): value is ChaosIncident {
     return Object.prototype.hasOwnProperty.call(CHAOS_FAULTS, value)
-  }
-
-  /** Drop chiller run flags that an earlier fault left behind. */
-  private resetChillerRun() {
-    this.sim.ch01Running = true
-    this.sim.ch02Running = false
-  }
-
-  private clearIncident() {
-    this.sim.incident = null
-    this.resetChillerRun()
-  }
-
-  private applyIncident(id: ChaosIncident) {
-    this.resetChillerRun()
-    this.sim.incident = id
   }
 
   private plantHtml() {
@@ -777,9 +785,10 @@ export class App {
       input?.addEventListener('input', () => {
         const pct = Number(input.value)
         if (out) out.textContent = `${pct}%`
-        this.sim.setHeaderValve(loop, pct)
-        this.scene?.setValve(loop, pct)
-        this.snap = this.sim.tick()
+        this.controller.setValve(loop, pct, 'user')
+        this.snap = this.controller.snapshot
+        const applied = loop === 'chw' ? this.snap.chwValvePct : loop === 'cw' ? this.snap.cwValvePct : this.snap.glycolValvePct
+        this.scene?.setValve(loop, applied)
         this.patchPipeBoard()
       })
     }
@@ -791,8 +800,8 @@ export class App {
     oat?.addEventListener('input', () => {
       const f = Number(oat.value)
       if (oatOut) oatOut.textContent = `${f}°F`
-      this.sim.setOutdoor(f)
-      this.snap = this.sim.tick()
+      this.controller.setOutdoorDryBulb(f, 'user')
+      this.snap = this.controller.snapshot
       this.patchPipeBoard()
     })
   }
@@ -884,9 +893,9 @@ export class App {
       this.bindPipeBoard(el)
       await this.scene.ready
       if (this.view !== 'explorer') return
-      this.scene.setValve('chw', this.sim.chwValvePct)
-      this.scene.setValve('cw', this.sim.cwValvePct)
-      this.scene.setValve('gly', this.sim.glycolValvePct)
+      this.scene.setValve('chw', this.controller.chwValvePct)
+      this.scene.setValve('cw', this.controller.cwValvePct)
+      this.scene.setValve('gly', this.controller.glycolValvePct)
       this.scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
       this.scene.setReadings(this.sceneReadings())
       if (this.selected) this.scene.select(this.selected)
@@ -1037,7 +1046,7 @@ export class App {
           <h2>OptiView, CH-01</h2>
           <p>The panel uses the live plant simulation. Use the soft stop, the safety stop, the setpoint, and the MBC status.</p>
         </div>
-        <span class="chip">${this.running ? 'In operation' : 'Stopped'} · ${s.ch01.mbc}</span>
+        <span class="chip" id="opti-run-chip">${this.controller.running ? 'In operation' : 'Stopped'} · ${s.ch01.mbc}</span>
       </div>
       <div class="optiview">
         <div class="optiview-top">
@@ -1053,11 +1062,14 @@ export class App {
           <div class="opti-screen" id="opti-screen">${this.optiScreenHtml()}</div>
           <div class="opti-actions">
             <label style="font-size:.85rem;color:#86efac" ${infoAttr('slider-lchlt')}>LCHLT setpoint
-              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.sim.lchltSet}" style="width:100%;margin-top:6px"/>
+              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" style="width:100%;margin-top:6px"/>
             </label>
-            <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.running ? 'disabled' : ''}>Start</button>
-            <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.running ? 'disabled' : ''}>Soft stop</button>
+            <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.controller.running ? 'disabled' : ''}>Start</button>
+            <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.controller.running ? 'disabled' : ''}>Soft stop</button>
             <button class="btn rose" type="button" data-opti="safety" ${infoAttr('opti-safety')}>Safety stop</button>
+            <button class="btn" type="button" data-opti="start-ch02" ${infoAttr('opti-ch02')} ${this.controller.unitRunning('CH-02') ? 'disabled' : ''}>Start CH-02</button>
+            <button class="btn amber" type="button" data-opti="soft-ch02" ${infoAttr('opti-ch02')} ${!this.controller.unitRunning('CH-02') ? 'disabled' : ''}>Soft stop CH-02</button>
+            <button class="btn rose" type="button" data-opti="safety-ch02" ${infoAttr('opti-ch02')}>Safety stop CH-02</button>
             <button class="btn ghost" type="button" data-opti="warn" ${infoAttr('opti-warn')}>Hall warning</button>
             <button class="btn ghost" type="button" data-opti="noc" ${infoAttr('opti-noc')}>Page the NOC</button>
             <button class="btn ghost" type="button" data-opti="done" ${infoAttr('opti-done')}>Mark the drill complete</button>
@@ -1073,7 +1085,7 @@ export class App {
       return `
         <div class="gauge-row">
           <div class="gauge" ${infoAttr('gauge-mbc')}><div class="label">MBC</div><div class="value" style="font-size:1.1rem;margin-top:8px">${s.ch01.mbc}</div></div>
-          <div class="gauge" ${infoAttr('gauge-landings')}><div class="label">LANDINGS</div><div class="value">${this.sim.incident === 'landing' ? 1 : 0}</div></div>
+          <div class="gauge" ${infoAttr('gauge-landings')}><div class="label">LANDINGS</div><div class="value">${this.controller.incident === 'landing' ? 1 : 0}</div></div>
           <div class="gauge" ${infoAttr('gauge-vibe')}><div class="label">1× VIBE</div><div class="value">${(0.12 + Math.sin(s.t) * 0.02).toFixed(2)}</div></div>
         </div>
         <div class="schematic">AXIAL  ·····●·····  gap normal
@@ -1083,7 +1095,7 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
         <div class="message-log"><div class="${s.ch01.mbc === 'LANDED' ? 'alarm' : ''}">MBC status: ${s.ch01.mbc}</div></div>`
     }
     if (this.optiTab === 'alarms') {
-      return `<div class="message-log">${this.optiLog
+      return `<div class="message-log">${this.controller.optiLogLines
         .slice()
         .reverse()
         .map((m) => `<div class="${m.kind ?? ''}">${m.text}</div>`)
@@ -1092,18 +1104,18 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
     return `
       <div class="gauge-row">
         <div class="gauge" ${infoAttr('gauge-set')}><div class="label">LCHLT SET</div><div class="value" data-ov="set">${s.lchltSet.toFixed(1)}°F</div></div>
-        <div class="gauge" ${infoAttr('gauge-act')}><div class="label">LCHLT ACT</div><div class="value" data-ov="act">${this.running ? s.lchltAct.toFixed(1) : '58.2'}°F</div></div>
-        <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% FLA</div><div class="value" data-ov="rla">${this.running ? s.ch01.rla : 0}%</div></div>
+        <div class="gauge" ${infoAttr('gauge-act')}><div class="label">LCHLT ACT</div><div class="value" data-ov="act">${this.controller.running ? s.lchltAct.toFixed(1) : '58.2'}°F</div></div>
+        <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% FLA</div><div class="value" data-ov="rla">${this.controller.running ? s.ch01.rla : 0}%</div></div>
       </div>
       <div class="gauge-row">
-        <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
+        <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.controller.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
         <div class="gauge" ${infoAttr('gauge-cond')}><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span style="font-size:.75rem"> psig</span></div></div>
         <div class="gauge" ${infoAttr('gauge-hall')}><div class="label">HALL SA</div><div class="value" data-ov="hall">${s.hallSupplyF}°F</div></div>
       </div>
       <div class="schematic">EVAP ══╗
        ║  COMP ▶ VSD ▶ MBC ${s.ch01.mbc}
 COND ══╝     CHW → CRAH → HALL</div>
-      <div class="message-log">${this.optiLog
+      <div class="message-log">${this.controller.optiLogLines
         .slice(-4)
         .reverse()
         .map((m) => `<div class="${m.kind ?? ''}">${m.text}</div>`)
@@ -1121,11 +1133,21 @@ COND ══╝     CHW → CRAH → HALL</div>
         if (n) n.textContent = v
       }
       set('set', `${s.lchltSet.toFixed(1)}°F`)
-      set('act', `${this.running ? s.lchltAct.toFixed(1) : '58.2'}°F`)
-      set('rla', `${this.running ? s.ch01.rla : 0}%`)
+      set('act', `${this.controller.running ? s.lchltAct.toFixed(1) : '58.2'}°F`)
+      set('rla', `${this.controller.running ? s.ch01.rla : 0}%`)
       set('cond', `${s.ch01.condPsig}`)
       set('hall', `${s.hallSupplyF}°F`)
     }
+    const chip = this.root.querySelector('#opti-run-chip')
+    if (chip) chip.textContent = `${this.controller.running ? 'In operation' : 'Stopped'} · ${this.snap.ch01.mbc}`
+    const start = this.root.querySelector<HTMLButtonElement>('[data-opti="start"]')
+    const soft = this.root.querySelector<HTMLButtonElement>('[data-opti="soft"]')
+    const start2 = this.root.querySelector<HTMLButtonElement>('[data-opti="start-ch02"]')
+    const soft2 = this.root.querySelector<HTMLButtonElement>('[data-opti="soft-ch02"]')
+    if (start) start.disabled = this.controller.running
+    if (soft) soft.disabled = !this.controller.running
+    if (start2) start2.disabled = this.controller.unitRunning('CH-02')
+    if (soft2) soft2.disabled = !this.controller.unitRunning('CH-02')
   }
 
   private bindOptiview(el: Element) {
@@ -1136,30 +1158,28 @@ COND ══╝     CHW → CRAH → HALL</div>
       })
     })
     el.querySelector<HTMLInputElement>('#lchlt')?.addEventListener('input', (e) => {
-      this.sim.lchltSet = Number((e.target as HTMLInputElement).value)
-      this.optiLog.push({ text: `Setpoint ${this.sim.lchltSet.toFixed(1)}°F LCHLT` })
+      this.controller.setLchltSetpoint(Number((e.target as HTMLInputElement).value), 'user')
+      this.snap = this.controller.snapshot
       this.patchOptiLive()
     })
     el.querySelectorAll<HTMLButtonElement>('[data-opti]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const a = btn.dataset.opti
-        if (a === 'start') {
-          this.running = true
-          this.sim.ch01Running = true
-          this.optiLog.push({ text: 'The panel accepts the start. The MBC levitates the rotor. The VSD increases speed.' })
-        } else if (a === 'soft') {
-          this.running = false
-          this.sim.ch01Running = false
-          this.optiLog.push({ text: 'Soft stop. The speed decreases under control.' })
-        } else if (a === 'safety') {
-          this.running = false
-          this.sim.ch01Running = false
-          this.optiLog.push({ text: 'Safety stop.', kind: 'alarm' })
-        } else if (a === 'warn') {
-          this.optiLog.push({ text: 'Warning. Condenser approach and hall risk.', kind: 'warn' })
+        if (a === 'start') this.commandStart('CH-01')
+        else if (a === 'soft') this.confirmStop('CH-01', 'soft')
+        else if (a === 'safety') this.confirmStop('CH-01', 'safety')
+        else if (a === 'start-ch02') this.commandStart('CH-02')
+        else if (a === 'soft-ch02') this.confirmStop('CH-02', 'soft')
+        else if (a === 'safety-ch02') this.confirmStop('CH-02', 'safety')
+        else if (a === 'warn') {
+          this.controller.optiviewMessage('hall-warning', 'user')
+          this.snap = this.controller.snapshot
+          this.renderView()
         } else if (a === 'noc') {
-          this.optiLog.push({ text: 'The NOC ticket is open.', kind: 'alarm' })
+          this.controller.optiviewMessage('page-noc', 'user')
+          this.snap = this.controller.snapshot
           this.toast('The trainer sent a message to the NOC.')
+          this.renderView()
         } else if (a === 'done') {
           if (!this.progress.optiviewComplete) {
             this.progress.optiviewComplete = true
@@ -1167,8 +1187,8 @@ COND ══╝     CHW → CRAH → HALL</div>
             this.toast('You completed the OptiView drill. You gain 25 XP.')
             this.persist()
           }
+          this.renderView()
         }
-        this.renderView()
       })
     })
   }
@@ -1339,27 +1359,17 @@ COND ══╝     CHW → CRAH → HALL</div>
   }
 
   private alignTroubleToIncident() {
-    const incident = this.sim.incident
+    const incident = this.controller.incident
     if (!incident) return
-    const index = TROUBLE_CASES.findIndex((item) => TROUBLE_INCIDENT[item.id] === incident)
+    const index = TROUBLE_CASES.findIndex((item) => isTroubleCaseId(item.id) && troubleIncident(item.id).kind === incident)
     if (index >= 0 && index !== this.troubleIndex) {
       this.troubleIndex = index
       this.troublePicked = null
     }
   }
 
-  private syncTroubleIncident() {
-    const id = TROUBLE_CASES[this.troubleIndex].id
-    if (!(id in TROUBLE_INCIDENT)) return
-    const incident = TROUBLE_INCIDENT[id]
-    if (incident) this.applyIncident(incident)
-    else this.clearIncident()
-    this.snap = this.sim.tick()
-  }
-
   private troubleHtml() {
     const t = TROUBLE_CASES[this.troubleIndex]
-    this.syncTroubleIncident()
     return `
       <div class="view-head">
         <div>
@@ -1398,12 +1408,14 @@ COND ══╝     CHW → CRAH → HALL</div>
     el.querySelector('[data-tr-prev]')?.addEventListener('click', () => {
       this.troubleIndex = (this.troubleIndex - 1 + TROUBLE_CASES.length) % TROUBLE_CASES.length
       this.troublePicked = null
+      this.applyTroubleIncident()
       this.startTroubleClock()
       this.renderView()
     })
     el.querySelector('[data-tr-next]')?.addEventListener('click', () => {
       this.troubleIndex = (this.troubleIndex + 1) % TROUBLE_CASES.length
       this.troublePicked = null
+      this.applyTroubleIncident()
       this.startTroubleClock()
       this.renderView()
     })
@@ -1461,5 +1473,200 @@ COND ══╝     CHW → CRAH → HALL</div>
         this.renderView()
       })
     })
+  }
+
+  private plantControlsHtml() {
+    const center = this.controller.itLoadCenterMw
+    const runningMw = this.snap.runningCapacityMw
+    return `
+      <section class="card plant-controls" id="plant-controls" ${infoAttr('plant-controls')}>
+        <h3>Plant controls</h3>
+        <p class="empty-state">This board operates CH-01 and CH-02. Capacity is the sum of the running units. Each unit capacity is a trainer value of 5 MW.</p>
+        <label ${infoAttr('slider-it-load')}>IT load target <output id="it-load-out">${center.toFixed(1)} MW</output>
+          <input id="it-load" type="range" min="2" max="8" step="0.1" value="${center}" />
+        </label>
+        <p class="empty-state" id="it-load-note">Trainer value. The live load moves a small amount around this target.</p>
+        <p id="capacity-read">Running capacity ${runningMw.toFixed(1)} MW.</p>
+        ${this.unitRowHtml('CH-01')}
+        ${this.unitRowHtml('CH-02')}
+        <div class="clock-row">
+          <button class="btn ghost" type="button" data-clock="toggle" id="clock-toggle">${this.controller.paused ? 'Resume' : 'Pause'}</button>
+          <button class="btn ghost ${this.controller.timeScale === 1 && !this.controller.paused ? 'on' : ''}" type="button" data-scale="1">1×</button>
+          <button class="btn ghost ${this.controller.timeScale === 2 && !this.controller.paused ? 'on' : ''}" type="button" data-scale="2">2×</button>
+          <button class="btn ghost ${this.controller.timeScale === 5 && !this.controller.paused ? 'on' : ''}" type="button" data-scale="5">5×</button>
+          <button class="btn ghost" type="button" data-undo ${this.controller.canUndo ? '' : 'disabled'}>Undo the last change</button>
+          <span id="sim-time">Sim time ${Math.round(this.snap.t)} s</span>
+        </div>
+      </section>`
+  }
+
+  private unitRowHtml(id: 'CH-01' | 'CH-02') {
+    const running = this.controller.unitRunning(id)
+    return `
+      <div class="unit-row" data-unit="${id}">
+        <strong>${id}</strong>
+        <span data-unit-state>${running ? 'In operation' : 'Standby'}</span>
+        <button class="btn" type="button" data-ch-start="${id}" ${running ? 'disabled' : ''}>Start</button>
+        <button class="btn amber" type="button" data-ch-soft="${id}" ${running ? '' : 'disabled'}>Soft stop</button>
+        <button class="btn rose" type="button" data-ch-safety="${id}">Safety stop</button>
+      </div>`
+  }
+
+  private bindPlantControls(el: Element) {
+    const input = el.querySelector<HTMLInputElement>('#it-load')
+    const out = el.querySelector('#it-load-out')
+    input?.addEventListener('input', () => {
+      const targetMw = Number(input.value)
+      if (out) out.textContent = `${targetMw.toFixed(1)} MW`
+      this.controller.setItLoad({ targetMw }, 'user')
+      this.snap = this.controller.snapshot
+      this.patchLiveBoard()
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-ch-start]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.chStart
+        if (id) this.commandStart(id)
+      })
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-ch-soft]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.chSoft
+        if (id) this.confirmStop(id, 'soft')
+      })
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-ch-safety]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.chSafety
+        if (id) this.confirmStop(id, 'safety')
+      })
+    })
+    el.querySelector('#clock-toggle')?.addEventListener('click', () => {
+      this.controller.setClock({ paused: !this.controller.paused }, 'user')
+      this.snap = this.controller.snapshot
+      this.patchPlantControls()
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-scale]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const scale = Number(btn.dataset.scale)
+        if (scale === 1 || scale === 2 || scale === 5) {
+          this.controller.setClock({ paused: false, scale }, 'user')
+          this.snap = this.controller.snapshot
+          this.patchPlantControls()
+        }
+      })
+    })
+    el.querySelector('[data-undo]')?.addEventListener('click', () => {
+      const result = this.controller.undo('user')
+      this.snap = result.snapshot
+      if (!result.ok) this.toast(result.message)
+      this.patchLiveBoard()
+    })
+  }
+
+  private patchPlantControls() {
+    const root = this.root.querySelector('#plant-controls')
+    if (!root) return
+    const set = (id: string, text: string) => {
+      const el = root.querySelector(`#${id}`)
+      if (el) el.textContent = text
+    }
+    const center = this.controller.itLoadCenterMw
+    set('it-load-out', `${center.toFixed(1)} MW`)
+    set('capacity-read', `Running capacity ${this.snap.runningCapacityMw.toFixed(1)} MW.`)
+    set('sim-time', `Sim time ${Math.round(this.snap.t)} s`)
+    const slider = root.querySelector<HTMLInputElement>('#it-load')
+    if (slider && document.activeElement !== slider) slider.value = String(center)
+    const clock = root.querySelector('#clock-toggle')
+    if (clock) clock.textContent = this.controller.paused ? 'Resume' : 'Pause'
+    for (const scale of [1, 2, 5] as const) {
+      root.querySelector(`[data-scale="${scale}"]`)?.classList.toggle('on', this.controller.timeScale === scale && !this.controller.paused)
+    }
+    const undo = root.querySelector<HTMLButtonElement>('[data-undo]')
+    if (undo) undo.disabled = !this.controller.canUndo
+    for (const id of ['CH-01', 'CH-02']) {
+      const row = root.querySelector(`[data-unit="${id}"]`)
+      if (!row) continue
+      const running = this.controller.unitRunning(id)
+      const state = row.querySelector('[data-unit-state]')
+      if (state) state.textContent = running ? 'In operation' : 'Standby'
+      const start = row.querySelector<HTMLButtonElement>('[data-ch-start]')
+      const soft = row.querySelector<HTMLButtonElement>('[data-ch-soft]')
+      if (start) start.disabled = running
+      if (soft) soft.disabled = !running
+    }
+  }
+
+  private commandStart(unitId: string) {
+    const result = this.controller.startChiller(unitId, 'user')
+    this.snap = result.snapshot
+    if (!result.ok) this.toast(result.message)
+    this.refreshAfterCommand()
+  }
+
+  private confirmStop(unitId: string, mode: 'soft' | 'safety') {
+    if (!this.controller.unitRunning(unitId)) {
+      this.toast(`${unitId} is already in standby.`)
+      return
+    }
+    const copy =
+      mode === 'soft'
+        ? `Do a soft stop on ${unitId}? The hall can get hot if no other chiller is in operation.`
+        : `Do a safety stop on ${unitId}? This stop takes the unit offline now.`
+    this.askConfirm(copy, 'Do the stop', () => {
+      const result = this.controller.stopChiller(unitId, mode, 'user')
+      this.snap = result.snapshot
+      if (!result.ok) this.toast(result.message)
+      this.refreshAfterCommand()
+    })
+  }
+
+  private refreshAfterCommand() {
+    if (this.view === 'home') this.patchLiveBoard()
+    else if (this.view === 'optiview') this.renderView()
+    else if (this.view === 'explorer') this.patchPipeBoard()
+  }
+
+  private onPlantChange() {
+    if (this.view === 'home') this.patchLiveBoard()
+    else if (this.view === 'optiview') this.patchOptiLive()
+    else if (this.view === 'explorer') this.patchPipeBoard()
+  }
+
+  private applyTroubleIncident() {
+    const id = TROUBLE_CASES[this.troubleIndex]?.id
+    if (!id || !isTroubleCaseId(id)) return
+    const mapped = troubleIncident(id)
+    this.controller.injectIncident(mapped.kind, 'user', { forceUnitOff: mapped.forceUnitOff })
+    this.snap = this.controller.snapshot
+  }
+
+  private bindConfirm() {
+    this.root.querySelector('#confirm-yes')?.addEventListener('click', () => {
+      const action = this.pendingConfirm
+      this.closeConfirm()
+      action?.()
+    })
+    this.root.querySelector('#confirm-no')?.addEventListener('click', () => this.closeConfirm())
+    this.root.querySelector('#confirm-card')?.addEventListener('keydown', (event) => {
+      if (event instanceof KeyboardEvent && event.key === 'Escape') this.closeConfirm()
+    })
+  }
+
+  private askConfirm(copy: string, yesLabel: string, onYes: () => void) {
+    const card = this.root.querySelector<HTMLElement>('#confirm-card')
+    const text = this.root.querySelector('#confirm-copy')
+    const yes = this.root.querySelector('#confirm-yes')
+    if (!card || !text || !yes) return
+    text.textContent = copy
+    yes.textContent = yesLabel
+    this.pendingConfirm = onYes
+    card.hidden = false
+    this.root.querySelector<HTMLButtonElement>('#confirm-no')?.focus()
+  }
+
+  private closeConfirm() {
+    const card = this.root.querySelector<HTMLElement>('#confirm-card')
+    if (card) card.hidden = true
+    this.pendingConfirm = null
   }
 }
