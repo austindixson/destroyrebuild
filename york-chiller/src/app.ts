@@ -28,6 +28,24 @@ import { iconSvg } from './ui/icons'
 import { linkGlossary } from './ui/glossary'
 import { InfoDock } from './ui/info'
 
+type ChaosIncident = NonNullable<PlantSim['incident']>
+
+const CHAOS_FAULTS: Record<ChaosIncident, { label: string; tone: 'amber' | 'rose'; info: InfoId }> = {
+  'high-head': { label: 'Peak weather, high head', tone: 'amber', info: 'chaos-high-head' },
+  'hall-hot': { label: 'Hot hall, low chiller load', tone: 'amber', info: 'chaos-hall-hot' },
+  landing: { label: 'ATS landing', tone: 'rose', info: 'chaos-landing' },
+  failover: { label: 'Lead trip and failover', tone: 'rose', info: 'chaos-failover' },
+}
+
+/** Scenario id to the inject the live board should show. Null clears a leftover fault. */
+const TROUBLE_INCIDENT: Record<string, ChaosIncident | null> = {
+  'high-head': 'high-head',
+  landing: 'landing',
+  'hall-hot-chiller-idle': 'hall-hot',
+  'no-start': 'failover',
+  'bms-fight': null,
+}
+
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live plant', icon: 'home' },
   { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
@@ -170,7 +188,10 @@ export class App {
       this.troubleTimer = null
     }
     this.view = view
-    if (view === 'trouble') this.startTroubleClock()
+    if (view === 'trouble') {
+      this.alignTroubleToIncident()
+      this.startTroubleClock()
+    }
     this.render()
   }
 
@@ -372,13 +393,11 @@ export class App {
         </div>
         <div class="card" ${infoAttr('chaos-board')}>
           <h3>Inject chaos</h3>
+          <p class="chaos-status${this.sim.incident ? ' is-fault' : ''}" id="chaos-status" role="status">${this.chaosStatusText()}</p>
           <p class="empty-state" style="margin-bottom:12px">Apply a fault on the live board. Then open the incident clock for the same fault.</p>
-          <div style="display:grid;gap:8px">
-            <button class="btn amber" type="button" data-incident="high-head" ${infoAttr('chaos-high-head')}>Peak weather, high head</button>
-            <button class="btn amber" type="button" data-incident="hall-hot" ${infoAttr('chaos-hall-hot')}>Hot hall, low chiller load</button>
-            <button class="btn rose" type="button" data-incident="landing" ${infoAttr('chaos-landing')}>ATS landing</button>
-            <button class="btn rose" type="button" data-incident="failover" ${infoAttr('chaos-failover')}>Lead trip and failover</button>
-            <button class="btn ghost" type="button" data-incident="clear" ${infoAttr('chaos-clear')}>Clear the incident</button>
+          <div class="chaos-actions">
+            ${(Object.keys(CHAOS_FAULTS) as ChaosIncident[]).map((id) => this.chaosButton(id)).join('')}
+            ${this.chaosButton('clear')}
             <button class="btn" type="button" data-go="trouble">Open the incident clock</button>
           </div>
         </div>
@@ -425,6 +444,42 @@ export class App {
     const reason = this.root.querySelector('#plant-reason')
     if (reason) this.relinkText(reason, s.reason)
     this.markMimicAlarms(s)
+    this.patchChaosButtons()
+  }
+
+  private chaosStatusText(): string {
+    const id = this.sim.incident
+    if (!id) return 'No fault is active.'
+    return `Active fault: ${CHAOS_FAULTS[id].label}.`
+  }
+
+  private chaosButton(id: ChaosIncident | 'clear'): string {
+    const on = id === 'clear' ? this.sim.incident === null : this.sim.incident === id
+    const fault = id === 'clear' ? null : CHAOS_FAULTS[id]
+    const tone = fault?.tone ?? 'ghost'
+    const info = fault?.info ?? 'chaos-clear'
+    const label = fault?.label ?? 'Clear the incident'
+    const pressed = on ? 'true' : 'false'
+    const flag = on ? 'On' : ''
+    return `<button class="btn ${tone}${on ? ' on' : ''}" type="button" data-incident="${id}" aria-pressed="${pressed}" ${infoAttr(info)}><span class="chaos-flag" aria-hidden="true">${flag}</span>${label}</button>`
+  }
+
+  private patchChaosButtons() {
+    const incident = this.sim.incident
+    const status = this.root.querySelector('#chaos-status')
+    if (status) {
+      const text = this.chaosStatusText()
+      if (status.textContent !== text) status.textContent = text
+      status.classList.toggle('is-fault', incident !== null)
+    }
+    this.root.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((button) => {
+      const id = button.dataset.incident
+      const on = id === 'clear' ? incident === null : id === incident
+      button.classList.toggle('on', on)
+      button.setAttribute('aria-pressed', on ? 'true' : 'false')
+      const flag = button.querySelector('.chaos-flag')
+      if (flag) flag.textContent = on ? 'On' : ''
+    })
   }
 
   private patchAlarmBanner(alarm: string | null) {
@@ -507,21 +562,39 @@ export class App {
     })
     el.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((b) => {
       b.addEventListener('click', () => {
-        const v = b.dataset.incident!
-        if (v === 'clear') {
-          this.sim.incident = null
-          this.sim.ch01Running = true
-          this.sim.ch02Running = false
+        const v = b.dataset.incident ?? ''
+        const active = this.isChaosIncident(v) && this.sim.incident === v
+        if (v === 'clear' || active) {
+          this.clearIncident()
           this.toast('The plant is stable.')
-        } else {
-          this.sim.incident = v as typeof this.sim.incident
-          if (v === 'failover') this.sim.ch02Running = false
+        } else if (this.isChaosIncident(v)) {
+          this.applyIncident(v)
           this.toast('The incident is active. The board is live.')
         }
         this.snap = this.sim.tick()
         this.patchLiveBoard()
       })
     })
+  }
+
+  private isChaosIncident(value: string): value is ChaosIncident {
+    return Object.prototype.hasOwnProperty.call(CHAOS_FAULTS, value)
+  }
+
+  /** Drop chiller run flags that an earlier fault left behind. */
+  private resetChillerRun() {
+    this.sim.ch01Running = true
+    this.sim.ch02Running = false
+  }
+
+  private clearIncident() {
+    this.sim.incident = null
+    this.resetChillerRun()
+  }
+
+  private applyIncident(id: ChaosIncident) {
+    this.resetChillerRun()
+    this.sim.incident = id
   }
 
   private plantHtml() {
@@ -1265,20 +1338,33 @@ COND ══╝     CHW → CRAH → HALL</div>
     }, 1000)
   }
 
+  private alignTroubleToIncident() {
+    const incident = this.sim.incident
+    if (!incident) return
+    const index = TROUBLE_CASES.findIndex((item) => TROUBLE_INCIDENT[item.id] === incident)
+    if (index >= 0 && index !== this.troubleIndex) {
+      this.troubleIndex = index
+      this.troublePicked = null
+    }
+  }
+
+  private syncTroubleIncident() {
+    const id = TROUBLE_CASES[this.troubleIndex].id
+    if (!(id in TROUBLE_INCIDENT)) return
+    const incident = TROUBLE_INCIDENT[id]
+    if (incident) this.applyIncident(incident)
+    else this.clearIncident()
+    this.snap = this.sim.tick()
+  }
+
   private troubleHtml() {
     const t = TROUBLE_CASES[this.troubleIndex]
-    const mapIncident: Record<string, typeof this.sim.incident> = {
-      'high-head': 'high-head',
-      'hall-hot-chiller-idle': 'hall-hot',
-      landing: 'landing',
-      'no-start': 'failover',
-    }
-    if (mapIncident[t.id]) this.sim.incident = mapIncident[t.id]
+    this.syncTroubleIncident()
     return `
       <div class="view-head">
         <div>
           <h2>Incident clock</h2>
-          <p>This is scenario ${this.troubleIndex + 1} of ${TROUBLE_CASES.length}. The live board has the same fault. Select the first safe action before the timer ends.</p>
+          <p>This is scenario ${this.troubleIndex + 1} of ${TROUBLE_CASES.length}. The live board follows this scenario. Select the first safe action before the timer ends.</p>
         </div>
         <div class="scoreline">
           <span class="timer ${this.troubleSeconds <= 12 ? 'critical' : ''}" id="incident-timer">${this.troubleSeconds}s</span>

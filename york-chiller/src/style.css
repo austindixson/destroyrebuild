@@ -686,6 +686,66 @@ body::after {
   background: linear-gradient(180deg, rgba(255, 93, 122, 0.22), rgba(255, 93, 122, 0.08));
 }
 
+.chaos-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.chaos-status {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  color: var(--mint);
+}
+
+.chaos-status.is-fault {
+  color: var(--amber);
+}
+
+.btn.amber.on {
+  color: #1c1304;
+  background: var(--amber);
+  border-color: #ffd27a;
+  box-shadow: inset 0 0 0 2px rgba(28, 19, 4, 0.35);
+}
+
+.btn.rose.on {
+  color: #2a0710;
+  background: var(--rose);
+  border-color: #ffb3c0;
+  box-shadow: inset 0 0 0 2px rgba(42, 7, 16, 0.28);
+}
+
+.btn.ghost.on {
+  color: #04140c;
+  background: var(--mint);
+  border-color: #b8ffdf;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 2px rgba(4, 20, 12, 0.25);
+}
+
+.chaos-flag:empty {
+  display: none;
+}
+
+.btn.on .chaos-flag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.btn.rose.on .chaos-flag {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* cycle svg */
 .cycle-stage {
   border-radius: 22px;
