@@ -1832,7 +1832,7 @@ label.info-host,
   line-height: 1.4;
 }
 
-button.jargon {
+.jargon {
   appearance: none;
   display: inline;
   margin: 0;
@@ -1852,17 +1852,50 @@ button.jargon {
   touch-action: manipulation;
 }
 
-button.jargon abbr {
+.jargon abbr {
   text-decoration: none;
 }
 
-button.jargon:hover {
+.jargon:hover {
   color: var(--cyan);
 }
 
-button.jargon:focus-visible {
+.jargon:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
+}
+
+.jargon-beside {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+
+.mimic-grid > .info-host,
+.plant-flow > .info-host {
+  flex-direction: column;
+}
+
+.valve-alert-panel {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 93, 122, 0.55);
+  background: rgba(42, 12, 20, 0.92);
+}
+
+.valve-alert-panel[hidden] {
+  display: none;
+}
+
+.valve-alert-panel p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.valve-alert-panel .btn {
+  margin-top: 10px;
 }
 
 @media (max-width: 900px) {

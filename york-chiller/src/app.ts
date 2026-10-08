@@ -25,7 +25,15 @@ import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { openTroubleView, shuffleChoices, troubleStep, type TroubleDestination } from './troubleOrder'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantController, type PlantChangeDetail } from './sim/controller'
-import { isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
+import { chwHeaderDpPsi, isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
+import {
+  dismissValveAlert,
+  reduceValveAlert,
+  seedValveAlert,
+  valveAlertShow,
+  VALVE_RED,
+  type ValveAlertState,
+} from './sim/valveAlert'
 import { createYorkTools } from './sim/tools'
 import { isTroubleCaseId, troubleIncident } from './sim/troubleMap'
 import { iconSvg } from './ui/icons'
@@ -96,6 +104,13 @@ function pipeSliderInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
   }
 }
 
+/** Home CHW card only. The snapshot stays steady so the pipe board can match the incident. */
+function homeChwDpText(s: PlantSnapshot): string {
+  const steady = Math.round(chwHeaderDpPsi(s.chwValvePct) * 10) / 10
+  const live = s.chwDpPsi === steady ? s.chwDpPsi + Math.sin(s.t / 9) * 0.3 : s.chwDpPsi
+  return live.toFixed(1)
+}
+
 function lchltHint(s: PlantSnapshot): string {
   if (s.alarm && s.alarm.includes('LCHLT setpoint fights')) return s.alarm
   return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
@@ -110,6 +125,15 @@ export class App {
   private toastEl!: HTMLDivElement
   private controller = new PlantController()
   private snap: PlantSnapshot = this.controller.snapshot
+  private valveAlert: ValveAlertState = seedValveAlert({
+    chw: this.snap.chwValvePct,
+    cw: this.snap.cwValvePct,
+    gly: this.snap.glycolValvePct,
+    oatF: this.snap.oatF,
+    chwDp: this.snap.chwDpPsi,
+    cwDp: this.snap.cwDpPsi,
+    glyDp: this.snap.glycolDpPsi,
+  })
   private raf = 0
   private lastFrame = 0
   private lastUi = 0
@@ -307,6 +331,8 @@ export class App {
       },
       explorer: () => {
         el.innerHTML = this.explorerHtml()
+        this.bindValveAlert(el)
+        this.paintValveAlert()
         void this.bindExplorer(el)
       },
       cycle: () => {
@@ -349,11 +375,13 @@ export class App {
     if (el.textContent !== text) {
       const active = document.activeElement
       const glossary =
-        active instanceof HTMLButtonElement && el.contains(active) ? active.dataset.glossary : undefined
+        active instanceof HTMLElement && active.classList.contains('jargon') && el.contains(active)
+          ? active.dataset.glossary
+          : undefined
       el.textContent = text
       linkGlossary(el)
       if (glossary) {
-        el.querySelector<HTMLButtonElement>(`button.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
+        el.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
       }
       return
     }
@@ -393,7 +421,7 @@ export class App {
         <div class="mimic-grid">
           ${this.mimicNode('it', '01', 'IT load', `${s.itLoadMw} MW of IT heat`, 'quiz', 'mimic-it')}
           ${this.mimicNode('crah', '02', 'CRAH / CDU', `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
-          ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
+          ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${homeChwDpText(s)} psi`, 'plant', 'mimic-chw')}
           ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
           ${this.mimicNode('tower', '05', 'Cooling tower and dry cooler', `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
           ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'Escalated' : 'The watch desk is normal', 'trouble', 'mimic-noc', Boolean(s.alarm))}
@@ -490,15 +518,14 @@ export class App {
     const label = fault?.label ?? 'Clear the incident'
     const pressed = on ? 'true' : 'false'
     const flag = on ? 'On' : ''
-    return `<button class="btn ${tone}${on ? ' on' : ''}" type="button" data-incident="${id}" aria-pressed="${pressed}" ${infoAttr(info)}><span class="chaos-flag" aria-hidden="true">${flag}</span>${label}</button>`
+    return `<button class="btn chaos-cmd ${tone}${on ? ' on' : ''}" type="button" data-incident="${id}" aria-pressed="${pressed}" ${infoAttr(info)}><span class="chaos-flag" aria-hidden="true">${flag}</span>${label}</button>`
   }
 
   private patchChaosButtons() {
     const incident = this.controller.incident
     const status = this.root.querySelector('#chaos-status')
     if (status) {
-      const text = this.chaosStatusText()
-      if (status.textContent !== text) status.textContent = text
+      this.relinkText(status, this.chaosStatusText())
       status.classList.toggle('is-fault', incident !== null)
     }
     this.root.querySelectorAll<HTMLButtonElement>('[data-incident]').forEach((button) => {
@@ -559,7 +586,7 @@ export class App {
     const bodies: Record<string, string> = {
       it: `${s.itLoadMw} MW of IT heat`,
       crah: `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`,
-      chw: `ΔP ${s.chwDpPsi} psi`,
+      chw: `ΔP ${homeChwDpText(s)} psi`,
       ch1: `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`,
       tower: `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`,
       noc: s.alarm ? 'Escalated' : 'The watch desk is normal',
@@ -773,6 +800,10 @@ export class App {
       </article>`
     return `
       <section class="pipe-board" id="pipe-board">
+        <div id="valve-alert" class="valve-alert-panel" hidden role="status">
+          <p id="valve-alert-text" class="valve-alert"></p>
+          <button type="button" class="btn ghost" id="valve-alert-dismiss">Dismiss</button>
+        </div>
         <div class="pipe-head">
           <h3>Field instruments</h3>
           <label class="oat-row" ${infoAttr('slider-oat')}>Outdoor dry-bulb <output id="oat-out">${s.oatF}°F</output>
@@ -839,15 +870,15 @@ export class App {
     const gly = this.root.querySelector('#gly-dp-read')
     if (chw) {
       chw.textContent = `ΔP ${s.chwDpPsi.toFixed(1)} psi · target ${s.chwTargetPsi}`
-      chw.classList.toggle('bad', s.chwDpPsi < 12 || s.chwDpPsi > 24)
+      chw.classList.toggle('bad', s.chwDpPsi < VALVE_RED.chwDpLowPsi || s.chwDpPsi > VALVE_RED.chwDpHighPsi)
     }
     if (cw) {
       cw.textContent = `ΔP ${s.cwDpPsi.toFixed(1)} psi · fans ${s.towerFanPct}%`
-      cw.classList.toggle('bad', s.cwDpPsi < 8 || s.cwDpPsi > 18)
+      cw.classList.toggle('bad', s.cwDpPsi < VALVE_RED.cwDpLowPsi || s.cwDpPsi > VALVE_RED.cwDpHighPsi)
     }
     if (gly) {
       gly.textContent = `ΔP ${s.glycolDpPsi.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
-      gly.classList.toggle('bad', s.oatF <= 48 && s.glycolDpPsi < 8)
+      gly.classList.toggle('bad', s.oatF <= VALVE_RED.glyOatAtOrBelow && s.glycolDpPsi < VALVE_RED.glyDpLowPsi)
     }
     set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% of stem`)
     const cwGain = this.root.querySelector('#cw-gain')
@@ -856,18 +887,27 @@ export class App {
     const note = this.root.querySelector('#pipe-note')
     if (note) {
       const warn =
-        s.chwDpPsi < 12
+        s.chwDpPsi < VALVE_RED.chwDpLowPsi
           ? 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
-          : s.chwDpPsi > 24
+          : s.chwDpPsi > VALVE_RED.chwDpHighPsi
             ? 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
             : ''
       this.relinkText(note, warn + s.reason)
     }
     this.scene?.setFans(s.dryFanPct, s.towerFanPct)
     this.scene?.setReadings(this.sceneReadings())
+    this.pushSceneValves(this.scene)
     this.syncFollowedValve('chw', s.chwValvePct)
     this.syncFollowedValve('cw', s.cwValvePct)
     this.syncFollowedValve('gly', s.glycolValvePct)
+  }
+
+  /** Push controller valve percents onto the 3D handwheels. */
+  private pushSceneValves(scene: ChillerScene | null) {
+    if (!scene) return
+    scene.setValve('chw', this.snap.chwValvePct)
+    scene.setValve('cw', this.snap.cwValvePct)
+    scene.setValve('gly', this.snap.glycolValvePct)
   }
 
   private syncFollowedValve(loop: 'chw' | 'cw' | 'gly', pct: number) {
@@ -971,9 +1011,7 @@ export class App {
   private applySceneState(scene: ChillerScene) {
     const canvas = scene.renderer.domElement
     if (!canvas.isConnected) return
-    scene.setValve('chw', this.controller.chwValvePct)
-    scene.setValve('cw', this.controller.cwValvePct)
-    scene.setValve('gly', this.controller.glycolValvePct)
+    this.pushSceneValves(scene)
     scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
     scene.setReadings(this.sceneReadings())
     if (this.selected) scene.select(this.selected)
@@ -1843,9 +1881,49 @@ COND ══╝     CHW → CRAH → HALL</div>
   }
 
   private onPlantChange() {
+    this.syncValveAlert()
     if (this.view === 'home') this.patchLiveBoard()
     else if (this.view === 'optiview') this.patchOptiLive()
     else if (this.view === 'explorer') this.patchPipeBoard()
+  }
+
+  private syncValveAlert() {
+    const s = this.snap
+    this.valveAlert = reduceValveAlert(this.valveAlert, {
+      chw: s.chwValvePct,
+      cw: s.cwValvePct,
+      gly: s.glycolValvePct,
+      oatF: s.oatF,
+      chwDp: s.chwDpPsi,
+      cwDp: s.cwDpPsi,
+      glyDp: s.glycolDpPsi,
+    }).state
+    this.paintValveAlert()
+  }
+
+  private bindValveAlert(root: ParentNode) {
+    root.querySelector('#valve-alert-dismiss')?.addEventListener('click', () => {
+      this.valveAlert = dismissValveAlert(this.valveAlert)
+      this.paintValveAlert()
+    })
+  }
+
+  private paintValveAlert() {
+    const panel = this.root.querySelector<HTMLElement>('#valve-alert')
+    const copy = panel?.querySelector('#valve-alert-text')
+    if (!panel || !copy) return
+    const show = valveAlertShow(this.valveAlert)
+    const visible = !panel.hidden
+    const current = visible ? (copy.textContent ?? '') : ''
+    const next = show?.text ?? ''
+    if (current === next && visible === Boolean(show)) return
+    if (!show) {
+      panel.hidden = true
+      copy.textContent = ''
+      return
+    }
+    panel.hidden = false
+    this.relinkText(copy, show.text)
   }
 
   private applyTroubleIncident() {

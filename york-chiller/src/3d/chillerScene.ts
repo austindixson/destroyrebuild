@@ -561,9 +561,13 @@ export class ChillerScene {
 
   setValve(kind: LoopKind, pct: number) {
     const turns = (pct / 100) * Math.PI * 3
+    let moved = false
     for (const item of this.instruments) {
-      if (item.kind === kind) item.wheel.rotation.y = turns
+      if (item.kind !== kind) continue
+      item.wheel.rotation.y = turns
+      moved = true
     }
+    if (moved) this.renderer.domElement.setAttribute(`data-valve-${kind}`, turns.toFixed(4))
     this.needsRender = true
   }
 

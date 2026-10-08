@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import { GLOSSARY } from '../york-chiller/src/data/content'
 import { glossaryIdsIn } from '../york-chiller/src/ui/glossary'
@@ -47,6 +48,9 @@ test('glossary definitions stay short and aliases do not collide', () => {
   expect(glossaryIdsIn('low %RLA')).toEqual([])
   expect(glossaryIdsIn('%TSLA')).toEqual([])
   expect(glossaryIdsIn('xFLAx')).toEqual([])
+  expect(glossaryIdsIn('BMS and panel disagree')).toEqual(['bms'])
+  expect(glossaryIdsIn('The BMS is the building management system.')).toEqual(['bms'])
+  expect(glossaryIdsIn('xBMSx')).toEqual([])
 })
 
 test('NOC is clickable and shows its definition', async ({ page }, testInfo) => {
@@ -190,6 +194,67 @@ test('quiz and incident prompts can open glossary before a choice', async ({ pag
     await page.locator('[data-tr-next]').click()
   }
   expect(openedTrouble).toBe(true)
+})
+
+test('BMS opens the glossary from a fault label, an incident, and a lesson', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  const fault = page.locator('#view button[data-incident="bms-fight"]')
+  await expect(fault.locator('.jargon')).toHaveCount(0)
+  const faultBms = fault.locator('..').getByRole('button', { name: 'Show the meaning of BMS' })
+  await expect(faultBms).toBeVisible()
+  await faultBms.click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('#info-title')).toHaveText('BMS')
+  await expect(dialog).toContainText('building management system')
+  await expect(fault).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.locator('#chaos-status')).toHaveText('No fault is active.')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+
+  await page.locator('.nav [data-nav="trouble"]').click()
+  const titleBms = page.locator('.trouble-card h3').getByRole('button', { name: 'Show the meaning of BMS' })
+  for (let i = 0; i < 5 && (await titleBms.count()) === 0; i += 1) {
+    await page.locator('[data-tr-next]').click()
+  }
+  await expect(titleBms).toBeVisible()
+  const symptomBms = page.locator('.trouble-card li').getByRole('button', { name: 'Show the meaning of BMS' })
+  await expect(symptomBms).toBeVisible()
+  await symptomBms.click()
+  await expect(dialog.locator('#info-title')).toHaveText('BMS')
+  await expect(dialog).toContainText('building management system')
+  await expect(page.locator('.trouble-card')).not.toHaveAttribute('data-info')
+  await page.keyboard.press('Escape')
+
+  await page.locator('.nav [data-nav="maintenance"]').click()
+  const lesson = page.locator('.maint-item').filter({ hasText: 'chiller status in the BMS' })
+  await expect(lesson.locator('.jargon')).toHaveCount(0)
+  await lesson.locator('..').getByRole('button', { name: 'Show the meaning of BMS' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('BMS')
+  await expect(lesson).not.toHaveClass(/\bon\b/)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})
+
+test('clicking CRAH on the plant node selects that node', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  await page.locator('.nav [data-nav="plant"]').click()
+  await page.locator('button.plant-node', { hasText: 'BMS / NOC' }).click()
+  await expect(page.locator('.card h3')).toHaveText('BMS / NOC')
+  const crah = page.locator('button.plant-node', { hasText: 'CRAH / CDU' })
+  await expect(crah.locator('.jargon')).toHaveCount(0)
+  await crah.locator('strong').click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(crah).toHaveClass(/active/)
+  await expect(page.locator('.card h3')).toHaveText('CRAH / CDU')
+})
+
+test('home, plant, and maintenance have no nested interactive controls', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  for (const nav of ['home', 'plant', 'maintenance']) {
+    await page.locator(`.nav [data-nav="${nav}"]`).click()
+    const axe = await new AxeBuilder({ page }).include('#view').withRules(['nested-interactive']).analyze()
+    expect(axe.violations, nav).toEqual([])
+  }
 })
 
 test('quiz choices and inputs are not glossary links', async ({ page }) => {

@@ -522,8 +522,8 @@ export class PlantSim {
       lchltAct,
       hallSupplyF,
       hallReturnF,
-      chwDpPsi: chwDpAt(this.chwValvePct) + Math.sin((t + this.seed) / 9) * 0.3,
-      cwDpPsi: cwDpAt(this.cwValvePct) + Math.sin((t + this.seed) / 11) * 0.2,
+      chwDpPsi: chwDpAt(this.chwValvePct),
+      cwDpPsi: cwDpAt(this.cwValvePct),
       glycolDpPsi: glycolDpAt(this.glycolValvePct, oat),
       dryFanPct,
       towerFanPct,
@@ -687,6 +687,9 @@ export class PlantSim {
       dryFanPct: draft.dryFanPct,
     })
     const towerFanPct = Math.max(0, Math.min(100, draft.towerFanPct))
+    const chwDpPsi = round(draft.chwDpPsi, 1)
+    const cwDpPsi = round(draft.cwDpPsi, 1)
+    const glycolDpPsi = round(draft.glycolDpPsi, 1)
     return {
       t: draft.t,
       itLoadMw: round(draft.itLoadMw, 2),
@@ -702,9 +705,9 @@ export class PlantSim {
       wbF: round(draft.wb, 1),
       towerFanPct: round(towerFanPct, 0),
       dryFanPct: round(draft.dryFanPct, 0),
-      chwDpPsi: round(draft.chwDpPsi, 1),
-      cwDpPsi: round(draft.cwDpPsi, 1),
-      glycolDpPsi: round(draft.glycolDpPsi, 1),
+      chwDpPsi,
+      cwDpPsi,
+      glycolDpPsi,
       chwValvePct: this.chwValvePct,
       cwValvePct: this.cwValvePct,
       glycolValvePct: this.glycolValvePct,
@@ -716,14 +719,14 @@ export class PlantSim {
       chwsF: round(draft.lchltAct, 1),
       chwrF: round(draft.lchltAct + 8 + (1 - draft.chwFlow) * 10, 1),
       chwrPsi: 52,
-      chwsPsi: round(52 - draft.chwDpPsi, 1),
+      chwsPsi: round(52 - chwDpPsi, 1),
       cwsF: round(draft.cwsF, 1),
       cwrF: round(draft.cwrF, 1),
       cwsPsi: round(48, 1),
-      cwrPsi: round(48 - draft.cwDpPsi, 1),
+      cwrPsi: round(48 - cwDpPsi, 1),
       glyS: round(draft.glyOffCooler, 1),
       glyR: round(draft.glyOffCooler + 6 + draft.chillerMw * (1 - draft.glyFlow) * 2, 1),
-      glySPsi: round(36 + draft.glycolDpPsi, 1),
+      glySPsi: round(36 + glycolDpPsi, 1),
       glyRPsi: 36,
       reason: `${reason} Trainer LCHLT target is ${band.center.toFixed(0)}°F.`,
       ch01: { mode: ch01.mode, rla: ch01.rla, condPsig: ch01.condPsig, mbc: ch01.mbc },
@@ -1019,6 +1022,23 @@ function glycolDpAt(pct: number, oat: number) {
   const f = Math.max(15, Math.min(100, pct)) / 100
   const thicker = 1 + Math.max(0, 55 - oat) * 0.04
   return (3.5 + Math.pow(f, 1.4) * 12) * thicker
+}
+
+/**
+ * Steady header ΔP in psi, before the 0.1 psi display round.
+ * The snapshot stores that round, then applies incident overrides such as hall-hot.
+ * The home CHW card adds the live wobble. The pipe board does not.
+ */
+export function chwHeaderDpPsi(pct: number): number {
+  return chwDpAt(pct)
+}
+
+export function cwHeaderDpPsi(pct: number): number {
+  return cwDpAt(pct)
+}
+
+export function glycolHeaderDpPsi(pct: number, oatF: number): number {
+  return glycolDpAt(pct, oatF)
 }
 
 function gainPer10(at: (pct: number) => number, pct: number) {
