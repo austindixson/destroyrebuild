@@ -1,7 +1,7 @@
 import { GLOSSARY, type GlossaryId } from '../data/content'
 
 const SKIP_SELECTOR =
-  'button, a, input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot'
+  'input, textarea, select, .plant-tag, .plant-labels, .jargon, .choice, .choices, .info-close, .info-head, .info-now, .info-foot'
 
 /** Each of these is one "card" for the first-occurrence rule. Inner cards own their own text. */
 const CARD_SELECTOR = [
@@ -13,6 +13,7 @@ const CARD_SELECTOR = [
   '.step',
   '.quiz-card',
   '.trouble-card',
+  '.trouble-card li',
   '.mission',
   '.mimic-node',
   '.plant-node',
@@ -25,6 +26,9 @@ const CARD_SELECTOR = [
   '.feedback',
   '.plant-reason',
   '.alarm-banner',
+  '.chaos-status',
+  '.chaos-cmd',
+  '.valve-alert',
   '#pipe-note',
   '.opti-screen',
   '.optiview-top',
@@ -68,26 +72,40 @@ export function glossaryIdsIn(text: string, skip?: readonly GlossaryId[]): Gloss
   return hits
 }
 
-function jargonButton(id: GlossaryId, visible: string) {
-  const btn = document.createElement('button')
-  btn.type = 'button'
-  btn.className = 'jargon'
-  btn.dataset.glossary = id
-  btn.setAttribute('aria-label', `Show the meaning of ${GLOSSARY[id].term}`)
-  btn.setAttribute('aria-haspopup', 'dialog')
-  btn.setAttribute('aria-expanded', 'false')
-  btn.setAttribute('aria-controls', 'info-dialog')
+/** A button card cannot hold a nested button, so that card gets a span control. */
+function jargonControl(id: GlossaryId, visible: string, nested: boolean): HTMLElement {
+  const el = nested ? document.createElement('span') : document.createElement('button')
+  if (el instanceof HTMLButtonElement) el.type = 'button'
+  else el.tabIndex = 0
+  el.className = 'jargon'
+  el.dataset.glossary = id
+  el.setAttribute('role', 'button')
+  el.setAttribute('aria-label', `Show the meaning of ${GLOSSARY[id].term}`)
+  el.setAttribute('aria-haspopup', 'dialog')
+  el.setAttribute('aria-expanded', 'false')
+  el.setAttribute('aria-controls', 'info-dialog')
   const abbr = document.createElement('abbr')
   abbr.textContent = visible
-  btn.append(abbr)
-  return btn
+  el.append(abbr)
+  return el
 }
 
 function closestCard(node: Element) {
   return node.closest(CARD_SELECTOR)
 }
 
-function linkText(node: Text, seen: Set<GlossaryId>) {
+function acceptGlossaryText(node: Node, card: Element): number {
+  const parent = node.parentElement
+  if (!parent) return NodeFilter.FILTER_REJECT
+  if (parent.closest(SKIP_SELECTOR)) return NodeFilter.FILTER_REJECT
+  const host = parent.closest('button, a')
+  if (host && host !== card) return NodeFilter.FILTER_REJECT
+  if (closestCard(parent) !== card) return NodeFilter.FILTER_REJECT
+  if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT
+  return NodeFilter.FILTER_ACCEPT
+}
+
+function linkText(node: Text, seen: Set<GlossaryId>, nested: boolean) {
   const text = node.data
   if (!text.trim()) return
   GLOSSARY_RE.lastIndex = 0
@@ -101,7 +119,7 @@ function linkText(node: Text, seen: Set<GlossaryId>) {
     seen.add(id)
     linked = true
     if (match.index > last) frag.append(text.slice(last, match.index))
-    frag.append(jargonButton(id, match[0]))
+    frag.append(jargonControl(id, match[0], nested))
     last = match.index + match[0].length
   }
   if (!linked) return
@@ -110,31 +128,29 @@ function linkText(node: Text, seen: Set<GlossaryId>) {
 }
 
 function linkCard(card: Element, skip?: GlossaryId) {
+  if (card.matches('.match-tile')) return
+  const nested = card.matches('button, a')
   const seen = new Set<GlossaryId>()
   if (skip) seen.add(skip)
-  card.querySelectorAll<HTMLButtonElement>('button.jargon').forEach((btn) => {
+  card.querySelectorAll<HTMLElement>('.jargon').forEach((btn) => {
     if (closestCard(btn) !== card) return
     const id = btn.dataset.glossary
     if (id && isGlossaryId(id)) seen.add(id)
   })
   const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      const parent = node.parentElement
-      if (!parent) return NodeFilter.FILTER_REJECT
-      if (parent.closest(SKIP_SELECTOR)) return NodeFilter.FILTER_REJECT
-      if (closestCard(parent) !== card) return NodeFilter.FILTER_REJECT
-      if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT
-      return NodeFilter.FILTER_ACCEPT
+      return acceptGlossaryText(node, card)
     },
   })
   const nodes: Text[] = []
   while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-  for (const node of nodes) linkText(node, seen)
+  for (const node of nodes) linkText(node, seen, nested)
 }
 
 /**
  * One pass over trainer text. Wraps the first whole-word match of each glossary
- * term in a button. Skips inputs, buttons, links, quiz choices, and 3D labels.
+ * term. Skips inputs, quiz choices, links, nested buttons, and 3D labels.
+ * A button that is its own card keeps the term as a span, not a nested button.
  */
 export function linkGlossary(scope: ParentNode, options?: { skip?: GlossaryId }) {
   const cards: Element[] = []

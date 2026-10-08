@@ -1021,6 +1021,11 @@ function glycolDpAt(pct: number, oat: number) {
   return (3.5 + Math.pow(f, 1.4) * 12) * thicker
 }
 
+/** Glycol header ΔP in psi. Same curve the pipe board prints. */
+export function glycolHeaderDpPsi(pct: number, oatF: number): number {
+  return glycolDpAt(pct, oatF)
+}
+
 function gainPer10(at: (pct: number) => number, pct: number) {
   const hi = Math.min(100, pct + 10)
   const lo = Math.max(15, hi - 10)

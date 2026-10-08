@@ -91,6 +91,14 @@ function liveText(id: InfoId, ctx: LiveContext): string {
 
 type PanelMode = 'info' | 'glossary'
 
+/** Keyboard target for a glossary span inside another button. A real jargon button uses click. */
+function spanJargonFromKey(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof HTMLElement)) return null
+  const jargon = target.closest('.jargon')
+  if (!(jargon instanceof HTMLElement) || jargon instanceof HTMLButtonElement) return null
+  return jargon
+}
+
 /** One info button and one panel. Glossary terms reuse this same popover and sheet. */
 export class InfoDock {
   private layer: HTMLElement
@@ -102,9 +110,9 @@ export class InfoDock {
   private mode: PanelMode | null = null
   private infoId: InfoId | null = null
   private glossaryId: GlossaryId | null = null
-  private trigger: HTMLButtonElement | null = null
+  private trigger: HTMLElement | null = null
   /** Focus returns here when the clicked term lived inside the panel and was replaced. */
-  private anchor: HTMLButtonElement | null = null
+  private anchor: HTMLElement | null = null
   /** Stable parent of a glossary button. A live rewrite replaces the button and keeps this node. */
   private glossaryHost: HTMLElement | null = null
   private onKey: (event: KeyboardEvent) => void
@@ -139,6 +147,7 @@ export class InfoDock {
     this.closeBtn.addEventListener('click', () => this.close(true))
     this.appRoot.addEventListener('click', (event) => this.onGlossaryClick(event), true)
     this.panel.addEventListener('click', (event) => this.onGlossaryClick(event), true)
+    this.appRoot.addEventListener('keydown', (event) => this.onGlossaryKey(event), true)
     this.onKey = (event) => this.onKeyDown(event)
     this.onResize = () => {
       if (!this.mode) return
@@ -224,8 +233,8 @@ export class InfoDock {
   private onGlossaryClick(event: Event) {
     const target = event.target
     if (!(target instanceof Element)) return
-    const btn = target.closest('button.jargon')
-    if (!(btn instanceof HTMLButtonElement)) return
+    const btn = target.closest('.jargon')
+    if (!(btn instanceof HTMLElement)) return
     const id = btn.dataset.glossary
     if (!id || !isGlossaryId(id)) return
     event.preventDefault()
@@ -233,7 +242,17 @@ export class InfoDock {
     this.toggleGlossary(id, btn)
   }
 
-  private toggleInfo(id: InfoId, btn: HTMLButtonElement) {
+  /** A span inside a fault button must not activate that button. */
+  private onGlossaryKey(event: KeyboardEvent) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const jargon = spanJargonFromKey(event.target)
+    if (!jargon) return
+    event.preventDefault()
+    event.stopPropagation()
+    jargon.click()
+  }
+
+  private toggleInfo(id: InfoId, btn: HTMLElement) {
     if (this.mode === 'info' && this.infoId === id && this.trigger === btn) {
       this.close(true)
       return
@@ -241,7 +260,7 @@ export class InfoDock {
     this.openInfo(id, btn)
   }
 
-  private toggleGlossary(id: GlossaryId, btn: HTMLButtonElement) {
+  private toggleGlossary(id: GlossaryId, btn: HTMLElement) {
     if (this.mode === 'glossary' && this.glossaryId === id && this.trigger === btn) {
       this.close(true)
       return
@@ -249,7 +268,7 @@ export class InfoDock {
     this.openGlossary(id, btn)
   }
 
-  private openInfo(id: InfoId, btn: HTMLButtonElement) {
+  private openInfo(id: InfoId, btn: HTMLElement) {
     const entry = INFO[id]
     this.mode = 'info'
     this.infoId = id
@@ -262,7 +281,7 @@ export class InfoDock {
     this.present()
   }
 
-  private openGlossary(id: GlossaryId, btn: HTMLButtonElement) {
+  private openGlossary(id: GlossaryId, btn: HTMLElement) {
     const entry = GLOSSARY[id]
     this.mode = 'glossary'
     this.glossaryId = id
@@ -288,18 +307,18 @@ export class InfoDock {
     )
   }
 
-  private rememberTrigger(btn: HTMLButtonElement) {
+  private rememberTrigger(btn: HTMLElement) {
     this.trigger = btn
     if (!this.panel.contains(btn)) this.anchor = btn
     this.glossaryHost = btn.parentElement
   }
 
   /** The live rewrite keeps the host and inserts a new button for the same term. */
-  private replacementGlossaryTrigger(): HTMLButtonElement | null {
+  private replacementGlossaryTrigger(): HTMLElement | null {
     if (!this.glossaryId) return null
     const host = this.glossaryHost
     if (!(host instanceof Element) || !host.isConnected) return null
-    return host.querySelector<HTMLButtonElement>(`button.jargon[data-glossary="${CSS.escape(this.glossaryId)}"]`)
+    return host.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(this.glossaryId)}"]`)
   }
 
   private present() {
@@ -391,8 +410,8 @@ export class InfoDock {
 
   private markExpanded() {
     const buttons = [
-      ...this.appRoot.querySelectorAll<HTMLButtonElement>('.info-btn, button.jargon'),
-      ...this.panel.querySelectorAll<HTMLButtonElement>('button.jargon'),
+      ...this.appRoot.querySelectorAll<HTMLElement>('.info-btn, .jargon'),
+      ...this.panel.querySelectorAll<HTMLElement>('.jargon'),
     ]
     for (const btn of buttons) {
       btn.setAttribute('aria-expanded', btn === this.trigger && this.mode ? 'true' : 'false')
