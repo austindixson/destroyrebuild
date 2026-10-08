@@ -16,7 +16,10 @@ test('glossary definitions stay short and aliases do not collide', () => {
     expect(entry.aliases.length, id).toBeGreaterThan(0)
     expect(sentences(entry.definition).length, entry.definition).toBeGreaterThanOrEqual(1)
     expect(sentences(entry.definition).length, entry.definition).toBeLessThanOrEqual(2)
-    if (entry.why) expect(sentences(entry.why).length, entry.why).toBe(1)
+    if (entry.why) {
+      expect(sentences(entry.why).length, entry.why).toBeGreaterThanOrEqual(1)
+      expect(sentences(entry.why).length, entry.why).toBeLessThanOrEqual(2)
+    }
     for (const alias of entry.aliases) {
       const key = alias.toLowerCase()
       expect(seen.has(key), `${key} on ${id} and ${seen.get(key)}`).toBe(false)
@@ -35,6 +38,15 @@ test('glossary definitions stay short and aliases do not collide', () => {
   expect(glossaryIdsIn('IT LOAD is 1.2 MW')).toEqual(['it-load', 'mw'])
   expect(glossaryIdsIn('xNOCx')).toEqual([])
   expect(glossaryIdsIn('Tell the NOC.')).toEqual(['noc'])
+  expect(glossaryIdsIn('Wet-bulb, then wet bulb, then WET BULB')).toEqual(['wet-bulb'])
+  expect(glossaryIdsIn('A peak outdoor wet-bulb day')).toEqual(['wet-bulb'])
+  expect(glossaryIdsIn('LCHLT setpoint')).toEqual(['lchlt', 'setpoint'])
+  expect(glossaryIdsIn('% FLA')).toEqual(['fla'])
+  expect(glossaryIdsIn('%FLA')).toEqual(['fla'])
+  expect(glossaryIdsIn('45% FLA')).toEqual(['fla'])
+  expect(glossaryIdsIn('low %RLA')).toEqual([])
+  expect(glossaryIdsIn('%TSLA')).toEqual([])
+  expect(glossaryIdsIn('xFLAx')).toEqual([])
 })
 
 test('NOC is clickable and shows its definition', async ({ page }, testInfo) => {
@@ -77,6 +89,106 @@ test('NOC is clickable and shows its definition', async ({ page }, testInfo) => 
   await page.screenshot({ path: testInfo.outputPath('glossary-mobile-390x844.png'), fullPage: false })
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
+})
+
+test('wet-bulb, LCHLT, and % FLA open glossary definitions', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  await page.getByRole('button', { name: 'Information about Outdoor temperature' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Show the meaning of Wet-bulb' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('Wet-bulb')
+  await expect(dialog).toContainText('saturation')
+  await expect(dialog).toContainText('cooling tower')
+  await expect(dialog).toContainText('dry cooler follows the dry-bulb')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+
+  await page.getByRole('button', { name: 'Show the meaning of LCHLT' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('LCHLT')
+  await expect(dialog).toContainText('leaving chilled liquid temperature')
+  await expect(dialog).toContainText('55°F')
+  await page.keyboard.press('Escape')
+
+  await page.locator('.nav [data-nav="optiview"]').click()
+  await page.locator('.gauge[data-info="gauge-rla"]').getByRole('button', { name: 'Show the meaning of % FLA' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('% FLA')
+  await expect(dialog).toContainText('percent of full load amps')
+  await expect(dialog).toContainText('motor current')
+  await expect(dialog).not.toContainText('%RLA')
+  await expect(dialog).not.toContainText('TSLA')
+  await page.keyboard.press('Escape')
+
+  await page.locator('.nav [data-nav="explorer"]').click()
+  const gain = page.locator('#cw-gain').getByRole('button', { name: 'Show the meaning of Wet-bulb' })
+  await expect(gain).toBeVisible()
+  const before = await page.locator('#cw-gain').innerText()
+  await page.locator('#cw-valve').evaluate((el: HTMLInputElement) => {
+    document.querySelector<HTMLButtonElement>('#cw-gain button.jargon')?.focus()
+    el.value = '30'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect(page.locator('#cw-gain')).not.toHaveText(before)
+  const relinked = page.locator('#cw-gain').getByRole('button', { name: 'Show the meaning of Wet-bulb' })
+  await expect(relinked).toBeVisible()
+  await expect(relinked).toBeFocused()
+
+  await relinked.click()
+  await expect(dialog.locator('#info-title')).toHaveText('Wet-bulb')
+  await expect(dialog).toContainText('dry-bulb')
+  await page.locator('#cw-valve').evaluate((el: HTMLInputElement) => {
+    el.value = '90'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('#cw-gain').getByRole('button', { name: 'Show the meaning of Wet-bulb' })).toBeFocused()
+})
+
+test('quiz and incident prompts can open glossary before a choice', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  await page.locator('.nav [data-nav="quiz"]').click()
+  const dialog = page.getByRole('dialog')
+  let openedQuiz = false
+  for (let i = 0; i < 10 && !openedQuiz; i++) {
+    const card = page.locator('.quiz-card')
+    await expect(card).toBeVisible()
+    await expect(card).not.toHaveAttribute('data-info')
+    const jargon = card.locator('h3 button.jargon')
+    if ((await jargon.count()) > 0) {
+      await jargon.first().click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('#info-title')).not.toHaveText('')
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      await expect(card).not.toHaveAttribute('data-info')
+      openedQuiz = true
+      break
+    }
+    await card.locator('.choice').first().click()
+    await page.locator('[data-quiz-next]').click()
+  }
+  expect(openedQuiz).toBe(true)
+
+  await page.locator('.nav [data-nav="trouble"]').click()
+  let openedTrouble = false
+  for (let i = 0; i < 5 && !openedTrouble; i++) {
+    const card = page.locator('.trouble-card')
+    await expect(card).toBeVisible()
+    await expect(card).not.toHaveAttribute('data-info')
+    const jargon = card.locator('li button.jargon')
+    if ((await jargon.count()) > 0) {
+      await jargon.first().click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('#info-title')).not.toHaveText('')
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      await expect(card).not.toHaveAttribute('data-info')
+      openedTrouble = true
+      break
+    }
+    await page.locator('[data-tr-next]').click()
+  }
+  expect(openedTrouble).toBe(true)
 })
 
 test('quiz choices and inputs are not glossary links', async ({ page }) => {

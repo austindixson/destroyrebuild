@@ -8,6 +8,7 @@ const CARD_SELECTOR = [
   '.kpi',
   '.card',
   '.pipe-card',
+  '.gain-read',
   '.gauge',
   '.step',
   '.quiz-card',
