@@ -42,6 +42,16 @@ function modelTimeoutMs(): number {
   return MODEL_TIMEOUT_MS
 }
 
+/** Tests may shorten the cap. They cannot raise it past the 180 s product limit. */
+function modelCapMs(): number {
+  const win = window as Window & { __YORK_MODEL_CAP_MS?: number }
+  const override = win.__YORK_MODEL_CAP_MS
+  if (typeof override === 'number' && Number.isFinite(override) && override >= 250 && override <= MODEL_CAP_MS) {
+    return override
+  }
+  return MODEL_CAP_MS
+}
+
 function mountDelayMs(): number {
   const win = window as Window & { __YORK_DELAY_MOUNT_MS?: number }
   const override = win.__YORK_DELAY_MOUNT_MS
@@ -407,7 +417,7 @@ export class ChillerScene {
         window.clearTimeout(idleTimer)
         idleTimer = window.setTimeout(() => finish(true), modelTimeoutMs())
       }
-      capTimer = window.setTimeout(() => finish(true), MODEL_CAP_MS)
+      capTimer = window.setTimeout(() => finish(true), modelCapMs())
       armIdle()
 
       const logLoadError = (err: unknown) => {
