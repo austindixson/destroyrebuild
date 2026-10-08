@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { launchCommand, macSandboxProfile, resolveBin } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
@@ -24,6 +25,8 @@ export const CURSOR_READ_DENY = [
   'Read(/etc/**)',
   'Read(/proc/**)',
   'Read(/home/**)',
+  'Read(/Users/**)',
+  'Read(~/**)',
   'Read(/root/**)',
   'Read(/opt/**)',
   'Read(/usr/**)',
@@ -61,6 +64,10 @@ function take(bucket: Buffer[], size: number, chunk: Buffer, max: number): numbe
   return next
 }
 
+/**
+ * Kills the child's process group.
+ * A child that calls setsid leaves this group. The group kill does not reach it.
+ */
 function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid
   if (!pid) return
@@ -190,19 +197,70 @@ export function providerChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue
-    if (key === 'YORK_PROXY_SECRET') continue
+    if (key === 'YORK_PROXY_SECRET' || key === 'YORK_CANARY') continue
     next[key] = value
   }
   return next
 }
 
-export function grokArgs(): string[] {
-  return ['-p']
+export const GROK_SANDBOX_PROFILE = 'york'
+
+/** Compat scanners default on. York turns every one off. There is no --no-hooks flag. */
+export const GROK_COMPAT_OFF: Record<string, string> = {
+  GROK_CLAUDE_SKILLS_ENABLED: '0',
+  GROK_CLAUDE_RULES_ENABLED: '0',
+  GROK_CLAUDE_AGENTS_ENABLED: '0',
+  GROK_CLAUDE_MCPS_ENABLED: '0',
+  GROK_CLAUDE_HOOKS_ENABLED: '0',
+  GROK_CURSOR_SKILLS_ENABLED: '0',
+  GROK_CURSOR_RULES_ENABLED: '0',
+  GROK_CURSOR_AGENTS_ENABLED: '0',
+  GROK_CURSOR_MCPS_ENABLED: '0',
+  GROK_CURSOR_HOOKS_ENABLED: '0',
+}
+
+const GROK_AUTH = ['auth.json', 'credentials.json', '.credentials.json'] as const
+const CLAUDE_AUTH = ['.credentials.json', 'credentials.json'] as const
+const CURSOR_AUTH = ['auth.json', 'cli-auth.json'] as const
+
+export interface CliLaunch {
+  cmd: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  cwd: string
+  input: string
+}
+
+/** Headless grok does not read the prompt on stdin. --prompt-file is the supported path. */
+export function grokArgs(promptFile: string): string[] {
+  return [
+    '--prompt-file',
+    promptFile,
+    '--permission-mode',
+    'dontAsk',
+    '--disable-web-search',
+    '--no-subagents',
+    '--no-memory',
+    '--sandbox',
+    GROK_SANDBOX_PROFILE,
+  ]
+}
+
+export function grokLaunchArgsOk(args: string[]): boolean {
+  const mode = args.indexOf('--permission-mode')
+  const sandbox = args.indexOf('--sandbox')
+  return mode >= 0
+    && args[mode + 1] === 'dontAsk'
+    && args.includes('--prompt-file')
+    && sandbox >= 0
+    && args[sandbox + 1] === GROK_SANDBOX_PROFILE
 }
 
 export function claudeArgs(model: string): string[] {
   return [
     '-p',
+    '--safe-mode',
+    '--no-session-persistence',
     '--model',
     model,
     '--strict-mcp-config',
@@ -222,40 +280,229 @@ export function cursorArgs(model: string, workspace: string): string[] {
 }
 
 export function codexArgs(): string[] {
-  return ['exec', '--skip-git-repo-check']
+  return ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config']
 }
 
-async function completeCli(
-  bin: string,
-  args: string[],
-  req: LlmRequest,
-  signal: AbortSignal,
-  run: ProcessRunner,
-  env: NodeJS.ProcessEnv,
-  options: ProcessRunOptions,
-): Promise<string> {
-  const prompt = `${req.system}\n\n${req.user}`
-  const result = await run.run(bin, args, prompt, env, signal, options)
-  if (result.code !== 0) throw new Error(result.stderr.trim() || `${bin} failed`)
-  const text = result.stdout.trim()
-  if (!text) throw new Error(`${bin} empty`)
+export function codexLaunchArgsOk(args: string[]): boolean {
+  const sandbox = args.indexOf('--sandbox')
+  const value = sandbox >= 0 ? args[sandbox + 1] : undefined
+  return Boolean(value && !value.startsWith('-') && args.includes('--ignore-user-config'))
+}
+
+/** A reply that is only reasoning_effort tags is an empty failure. */
+export function replyText(stdout: string): string {
+  const text = stdout.trim()
+  if (!text) return ''
+  if (/^(?:\s*<reasoning_effort>\s*\d*\s*<\/reasoning_effort>\s*)+$/i.test(text)) return ''
   return text
 }
 
-async function completeLocal(
-  prefix: string,
+export function grokConfigToml(): string {
+  return [
+    '[ui]',
+    'permission_mode = "dontAsk"',
+    '',
+    '[compat.claude]',
+    'skills = false',
+    'rules = false',
+    'agents = false',
+    'mcps = false',
+    'hooks = false',
+    '',
+    '[compat.cursor]',
+    'skills = false',
+    'rules = false',
+    'agents = false',
+    'mcps = false',
+    'hooks = false',
+    '',
+  ].join('\n')
+}
+
+export function grokSandboxToml(): string {
+  return [
+    '[profiles.york]',
+    'extends = "strict"',
+    'deny = [',
+    '  "$HOME",',
+    '  "$HOME/**",',
+    '  "~/.ssh",',
+    '  "~/.ssh/**",',
+    '  "~/.config",',
+    '  "~/.config/**",',
+    '  "~/.zshrc",',
+    '  "~/.claude",',
+    '  "~/.claude/**",',
+    '  "~/.cursor",',
+    '  "~/.cursor/**",',
+    '  "~/Library",',
+    '  "~/Library/**",',
+    '  "~/.grok/hooks",',
+    '  "~/.grok/hooks/**",',
+    ']',
+    'read_only = [',
+    '  "$HOME/.grok/auth.json",',
+    '  "$HOME/.grok/credentials.json",',
+    '  "$HOME/.grok/.credentials.json",',
+    ']',
+    '',
+  ].join('\n')
+}
+
+function childEnv(env: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = providerChildEnv(env)
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) next[key] = value
+  }
+  return next
+}
+
+function promptOf(req: LlmRequest): string {
+  return `${req.system}\n\n${req.user}`
+}
+
+async function linkAuth(sourceDir: string, destDir: string, names: readonly string[]): Promise<void> {
+  for (const name of names) {
+    const source = join(sourceDir, name)
+    try {
+      const info = await lstat(source)
+      if (info.isDirectory()) continue
+      await symlink(source, join(destDir, name))
+    } catch {
+      // The auth file is absent. The CLI may still use the keychain.
+    }
+  }
+}
+
+function authPaths(home: string, dirName: string, names: readonly string[]): string[] {
+  if (!home) return []
+  return names.map((name) => join(home, dirName, name))
+}
+
+async function seatbeltWrap(
+  dir: string,
   bin: string,
   args: string[],
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  allowRead: string[],
+): Promise<{ cmd: string; args: string[] }> {
+  if (platform !== 'darwin') return { cmd: bin, args }
+  const resolved = resolveBin(bin, env)
+  if (!resolved) return { cmd: bin, args }
+  const profile = join(dir, '.york.sb')
+  await writeFile(profile, macSandboxProfile({
+    home: env.HOME || '/Users',
+    tempDir: dir,
+    binPath: resolved,
+    allowRead,
+  }))
+  return launchCommand(bin, args, profile, platform)
+}
+
+async function runLaunch(launch: CliLaunch, signal: AbortSignal, run: ProcessRunner): Promise<string> {
+  const result = await run.run(launch.cmd, launch.args, launch.input, launch.env, signal, { cwd: launch.cwd })
+  if (result.code !== 0) throw new Error('cli failed')
+  const text = replyText(result.stdout)
+  if (!text) throw new Error('cli empty')
+  return text
+}
+
+export async function prepareGrokLaunch(
+  dir: string,
   req: LlmRequest,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<CliLaunch> {
+  const grokHome = join(dir, 'grok-home')
+  await mkdir(join(grokHome, 'hooks'), { recursive: true })
+  await mkdir(join(dir, '.grok'), { recursive: true })
+  const promptFile = join(dir, 'prompt.txt')
+  await writeFile(promptFile, promptOf(req))
+  await writeFile(join(grokHome, 'config.toml'), grokConfigToml())
+  const sandbox = grokSandboxToml()
+  await writeFile(join(grokHome, 'sandbox.toml'), sandbox)
+  await writeFile(join(dir, '.grok', 'sandbox.toml'), sandbox)
+  const home = env.HOME ?? ''
+  if (home) await linkAuth(join(home, '.grok'), grokHome, GROK_AUTH)
+  const bin = env.GROK_BIN || 'grok'
+  const args = grokArgs(promptFile)
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.grok', GROK_AUTH))
+  return {
+    cmd: wrapped.cmd,
+    args: wrapped.args,
+    env: childEnv(env, { ...GROK_COMPAT_OFF, GROK_HOME: grokHome }),
+    cwd: dir,
+    input: '',
+  }
+}
+
+export async function prepareClaudeLaunch(
+  dir: string,
+  req: LlmRequest,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<CliLaunch> {
+  const bin = env.CLAUDE_BIN || 'claude'
+  const args = claudeArgs(CLAUDE_MODEL)
+  const home = env.HOME ?? ''
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.claude', CLAUDE_AUTH))
+  return {
+    cmd: wrapped.cmd,
+    args: wrapped.args,
+    env: childEnv(env, { CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1' }),
+    cwd: dir,
+    input: promptOf(req),
+  }
+}
+
+export async function prepareCursorLaunch(
+  dir: string,
+  req: LlmRequest,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<CliLaunch> {
+  const configDir = await prepareCursorWorkspace(dir, env.HOME)
+  const bin = env.CURSOR_BIN || 'agent'
+  const args = cursorArgs(CURSOR_MODEL, dir)
+  const home = env.HOME ?? ''
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, authPaths(home, '.cursor', CURSOR_AUTH))
+  return {
+    cmd: wrapped.cmd,
+    args: wrapped.args,
+    env: childEnv(env, { CURSOR_CONFIG_DIR: configDir }),
+    cwd: dir,
+    input: promptOf(req),
+  }
+}
+
+export async function prepareCodexLaunch(
+  dir: string,
+  req: LlmRequest,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<CliLaunch> {
+  const bin = env.CODEX_BIN || 'codex'
+  const args = codexArgs()
+  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, [])
+  return {
+    cmd: wrapped.cmd,
+    args: wrapped.args,
+    env: childEnv(env, {}),
+    cwd: dir,
+    input: promptOf(req),
+  }
+}
+
+async function completePrepared(
+  prefix: string,
+  prepare: (dir: string) => Promise<CliLaunch>,
   signal: AbortSignal,
   run: ProcessRunner,
-  env: NodeJS.ProcessEnv,
-  prepare?: (dir: string) => Promise<void>,
 ): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix))
   try {
-    if (prepare) await prepare(dir)
-    return await completeCli(bin, args, req, signal, run, providerChildEnv(env), { cwd: dir })
+    return await runLaunch(await prepare(dir), signal, run)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -267,8 +514,7 @@ export async function completeGrok(
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  const bin = env.GROK_BIN || 'grok'
-  return completeLocal('york-grok-', bin, grokArgs(), req, signal, run, env)
+  return completePrepared('york-grok-', (dir) => prepareGrokLaunch(dir, req, env), signal, run)
 }
 
 export async function completeClaude(
@@ -277,8 +523,7 @@ export async function completeClaude(
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  const bin = env.CLAUDE_BIN || 'claude'
-  return completeLocal('york-claude-', bin, claudeArgs(CLAUDE_MODEL), req, signal, run, env)
+  return completePrepared('york-claude-', (dir) => prepareClaudeLaunch(dir, req, env), signal, run)
 }
 
 function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string, unknown> } {
@@ -298,13 +543,16 @@ function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string,
   return { sandbox, cli }
 }
 
-export async function prepareCursorWorkspace(workspace: string): Promise<void> {
+export async function prepareCursorWorkspace(workspace: string, home?: string): Promise<string> {
   const dir = join(workspace, '.cursor')
   await mkdir(dir, { recursive: true })
   const { sandbox, cli } = cursorConfig()
   await writeFile(join(dir, 'sandbox.json'), JSON.stringify(sandbox))
   await writeFile(join(dir, 'cli-config.json'), JSON.stringify(cli))
   await writeFile(join(dir, 'cli.json'), JSON.stringify({ permissions: cli.permissions }))
+  await writeFile(join(dir, 'hooks.json'), JSON.stringify({ version: 1, hooks: {} }))
+  if (home) await linkAuth(join(home, '.cursor'), dir, CURSOR_AUTH)
+  return dir
 }
 
 export async function completeCursor(
@@ -313,14 +561,7 @@ export async function completeCursor(
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  const bin = env.CURSOR_BIN || 'agent'
-  const dir = await mkdtemp(join(tmpdir(), 'york-cursor-'))
-  try {
-    await prepareCursorWorkspace(dir)
-    return await completeCli(bin, cursorArgs(CURSOR_MODEL, dir), req, signal, run, providerChildEnv(env), { cwd: dir })
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
+  return completePrepared('york-cursor-', (dir) => prepareCursorLaunch(dir, req, env), signal, run)
 }
 
 export async function completeCodex(
@@ -329,6 +570,5 @@ export async function completeCodex(
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  const bin = env.CODEX_BIN || 'codex'
-  return completeLocal('york-codex-', bin, codexArgs(), req, signal, run, env)
+  return completePrepared('york-codex-', (dir) => prepareCodexLaunch(dir, req, env), signal, run)
 }

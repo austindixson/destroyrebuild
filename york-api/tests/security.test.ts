@@ -399,8 +399,10 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
   assert.equal(claudeVersionOk('2.1.293 (Claude Code)'), true)
   assert.equal(claudeVersionOk('2.1.292'), false)
   assert.equal(claudeVersionOk('claude-2.1.293'), false)
-  assert.equal(grokVersionOk('1.0.50'), true)
-  assert.equal(grokVersionOk('1.0.49'), false)
+  assert.equal(grokVersionOk('grok 1.0.50 (abc) [stable]'), true)
+  assert.equal(grokVersionOk('0.0.1\ngrok 1.0.50 (abc) [stable]'), true)
+  assert.equal(grokVersionOk('grok 1.0.49 (abc) [stable]'), false)
+  assert.equal(grokVersionOk('1.0.50'), false)
   assert.equal(grokVersionOk('grok-1.0.50'), false)
   const probed = cliProbeEnv({
     PATH: '/usr/bin',
@@ -514,15 +516,16 @@ test('fast guard: the real-call checklist refuses to run on its own', () => {
   assert.match(source, /The daily trainer chat limit is close/)
   assert.match(source, /Grep/)
   assert.match(source, /Glob/)
-  assert.match(source, /--strict-mcp-config/)
-  for (const arg of claudeArgs('claude-haiku-5-5')) {
-    const needle = arg === '' ? "'--tools', ''" : `'${arg}'`
-    assert.equal(source.includes(needle), true, arg)
-  }
-  for (const arg of cursorArgs('auto', '/tmp/york')) {
-    if (arg === '/tmp/york' || arg === 'auto') continue
-    assert.equal(source.includes(`'${arg}'`), true, arg)
-  }
+  assert.match(source, /prepareCursorWorkspace/)
+  assert.match(source, /prepareClaudeLaunch/)
+  assert.match(source, /prepareGrokLaunch/)
+  assert.equal(source.includes('root:\\*:0:0'), true)
+  assert.match(source, /X-York-Only/)
+  assert.match(source, /SKIP/)
+  assert.match(source, /YORK_PEER_BUDGET_KEY/)
+  assert.equal(source.includes("'x-york-client-ip': '203.0.113.11'"), false)
+  assert.equal(claudeArgs('claude-haiku-5-5').includes('--safe-mode'), true)
+  assert.equal(cursorArgs('auto', '/tmp/york').includes('--force'), false)
   const blocked = spawnSync(process.execPath, [script], { encoding: 'utf8' })
   assert.notEqual(blocked.status, 0)
   assert.match(blocked.stderr, /YORK_REAL_CALL/)

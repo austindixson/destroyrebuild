@@ -2,6 +2,7 @@ import { createBudget, type Budget } from './budget.ts'
 import { budgetKey } from './ip.ts'
 import type { Inflight } from './inflight.ts'
 import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAILABLE } from './copy.ts'
+import { containsSecretMaterial, publicSecrets } from './leak.ts'
 import { finishAnswer } from './finish.ts'
 import { buildPrompt } from './prompt.ts'
 import { planTurn } from './turn.ts'
@@ -95,7 +96,14 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (!gate.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   try {
     const llm = await deps.complete(buildPrompt(req, chunks), deps.signal)
+    const secrets = publicSecrets()
+    if (containsSecretMaterial(llm.text, secrets)) {
+      return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
+    }
     const body = await answerFromModel(req, chunks, deps, llm, slot.nearCap)
+    if (containsSecretMaterial(JSON.stringify(body), secrets)) {
+      return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
+    }
     return { http: 200, body }
   } catch {
     return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }

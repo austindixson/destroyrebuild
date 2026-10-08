@@ -36,6 +36,7 @@ npm ci
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 
+umask 077
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -79,6 +80,7 @@ cat > "$PLIST" <<EOF
 </dict>
 </plist>
 EOF
+chmod 600 "$PLIST"
 
 launchctl bootout "gui/${UID_NUM}" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/${UID_NUM}" "$PLIST"

@@ -279,7 +279,7 @@ const TOOLS: ToolDef[] = [
         if (!id || capacityMw === null || typeof row.running !== 'boolean') {
           return { ok: false, message: 'Each unit needs an id, a run state, and a capacity.', snapshot: controller.snapshot }
         }
-        units.push({ id, running: row.running, capacityMw })
+        units.push({ id, running: row.running, capacityMw: Math.max(0, capacityMw) })
       }
       return fromPlant(controller.configureFleet(units, actor))
     },

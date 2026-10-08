@@ -4,9 +4,10 @@ import { timingSafeEqual } from 'node:crypto'
  * Client address for rate limits.
  *
  * The public path is Railway Caddy, then Tailscale Funnel, then this process
- * on 127.0.0.1. Caddy sets X-York-Proxy-Secret and X-York-Client-IP. The
- * client IP header is used only after the secret matches. X-Real-IP and
- * X-Forwarded-For are not a client identity on this path.
+ * on 127.0.0.1. Caddy sets X-York-Proxy-Secret and copies the edge
+ * X-Real-IP header into X-York-Client-IP. York trusts that client IP
+ * header only after the secret matches. York does not read X-Real-IP or
+ * X-Forwarded-For as a client identity.
  *
  * With no configured secret, the socket address is the identity and forwarded
  * headers are ignored.
@@ -16,6 +17,12 @@ import { timingSafeEqual } from 'node:crypto'
  * share the ::/64 bucket with ::1. NAT64 64:ff9b::/96 does the same. Other
  * IPv6 addresses collapse to /64.
  */
+export const PROXY_SECRET_MIN = 16
+
+export function proxySecretConfigured(secret: string | undefined): boolean {
+  return typeof secret === 'string' && secret.length >= PROXY_SECRET_MIN
+}
+
 export function proxySecretOk(provided: string, secret: string): boolean {
   const got = Buffer.from(provided)
   const want = Buffer.from(secret)

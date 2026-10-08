@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import { codexArgs, codexLaunchArgsOk, grokArgs, grokLaunchArgsOk } from './providers.ts'
+import { resolveBin } from './sandbox.ts'
 
 /** Log-and-warn floors. An older binary still serves. A missing binary does not. */
 export const CLAUDE_CLI_MIN = '2.1.293'
@@ -49,10 +51,18 @@ export function claudeVersionOk(text: string): boolean {
   return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CLAUDE_MIN)
 }
 
+/** The version is the triple after the `grok ` prefix, not an earlier number in the text. */
 export function grokVersionOk(text: string): boolean {
-  const match = text.match(/^\s*v?(\d+)\.(\d+)\.(\d+)\b/m)
+  const match = text.match(/(?:^|\n)\s*grok\s+v?(\d+)\.(\d+)\.(\d+)\b/i)
   if (!match) return false
   return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], GROK_MIN)
+}
+
+/** True when `agent` is the grok binary. The xAI installer symlinks `agent` to grok. */
+export function cursorBinIsGrok(agentReal: string | null, grokReal: string | null, versionText: string): boolean {
+  if (versionText.trim().toLowerCase().startsWith('grok ')) return true
+  if (agentReal && grokReal && agentReal === grokReal) return true
+  return false
 }
 
 /**
@@ -99,12 +109,25 @@ export function readCliVersion(bin: string, env: NodeJS.ProcessEnv): Promise<str
 type CliFlag = 'YORK_GROK_CLI' | 'YORK_CLAUDE_CLI' | 'YORK_CURSOR_CLI' | 'YORK_CODEX_CLI'
 
 export async function probeAndLogClis(env: NodeJS.ProcessEnv): Promise<void> {
+  const cursorBin = env.CURSOR_BIN || 'agent'
   await Promise.all([
     logOne(env, 'grok', env.GROK_BIN || 'grok', GROK_CLI_MIN, grokVersionOk, 'YORK_GROK_CLI'),
     logOne(env, 'claude', env.CLAUDE_BIN || 'claude', CLAUDE_CLI_MIN, claudeVersionOk, 'YORK_CLAUDE_CLI'),
-    logOne(env, 'cursor', env.CURSOR_BIN || 'agent', CURSOR_CLI_MIN, cursorVersionOk, 'YORK_CURSOR_CLI'),
+    logOne(env, 'cursor', cursorBin, CURSOR_CLI_MIN, cursorVersionOk, 'YORK_CURSOR_CLI', (text) => {
+      const agentReal = resolveBin(cursorBin, env)
+      const grokReal = resolveBin(env.GROK_BIN || 'grok', env)
+      return cursorBinIsGrok(agentReal, grokReal, text) ? 'agent-is-grok' : null
+    }),
     logOne(env, 'codex', env.CODEX_BIN || 'codex', '', () => true, 'YORK_CODEX_CLI'),
   ])
+  if (env.YORK_GROK_CLI !== 'unavailable' && !grokLaunchArgsOk(grokArgs('probe'))) {
+    console.log('york-api cli grok status=unavailable reason=permission-mode')
+    env.YORK_GROK_CLI = 'unavailable'
+  }
+  if (env.YORK_CODEX === '1' && env.YORK_CODEX_CLI !== 'unavailable' && !codexLaunchArgsOk(codexArgs())) {
+    console.log('york-api cli codex status=unavailable reason=sandbox')
+    env.YORK_CODEX_CLI = 'unavailable'
+  }
 }
 
 async function logOne(
@@ -114,6 +137,7 @@ async function logOne(
   minimum: string,
   okText: (text: string) => boolean,
   flag: CliFlag,
+  reject?: (text: string) => string | null,
 ): Promise<void> {
   const text = await readCliVersion(bin, cliProbeEnv(env, name))
   if (text === null) {
@@ -122,6 +146,12 @@ async function logOne(
     return
   }
   const version = text.trim() || 'unparsed'
+  const reason = reject?.(text) ?? null
+  if (reason) {
+    console.log(`york-api cli ${name} version=${version} status=unavailable reason=${reason}`)
+    env[flag] = 'unavailable'
+    return
+  }
   const ok = minimum.length === 0 || okText(text)
   console.log(`york-api cli ${name} version=${version} status=ready`)
   if (!ok) console.warn(`york-api cli ${name} is older than ${minimum}. This tier stays on.`)

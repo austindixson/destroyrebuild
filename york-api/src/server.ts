@@ -1,19 +1,35 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { pathToFileURL } from 'node:url'
-import { completeWithCascade } from './adapters.ts'
 import { probeAndLogClis } from './cliVersions.ts'
 import { handleChat, defaultBudget } from './chat.ts'
 import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
 import { defaultInflight, type Inflight } from './inflight.ts'
-import { trustedClientIp } from './ip.ts'
+import { completeWithCascade, type CliTier } from './adapters.ts'
+import { headerText, proxySecretConfigured, proxySecretOk, trustedClientIp } from './ip.ts'
 import { searchChunks } from './rag.ts'
 import type { Budget } from './budget.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from './types.ts'
 
 const chunks = index as Chunk[]
 const MAX_BODY = 200_000
-const REQUEST_MS = 100_000
+export const REQUEST_MS = 110_000
+
+const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
+
+export function readTier(value: string): CliTier | null {
+  for (const tier of CLI_TIERS) {
+    if (tier === value) return tier
+  }
+  return null
+}
+
+/** The only-tier header is honored after a long proxy secret matches. */
+export function yorkOnlyFrom(headers: NodeJS.Dict<string | string[] | undefined>, secret: string): CliTier | null {
+  if (!proxySecretConfigured(secret)) return null
+  if (!proxySecretOk(headerText(headers['x-york-proxy-secret']), secret)) return null
+  return readTier(headerText(headers['x-york-only']))
+}
 
 export interface YorkServerOptions {
   complete?: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
@@ -70,6 +86,7 @@ async function onChat(
   budget: Budget,
   inflight: Inflight,
   ip: string,
+  only: CliTier | null,
 ): Promise<void> {
   const abort = requestSignal(res)
   try {
@@ -80,7 +97,7 @@ async function onChat(
       budget,
       inflight,
       search: options.search ?? ((query) => searchChunks(chunks, query)),
-      complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal)),
+      complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal, process.env, only)),
       signal: abort.signal,
     })
     send(res, result.http, result.body)
@@ -108,7 +125,7 @@ export function createYorkServer(options: YorkServerOptions = {}) {
       return
     }
     if (req.method === 'POST' && (url === '/api/york/chat' || url.startsWith('/api/york/chat?'))) {
-      void onChat(req, res, options, budget, inflight, ip ?? 'local')
+      void onChat(req, res, options, budget, inflight, ip ?? 'local', yorkOnlyFrom(req.headers, proxySecret))
       return
     }
     send(res, 404, { status: 'error', answer: UNAVAILABLE })
@@ -119,6 +136,11 @@ const port = Number(process.env.PORT || 8787)
 const host = process.env.YORK_BIND_HOST || '127.0.0.1'
 const isMain = Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 if (isMain) {
+  const secret = process.env.YORK_PROXY_SECRET ?? ''
+  if (!proxySecretConfigured(secret)) {
+    console.error('YORK_PROXY_SECRET must be set and at least 16 characters. Refusing to listen.')
+    process.exit(1)
+  }
   await probeAndLogClis(process.env)
-  createYorkServer({ proxySecret: process.env.YORK_PROXY_SECRET ?? '' }).listen(port, host)
+  createYorkServer({ proxySecret: secret }).listen(port, host)
 }

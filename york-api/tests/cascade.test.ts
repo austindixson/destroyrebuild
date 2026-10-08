@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildAdapters } from '../src/adapters.ts'
 import { cascade, type Adapter } from '../src/cascade.ts'
-import { claudeArgs, codexArgs, cursorArgs, grokArgs, GROK_MODEL } from '../src/providers.ts'
+import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS } from '../src/adapters.ts'
+import { claudeArgs, codexArgs, codexLaunchArgsOk, cursorArgs, grokArgs, grokLaunchArgsOk, GROK_MODEL } from '../src/providers.ts'
 import type { LlmRequest } from '../src/types.ts'
 
 const req: LlmRequest = { system: 'sys', user: 'user' }
@@ -49,7 +50,15 @@ test('cascade throws when every provider fails', async () => {
 })
 
 test('local CLIs are the cascade and codex stays off until asked', () => {
-  assert.deepEqual(grokArgs(), ['-p'])
+  const grok = grokArgs('/tmp/prompt.txt')
+  assert.equal(grok.includes('-p'), false)
+  assert.equal(grokLaunchArgsOk(grok), true)
+  assert.equal(grokLaunchArgsOk(['-p']), false)
+  assert.equal(GROK_BUDGET_MS, 45_000)
+  assert.equal(CLAUDE_BUDGET_MS, 25_000)
+  assert.equal(CURSOR_BUDGET_MS, 30_000)
+  assert.equal(CODEX_BUDGET_MS, 35_000)
+  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS < 110_000)
   const adapters = buildAdapters({}, {
     async run() {
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
@@ -84,6 +93,8 @@ test('cascade skips claude when that binary is missing', async () => {
 test('claude and cursor commands use the verified model ids', () => {
   assert.deepEqual(claudeArgs('claude-haiku-5-5'), [
     '-p',
+    '--safe-mode',
+    '--no-session-persistence',
     '--model',
     'claude-haiku-5-5',
     '--strict-mcp-config',
@@ -100,5 +111,15 @@ test('claude and cursor commands use the verified model ids', () => {
   assert.ok(cursorArgs('auto', '/tmp/york').includes('ask'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('/tmp/york'))
   assert.equal(cursorArgs('auto', '/tmp/york').includes('--force'), false)
-  assert.deepEqual(codexArgs(), ['exec', '--skip-git-repo-check'])
+  assert.deepEqual(codexArgs(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ignore-user-config'])
+  assert.equal(codexLaunchArgsOk(codexArgs()), true)
+  assert.equal(codexLaunchArgsOk(['exec', '--skip-git-repo-check']), false)
+  const forced = buildAdapters({ YORK_CODEX: '1' }, {
+    async run() {
+      return { code: 0, stdout: 'The hall is stable.', stderr: '' }
+    },
+  }, 'claude')
+  assert.equal(forced.find((item) => item.id === 'claude')?.enabled(), true)
+  assert.equal(forced.find((item) => item.id === 'grok')?.enabled(), false)
+  assert.equal(forced.find((item) => item.id === 'cursor')?.enabled(), false)
 })
