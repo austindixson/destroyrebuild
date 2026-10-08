@@ -8,14 +8,21 @@ export type HotspotSelect = (id: ComponentId | null) => void
 
 export type BootNotice = (text: string) => void
 
-/** Hard stop for a stalled GLB download. A late file still falls back to the simple model. */
+/**
+ * Idle limit for the GLB transfer. Each progress event starts this window again.
+ * No new bytes for this long, and the view uses the simple model.
+ */
 const MODEL_TIMEOUT_MS = 25_000
 
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
-export function plantModelLoadText(loaded: number, total: number): string {
-  if (!(total > 0) || !Number.isFinite(loaded)) return 'The plant model loads.'
-  const pct = Math.min(100, Math.max(0, Math.round((loaded / total) * 100)))
-  return `The plant model loads. ${pct} percent.`
+export function plantModelProgressText(loaded: number, total: number): string {
+  if (!Number.isFinite(loaded) || loaded < 0) return 'The plant model starts.'
+  if (total > 0) {
+    const pct = Math.min(100, Math.max(0, Math.round((loaded / total) * 100)))
+    return `The plant model file is at ${pct} percent.`
+  }
+  if (loaded > 0) return `Received ${Math.round(loaded)} bytes.`
+  return 'The plant model starts.'
 }
 
 function modelTimeoutMs(): number {
@@ -27,8 +34,22 @@ function modelTimeoutMs(): number {
   return MODEL_TIMEOUT_MS
 }
 
+function mountDelayMs(): number {
+  const win = window as Window & { __YORK_DELAY_MOUNT_MS?: number }
+  const override = win.__YORK_DELAY_MOUNT_MS
+  if (typeof override === 'number' && Number.isFinite(override) && override >= 0 && override <= 10_000) {
+    return override
+  }
+  return 0
+}
+
 function isAbortError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string }).name === 'AbortError'
+  if (typeof err !== 'object' || err === null || !('name' in err)) return false
+  const name = String((err as { name?: unknown }).name)
+  if (name === 'AbortError') return true
+  if (name !== 'TypeError') return false
+  const message = 'message' in err ? String((err as { message?: unknown }).message).toLowerCase() : ''
+  return message.includes('abort')
 }
 
 export type InstrumentId =
@@ -128,6 +149,8 @@ export class ChillerScene {
   onInstrument: ((id: InstrumentId) => void) | null = null
   /** True when the GLB and the simple model both failed. The boot line stays up. */
   bootFailed = false
+  /** True when the GLB did not mount and the simple model is in the view. */
+  simpleModel = false
   readonly ready: Promise<void>
   private onBoot: BootNotice | null = null
   private modelLoader: THREE.FileLoader | null = null
@@ -319,6 +342,12 @@ export class ChillerScene {
     this.scene.add(stripe)
   }
 
+  statusLine(): string {
+    if (this.simpleModel) return 'The view shows the simple plant model.'
+    if (this.lowPower) return 'Low-detail 3D'
+    return 'Turn the model. Select a part.'
+  }
+
   private reportBoot(text: string) {
     if (this.disposed || text === this.bootText) return
     this.bootText = text
@@ -327,8 +356,8 @@ export class ChillerScene {
 
   /**
    * Download ymc2.glb, then mount it. Progress updates the boot line.
-   * The promise always resolves: timeout, network error, a throw in mount,
-   * or dispose. A failed GLB uses the simple model. Dispose skips that mount.
+   * Each progress event restarts the idle deadline. The promise always resolves.
+   * Dispose skips mount.
    */
   private loadModel() {
     const url = `${import.meta.env.BASE_URL}models/ymc2.glb`
@@ -351,16 +380,26 @@ export class ChillerScene {
           try {
             this.buildChiller()
             this.needsRender = true
+            this.simpleModel = true
           } catch (err) {
             console.error(err)
             this.bootFailed = true
-            this.reportBoot('The plant model did not load. Use the buttons.')
+            this.reportBoot('The plant model did not open. Use the buttons.')
           }
         }
         resolve()
       }
       this.finishLoad = finish
-      timer = window.setTimeout(() => finish(true), modelTimeoutMs())
+
+      const armIdle = () => {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(() => finish(true), modelTimeoutMs())
+      }
+      armIdle()
+
+      const logLoadError = (err: unknown) => {
+        if (!settled && !isAbortError(err)) console.error(err)
+      }
 
       fileLoader.load(
         url,
@@ -369,6 +408,7 @@ export class ChillerScene {
             finish(false)
             return
           }
+          armIdle()
           this.reportBoot('The plant model opens.')
           try {
             gltfLoader.parse(
@@ -379,16 +419,10 @@ export class ChillerScene {
                   finish(false)
                   return
                 }
-                try {
-                  this.mountModel(gltf.scene)
-                  finish(false)
-                } catch (err) {
-                  console.error(err)
-                  finish(true)
-                }
+                this.queueMount(gltf.scene, finish, () => settled)
               },
               (err) => {
-                if (!isAbortError(err)) console.error(err)
+                logLoadError(err)
                 finish(!this.disposed)
               },
             )
@@ -399,15 +433,48 @@ export class ChillerScene {
         },
         (event) => {
           if (settled || this.disposed) return
+          armIdle()
           const total = event.lengthComputable ? event.total : 0
-          this.reportBoot(plantModelLoadText(event.loaded, total))
+          this.reportBoot(plantModelProgressText(event.loaded, total))
         },
         (err) => {
-          if (!isAbortError(err)) console.error(err)
+          logLoadError(err)
           finish(!this.disposed)
         },
       )
     })
+  }
+
+  private queueMount(
+    model: THREE.Object3D,
+    finish: (useFallback: boolean) => void,
+    isSettled: () => boolean,
+  ) {
+    const run = () => {
+      if (isSettled() || this.disposed) {
+        finish(false)
+        return
+      }
+      try {
+        this.mountModel(model)
+        finish(false)
+      } catch (err) {
+        console.error(err)
+        finish(true)
+      }
+    }
+    const delay = mountDelayMs()
+    if (delay > 0) {
+      window.setTimeout(run, delay)
+      return
+    }
+    run()
+  }
+
+  private noteMountForTest() {
+    const win = window as Window & { __YORK_DELAY_MOUNT_MS?: number; __YORK_MOUNT_COUNT?: number }
+    if (!win.__YORK_DELAY_MOUNT_MS) return
+    win.__YORK_MOUNT_COUNT = (win.__YORK_MOUNT_COUNT ?? 0) + 1
   }
 
   /**
@@ -417,6 +484,7 @@ export class ChillerScene {
    */
   private mountModel(model: THREE.Object3D) {
     if (this.disposed) return
+    this.noteMountForTest()
     this.model = model
     model.traverse((c) => {
       const mesh = c as THREE.Mesh
