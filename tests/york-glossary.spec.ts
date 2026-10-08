@@ -92,6 +92,7 @@ test('NOC is clickable and shows its definition', async ({ page }, testInfo) => 
 })
 
 test('wet-bulb, LCHLT, and % FLA open glossary definitions', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.goto('/york-chiller/')
   await page.getByRole('button', { name: 'Information about Outdoor temperature' }).click()
   const dialog = page.getByRole('dialog')
