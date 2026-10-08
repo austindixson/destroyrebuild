@@ -22,6 +22,7 @@ import {
   type ViewId,
 } from './data/content'
 import type { ChillerScene, SceneReadings } from './3d/chillerScene'
+import { openTroubleView, shuffleChoices, troubleStep, type TroubleDestination } from './troubleOrder'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantController, type PlantChangeDetail } from './sim/controller'
 import { isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
@@ -130,6 +131,8 @@ export class App {
   private quizPick: number | null = null
   private troubleIndex = 0
   private troublePicked: number | null = null
+  private troubleOptions: (typeof TROUBLE_CASES)[number]['options'] = []
+  private troubleDoneView = false
   private troubleSeconds = 45
   private troubleTimer: number | null = null
   private maintChecks = new Set<string>()
@@ -200,8 +203,7 @@ export class App {
     this.view = view
     if (view === 'trouble') {
       this.alignTroubleToIncident()
-      this.applyTroubleIncident()
-      this.startTroubleClock()
+      this.openTrouble()
     }
     this.render()
   }
@@ -1359,11 +1361,61 @@ COND ══╝     CHW → CRAH → HALL</div>
     })
   }
 
+  private troubleAllSolved(): boolean {
+    return this.progress.troubleSolved.length >= TROUBLE_CASES.length
+  }
+
+  private openTrouble() {
+    this.applyTroubleDestination(openTroubleView(this.troubleAllSolved(), this.troubleIndex))
+  }
+
+  private applyTroubleDestination(destination: TroubleDestination) {
+    switch (destination.kind) {
+      case 'complete':
+        this.troubleDoneView = true
+        this.troublePicked = null
+        if (this.troubleTimer) {
+          clearInterval(this.troubleTimer)
+          this.troubleTimer = null
+        }
+        return
+      case 'case':
+        this.presentTroubleCase(destination.index)
+        return
+      default: {
+        const unknown: never = destination
+        return unknown
+      }
+    }
+  }
+
+  private presentTroubleCase(index: number) {
+    const item = TROUBLE_CASES[index]
+    this.troubleDoneView = false
+    this.troubleIndex = index
+    this.troublePicked = null
+    this.troubleOptions = item ? shuffleChoices(item.options) : []
+    this.startTroubleClock()
+    this.applyTroubleIncident()
+  }
+
+  private moveTrouble(direction: 'next' | 'prev') {
+    const destination = troubleStep(
+      this.troubleIndex,
+      TROUBLE_CASES.length,
+      direction,
+      this.troubleAllSolved(),
+    )
+    if (destination.kind === 'case' && destination.index === this.troubleIndex) return
+    this.applyTroubleDestination(destination)
+    this.renderView()
+  }
+
   private startTroubleClock() {
     this.troubleSeconds = 45
     if (this.troubleTimer) clearInterval(this.troubleTimer)
     this.troubleTimer = window.setInterval(() => {
-      if (this.view !== 'trouble' || this.troublePicked !== null) return
+      if (this.view !== 'trouble' || this.troubleDoneView || this.troublePicked !== null) return
       this.troubleSeconds -= 1
       const el = this.root.querySelector('#incident-timer')
       if (el) {
@@ -1387,8 +1439,29 @@ COND ══╝     CHW → CRAH → HALL</div>
     }
   }
 
+  private troubleCompleteHtml() {
+    const total = TROUBLE_CASES.length
+    return `
+      <div class="view-head">
+        <div>
+          <h2>Gate complete</h2>
+          <p>You cleared all ${total} incidents. The Incident clock drill stays Done.</p>
+        </div>
+        <span class="chip">${this.progress.troubleSolved.length} of ${total}</span>
+      </div>
+      <div class="trouble-card">
+        <h3 style="margin-top:0">All incidents cleared</h3>
+        <p>This set is complete. Select Practice again for a new order. Practice does not add XP.</p>
+        <div style="margin-top:14px"><button class="btn" type="button" data-tr-practice>Practice again</button></div>
+      </div>`
+  }
+
   private troubleHtml() {
+    if (this.troubleDoneView) return this.troubleCompleteHtml()
     const t = TROUBLE_CASES[this.troubleIndex]
+    const options = this.troubleOptions
+    const picked = this.troublePicked
+    const pickedOption = picked !== null ? options[picked] : undefined
     return `
       <div class="view-head">
         <div>
@@ -1404,46 +1477,45 @@ COND ══╝     CHW → CRAH → HALL</div>
       </div>
       <div class="alarm-banner show">${this.snap.alarm ?? t.title}</div>
       <div class="kpi-strip">${this.kpiHtml(this.snap)}</div>
-      <div class="trouble-card" ${this.troublePicked !== null ? infoAttr(troubleInfoId(t.id)) : ''}>
+      <div class="trouble-card" ${picked !== null ? infoAttr(troubleInfoId(t.id)) : ''}>
         <h3 style="margin-top:0">${t.title}</h3>
         <ul>${t.symptoms.map((s) => `<li>${s}</li>`).join('')}</ul>
         <div class="choices">
-          ${t.options
+          ${options
             .map(
               (o, i) =>
-                `<button type="button" class="choice ${this.troublePicked === i ? (o.correct ? 'correct' : 'wrong') : ''}" data-tr="${i}">${o.text}</button>`,
+                `<button type="button" class="choice ${picked === i ? (o.correct ? 'correct' : 'wrong') : ''}" data-tr="${i}">${o.text}</button>`,
             )
             .join('')}
         </div>
         ${
-          this.troublePicked !== null
-            ? `<div class="feedback">${t.options[this.troublePicked].feedback}<br/><br/><strong>Key point:</strong> ${t.teach}</div>`
+          pickedOption
+            ? `<div class="feedback">${pickedOption.feedback}<br/><br/><strong>Key point:</strong> ${t.teach}</div>`
             : ''
         }
       </div>`
   }
 
   private bindTrouble(el: Element) {
-    el.querySelector('[data-tr-prev]')?.addEventListener('click', () => {
-      this.troubleIndex = (this.troubleIndex - 1 + TROUBLE_CASES.length) % TROUBLE_CASES.length
-      this.troublePicked = null
-      this.applyTroubleIncident()
-      this.startTroubleClock()
+    el.querySelector('[data-tr-practice]')?.addEventListener('click', () => {
+      this.presentTroubleCase(0)
       this.renderView()
     })
+    if (this.troubleDoneView) return
+    el.querySelector('[data-tr-prev]')?.addEventListener('click', () => {
+      this.moveTrouble('prev')
+    })
     el.querySelector('[data-tr-next]')?.addEventListener('click', () => {
-      this.troubleIndex = (this.troubleIndex + 1) % TROUBLE_CASES.length
-      this.troublePicked = null
-      this.applyTroubleIncident()
-      this.startTroubleClock()
-      this.renderView()
+      this.moveTrouble('next')
     })
     const t = TROUBLE_CASES[this.troubleIndex]
     el.querySelectorAll<HTMLButtonElement>('[data-tr]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const i = Number(btn.dataset.tr)
+        const option = this.troubleOptions[i]
+        if (!option) return
         this.troublePicked = i
-        if (t.options[i].correct && !this.progress.troubleSolved.includes(t.id)) {
+        if (option.correct && !this.progress.troubleSolved.includes(t.id)) {
           const bonus = this.troubleSeconds > 20 ? 30 : 20
           this.progress.troubleSolved.push(t.id)
           this.progress = addXp(this.progress, bonus)
