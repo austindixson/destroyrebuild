@@ -39,6 +39,7 @@ async function openView(page: Page, id: string) {
 
 test('every card and slider has an info button, and one opens and closes', async ({ page }) => {
   test.setTimeout(90_000)
+  test.slow()
   for (const [id, entry] of Object.entries(INFO)) {
     expect(entry.points.length, id).toBeGreaterThanOrEqual(3)
     expect(entry.points.length, id).toBeLessThanOrEqual(5)

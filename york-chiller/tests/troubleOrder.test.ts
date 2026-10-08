@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { TROUBLE_CASES } from '../src/data/content.ts'
+import { INFO, TROUBLE_CASES, troubleInfoId } from '../src/data/content.ts'
 import { openTroubleView, shuffleChoices, troubleStep } from '../src/troubleOrder.ts'
 
 function rngFrom(seed: number): () => number {
@@ -48,6 +48,24 @@ test('a later presentation of the same incident can move the correct choice', ()
   assert.ok(positions.size > 1)
   assert.ok([...positions].some((index) => index !== 0))
   assert.equal(correctIndex(item.options), 0)
+})
+
+test('the correct incident choice is not identifiable by length', () => {
+  let notLongest = 0
+  for (const item of TROUBLE_CASES) {
+    const correct = item.options.filter((option) => option.correct)
+    assert.equal(correct.length, 1)
+    const correctText = correct[0]?.text ?? ''
+    const distractors = item.options.filter((option) => !option.correct).map((option) => option.text.length)
+    assert.equal(distractors.length, 3)
+    const longest = Math.max(...distractors)
+    const ratio = correctText.length / longest
+    assert.ok(ratio <= 1.2, `${item.id} correct/longest distractor = ${ratio.toFixed(2)}`)
+    if (correctText.length < longest) notLongest += 1
+    const body = INFO[troubleInfoId(item.id)].points.join('\n').toLowerCase()
+    assert.equal(body.includes(correctText.toLowerCase()), false, item.id)
+  }
+  assert.ok(notLongest >= 2)
 })
 
 test('a cleared incident set does not wrap on Next', () => {

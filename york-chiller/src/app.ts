@@ -85,15 +85,6 @@ function pipeSliderInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
   }
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
-
 function lchltHint(s: PlantSnapshot): string {
   if (s.alarm && s.alarm.includes('LCHLT setpoint fights')) return s.alarm
   return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
@@ -119,12 +110,12 @@ export class App {
   private opIndex = 0
   private cycleIndex = 0
   private plantIndex = 0
-  private matchIcons = shuffle(MATCH_PAIRS)
-  private matchLabels = shuffle(MATCH_PAIRS)
+  private matchIcons = shuffleChoices(MATCH_PAIRS)
+  private matchLabels = shuffleChoices(MATCH_PAIRS)
   private matchSelectedIcon: string | null = null
   private matchLocked = new Set<string>()
   private matchScore = 0
-  private quizOrder = shuffle(QUIZ)
+  private quizOrder = shuffleChoices(QUIZ)
   private quizIndex = 0
   private quizScore = 0
   private quizAnswered = false
@@ -132,6 +123,7 @@ export class App {
   private troubleIndex = 0
   private troublePicked: number | null = null
   private troubleOptions: (typeof TROUBLE_CASES)[number]['options'] = []
+  private troublePresentedId: string | null = null
   private troubleDoneView = false
   private troubleSeconds = 45
   private troubleTimer: number | null = null
@@ -367,7 +359,7 @@ export class App {
       { id: 'optiview', title: 'OptiView', desc: 'Operate CH-01 from the panel', done: this.progress.optiviewComplete },
       { id: 'match', title: 'Icon match', desc: 'Match each icon to a system', done: this.progress.matchBest >= 8 },
       { id: 'quiz', title: 'Knowledge gate', desc: 'Ten questions on the plant and the O&M', done: this.progress.quizBest >= 8 },
-      { id: 'trouble', title: 'Incident clock', desc: 'Select an action before the NOC timer ends', done: this.progress.troubleSolved.length >= 5 },
+      { id: 'trouble', title: 'Incident clock', desc: 'Select an action before the NOC timer ends', done: this.progress.troubleSolved.length >= TROUBLE_CASES.length },
       { id: 'maintenance', title: 'Shift deck', desc: 'Review the tasks for a plant that runs all day', done: this.progress.maintenanceComplete },
     ]
     return `
@@ -1249,8 +1241,8 @@ COND ══╝     CHW → CRAH → HALL</div>
 
   private bindMatch(el: Element) {
     el.querySelector('[data-match-reset]')?.addEventListener('click', () => {
-      this.matchIcons = shuffle(MATCH_PAIRS)
-      this.matchLabels = shuffle(MATCH_PAIRS)
+      this.matchIcons = shuffleChoices(MATCH_PAIRS)
+      this.matchLabels = shuffleChoices(MATCH_PAIRS)
       this.matchSelectedIcon = null
       this.matchLocked = new Set()
       this.matchScore = 0
@@ -1324,7 +1316,7 @@ COND ══╝     CHW → CRAH → HALL</div>
 
   private bindQuiz(el: Element) {
     el.querySelector('[data-quiz-restart]')?.addEventListener('click', () => {
-      this.quizOrder = shuffle(QUIZ)
+      this.quizOrder = shuffleChoices(QUIZ)
       this.quizIndex = 0
       this.quizScore = 0
       this.quizAnswered = false
@@ -1366,6 +1358,16 @@ COND ══╝     CHW → CRAH → HALL</div>
   }
 
   private openTrouble() {
+    if (this.troubleDoneView) {
+      this.applyTroubleDestination({ kind: 'complete' })
+      return
+    }
+    const item = TROUBLE_CASES[this.troubleIndex]
+    if (item && this.troublePresentedId === item.id && this.troubleOptions.length > 0) {
+      this.applyTroubleIncident()
+      this.startTroubleClock()
+      return
+    }
     this.applyTroubleDestination(openTroubleView(this.troubleAllSolved(), this.troubleIndex))
   }
 
@@ -1394,6 +1396,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     this.troubleDoneView = false
     this.troubleIndex = index
     this.troublePicked = null
+    this.troublePresentedId = item?.id ?? null
     this.troubleOptions = item ? shuffleChoices(item.options) : []
     this.startTroubleClock()
     this.applyTroubleIncident()
