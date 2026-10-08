@@ -1077,9 +1077,9 @@ function readingText(tag: PlantTag, readings: SceneReadings): string {
     case 'GLR':
       return `${readings.glyR}°F · ${readings.glycolValvePct}%`
     case 'TOWER · WATER':
-      return `fans ${readings.towerFanPct}%`
+      return `Fans ${readings.towerFanPct}%`
     case 'GLYCOL DRY':
-      return `fans ${readings.dryFanPct}%`
+      return `Fans ${readings.dryFanPct}%`
     default: {
       const unknown: never = tag
       return unknown

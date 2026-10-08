@@ -72,7 +72,7 @@ function jargonButton(id: GlossaryId, visible: string) {
   btn.type = 'button'
   btn.className = 'jargon'
   btn.dataset.glossary = id
-  btn.setAttribute('aria-label', `Define ${GLOSSARY[id].term}`)
+  btn.setAttribute('aria-label', `Show the meaning of ${GLOSSARY[id].term}`)
   btn.setAttribute('aria-haspopup', 'dialog')
   btn.setAttribute('aria-expanded', 'false')
   btn.setAttribute('aria-controls', 'info-title')

@@ -17,7 +17,7 @@ const LIVE_LABEL: Record<InfoLive, string> = {
   itLoad: 'IT load',
   head: 'CH-01 head',
   outdoor: 'Outdoor dry bulb',
-  wetBulb: 'Wet bulb',
+  wetBulb: 'Wet-bulb',
   rla: 'CH-01 %RLA',
   mode: 'CH-01 mode',
   chwDp: 'CHW ΔP',
@@ -32,12 +32,12 @@ const LIVE_LABEL: Record<InfoLive, string> = {
   cwr: 'CWR',
   glyS: 'GLS',
   glyR: 'GLR',
-  towerFan: 'Tower fans',
+  towerFan: 'Cooling tower fans',
   dryFan: 'Dry-cooler fans',
   freeCool: 'Free cooling',
   mbc: 'MBC',
   landings: 'Landings',
-  vibe: '1× vibe',
+  vibe: '1× vibration',
   evapPsig: 'Evaporator',
   alarm: 'Alarm',
   optiAct: 'LCHLT actual',
@@ -160,7 +160,7 @@ export class InfoDock {
         </header>
         <p class="info-now"></p>
         <ul class="info-points"></ul>
-        <p class="info-foot">Not a substitute for site SOPs or certified service.</p>
+        <p class="info-foot">This text is not a site procedure or a replacement for approved service.</p>
       </div>`
     parent.append(this.layer)
     this.panel = this.layer.querySelector('.info-panel')!
@@ -238,7 +238,7 @@ export class InfoDock {
     btn.type = 'button'
     btn.className = 'info-btn'
     btn.dataset.infoBtn = id
-    btn.setAttribute('aria-label', `Learn more about ${INFO[id].title}`)
+    btn.setAttribute('aria-label', `Information about ${INFO[id].title}`)
     btn.setAttribute('aria-haspopup', 'dialog')
     btn.setAttribute('aria-expanded', this.mode === 'info' && this.infoId === id ? 'true' : 'false')
     btn.setAttribute('aria-controls', 'info-title')
@@ -303,7 +303,7 @@ export class InfoDock {
     this.rememberTrigger(btn)
     this.titleEl.textContent = entry.term
     const lines: string[] = [entry.definition]
-    if (entry.why) lines.push(`Why it matters here: ${entry.why}`)
+    if (entry.why) lines.push(`Why this is important: ${entry.why}`)
     this.fillPoints(lines)
     this.nowEl.hidden = true
     this.nowEl.textContent = ''

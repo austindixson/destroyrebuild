@@ -42,7 +42,7 @@ test('NOC is clickable and shows its definition', async ({ page }) => {
   await page.goto('/york-chiller/')
   await page.locator('.nav [data-nav="operation"]').click()
 
-  const noc = page.locator('.step').getByRole('button', { name: 'Define NOC' }).first()
+  const noc = page.locator('.step').getByRole('button', { name: 'Show the meaning of NOC' }).first()
   await expect(noc).toBeVisible()
   const decoration = await noc.evaluate((el) => {
     const style = getComputedStyle(el)
@@ -58,7 +58,7 @@ test('NOC is clickable and shows its definition', async ({ page }) => {
   await expect(page.getByRole('dialog')).toHaveCount(1)
   await expect(dialog.locator('#info-title')).toHaveText('NOC')
   await expect(dialog).toContainText('owns the incident clock')
-  await expect(dialog).toContainText('Why it matters here')
+  await expect(dialog).toContainText('Why this is important')
   await expect(dialog).not.toHaveClass(/sheet/)
   await expect(page.locator('.choice .jargon, button .jargon, .plant-labels .jargon')).toHaveCount(0)
 

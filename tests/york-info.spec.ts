@@ -52,13 +52,13 @@ test('every card and slider has an info button, and one opens and closes', async
   }
 
   await take()
-  const learn = page.getByRole('button', { name: 'Learn more about Hall supply' })
+  const learn = page.getByRole('button', { name: 'Information about Hall supply' })
   const dialog = page.getByRole('dialog')
   await learn.click()
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('#info-title')).toHaveText('Hall supply')
   await expect(dialog.locator('.info-now')).toContainText('°F')
-  await expect(dialog.locator('.info-foot')).toContainText('Not a substitute for site SOPs or certified service.')
+  await expect(dialog.locator('.info-foot')).toContainText('This text is not a site procedure or a replacement for approved service.')
   await expect(dialog).not.toHaveClass(/sheet/)
   const close = dialog.getByRole('button', { name: 'Close' })
   await expect(close).toBeFocused()
@@ -70,7 +70,7 @@ test('every card and slider has an info button, and one opens and closes', async
   await expect(dialog).toBeHidden()
   await expect(learn).toBeFocused()
 
-  const lchlt = page.getByRole('button', { name: 'Learn more about LCHLT' })
+  const lchlt = page.getByRole('button', { name: 'Information about LCHLT' })
   await lchlt.click()
   await expect(dialog.locator('#info-title')).toHaveText('LCHLT')
   await expect(learn).toHaveAttribute('aria-expanded', 'false')
@@ -101,13 +101,13 @@ test('every card and slider has an info button, and one opens and closes', async
   await openView(page, 'cycle')
   await take()
   for (let i = 0; i < 3; i++) {
-    await page.getByRole('button', { name: /Next stage|Finish loop/ }).click()
+    await page.getByRole('button', { name: /Next stage|Finish the loop/ }).click()
     await take()
   }
 
   await openView(page, 'operation')
   await take()
-  await page.getByRole('button', { name: 'Shutdown', exact: true }).click()
+  await page.getByRole('button', { name: 'Stop steps', exact: true }).click()
   await take()
 
   await openView(page, 'optiview')
@@ -142,7 +142,7 @@ test('every card and slider has an info button, and one opens and closes', async
 test('info panel is a bottom sheet on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/york-chiller/')
-  const learn = page.getByRole('button', { name: 'Learn more about Hall supply' })
+  const learn = page.getByRole('button', { name: 'Information about Hall supply' })
   const box = await learn.boundingBox()
   expect(box?.width).toBeGreaterThanOrEqual(44)
   expect(box?.height).toBeGreaterThanOrEqual(44)

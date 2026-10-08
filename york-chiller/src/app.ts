@@ -29,16 +29,16 @@ import { linkGlossary } from './ui/glossary'
 import { InfoDock } from './ui/info'
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
-  { id: 'home', label: 'Live Plant', icon: 'home' },
-  { id: 'plant', label: 'Cooling Chain', icon: 'cycle' },
-  { id: 'explorer', label: '3D Plant Room', icon: 'explore' },
-  { id: 'cycle', label: 'Refrigerant Loop', icon: 'cycle' },
-  { id: 'operation', label: 'MOP Drill', icon: 'operate' },
+  { id: 'home', label: 'Live plant', icon: 'home' },
+  { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
+  { id: 'explorer', label: '3D plant room', icon: 'explore' },
+  { id: 'cycle', label: 'Refrigerant loop', icon: 'cycle' },
+  { id: 'operation', label: 'MOP drill', icon: 'operate' },
   { id: 'optiview', label: 'OptiView', icon: 'panel' },
-  { id: 'match', label: 'Icon Match', icon: 'match' },
-  { id: 'quiz', label: 'Knowledge Gate', icon: 'quiz' },
-  { id: 'trouble', label: 'Incident Clock', icon: 'trouble' },
-  { id: 'maintenance', label: 'Shift Deck', icon: 'wrench' },
+  { id: 'match', label: 'Icon match', icon: 'match' },
+  { id: 'quiz', label: 'Knowledge gate', icon: 'quiz' },
+  { id: 'trouble', label: 'Incident clock', icon: 'trouble' },
+  { id: 'maintenance', label: 'Shift deck', icon: 'wrench' },
 ]
 
 function pipeCardInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
@@ -115,8 +115,8 @@ export class App {
   private optiTab: 'home' | 'mbc' | 'alarms' = 'home'
   private running = true
   private optiLog: { text: string; kind?: string }[] = [
-    { text: 'CH-01 online · BMS link simulated' },
-    { text: 'NOC watch desk — trainer mode', kind: 'warn' },
+    { text: 'CH-01 is online. The BMS link is a simulation.' },
+    { text: 'The NOC watch is in trainer mode.', kind: 'warn' },
   ]
 
   constructor(root: HTMLElement) {
@@ -194,7 +194,7 @@ export class App {
     if (!this.progress.explored.includes(id)) {
       this.progress.explored.push(id)
       this.progress = addXp(this.progress, 8)
-      this.toast(`System unlocked · ${COMPONENTS.find((c) => c.id === id)?.short} (+8 XP)`)
+      this.toast(`You unlocked ${COMPONENTS.find((c) => c.id === id)?.short}. You gain 8 XP.`)
     }
     this.persist()
   }
@@ -208,13 +208,13 @@ export class App {
         <div class="brand">
           <div class="brand-mark"><span>YMC²</span></div>
           <div>
-            <h1>Plant Trainer</h1>
-            <p>Mission-critical CHW · DC</p>
+            <h1>Plant trainer</h1>
+            <p>CHW for a data center</p>
           </div>
         </div>
-        <div class="dc-badge">LIVE SIM · DATA CENTER</div>
+        <div class="dc-badge">Live simulation · data center</div>
         <div class="rank-card">
-          <div class="tier">RANK T${rank.tier}</div>
+          <div class="tier">Rank T${rank.tier}</div>
           <strong data-rank>${rank.title}</strong>
         </div>
         <div class="mastery">
@@ -233,7 +233,7 @@ export class App {
             </button>`,
           ).join('')}
         </nav>
-        <p class="nav-note">Train like the hall is live. Themes from YORK YMC² O&amp;M + N+1 / MOP / NOC discipline.</p>
+        <p class="nav-note">Operate as if the hall is live. The topics are the YORK YMC² O&amp;M, N+1, the MOP, and the NOC.</p>
       </aside>
       <main class="main" id="view"></main>
       <div class="toast" id="toast"></div>
@@ -314,24 +314,24 @@ export class App {
   private homeHtml() {
     const s = this.snap
     const missions = [
-      { id: 'plant', title: 'Cooling chain', desc: 'IT → CHW water → YMC² → tower water + glycol dry cooler', done: this.progress.plantComplete },
-      { id: 'explorer', title: '3D walkdown', desc: 'Click every assembly in the plant room', done: this.progress.explored.length >= 8 },
-      { id: 'cycle', title: 'Refrigerant loop', desc: 'Animated vapor-compression tour', done: this.progress.cycleComplete },
-      { id: 'operation', title: 'MOP start/stop', desc: 'Redundancy before you touch production', done: this.progress.operationComplete },
-      { id: 'optiview', title: 'OptiView board', desc: 'Drive CH-01 like a live panel', done: this.progress.optiviewComplete },
-      { id: 'match', title: 'Icon match', desc: 'Instant system recognition', done: this.progress.matchBest >= 8 },
-      { id: 'quiz', title: 'Knowledge gate', desc: 'Ten DC + O&M questions', done: this.progress.quizBest >= 8 },
-      { id: 'trouble', title: 'Incident clock', desc: 'Decide under a ticking NOC timer', done: this.progress.troubleSolved.length >= 5 },
-      { id: 'maintenance', title: 'Shift deck', desc: '24/7 check awareness', done: this.progress.maintenanceComplete },
+      { id: 'plant', title: 'Cooling chain', desc: 'IT load, then CHW, then the YMC², then the cooling tower and the dry cooler', done: this.progress.plantComplete },
+      { id: 'explorer', title: '3D walkdown', desc: 'Select every assembly in the plant room', done: this.progress.explored.length >= 8 },
+      { id: 'cycle', title: 'Refrigerant loop', desc: 'Follow the vapor-compression path', done: this.progress.cycleComplete },
+      { id: 'operation', title: 'MOP drill', desc: 'Make sure of redundancy before you touch the plant', done: this.progress.operationComplete },
+      { id: 'optiview', title: 'OptiView', desc: 'Operate CH-01 from the panel', done: this.progress.optiviewComplete },
+      { id: 'match', title: 'Icon match', desc: 'Match each icon to a system', done: this.progress.matchBest >= 8 },
+      { id: 'quiz', title: 'Knowledge gate', desc: 'Ten questions on the plant and the O&M', done: this.progress.quizBest >= 8 },
+      { id: 'trouble', title: 'Incident clock', desc: 'Select an action before the NOC timer ends', done: this.progress.troubleSolved.length >= 5 },
+      { id: 'maintenance', title: 'Shift deck', desc: 'Review the tasks for a plant that runs all day', done: this.progress.maintenanceComplete },
     ]
     return `
       <div class="view-head">
         <div>
-          <h2>Central plant · live board</h2>
-          <p>This isn’t flashcards. Watch IT heat move through the plant, stress the weather, throw incidents, then train the muscle memory.</p>
+          <h2>Central plant, live board</h2>
+          <p>This trainer is not a card deck. Watch the IT heat move through the plant. Change the weather. Start an incident. Repeat the steps until they are familiar.</p>
         </div>
         <div class="weather-seg" ${infoAttr('weather-preset')}>
-          <button type="button" data-oat="40" class="${s.oatF <= 50 ? 'on' : ''}">40°F economizer</button>
+          <button type="button" data-oat="40" class="${s.oatF <= 50 ? 'on' : ''}">40°F cold</button>
           <button type="button" data-oat="75" class="${s.oatF > 50 && s.oatF < 90 ? 'on' : ''}">75°F mild</button>
           <button type="button" data-oat="100" class="${s.oatF >= 90 ? 'on' : ''}">100°F hot</button>
         </div>
@@ -341,12 +341,12 @@ export class App {
       <div class="mimic">
         <div class="mimic-flow"><i></i></div>
         <div class="mimic-grid">
-          ${this.mimicNode('it', '01', 'IT Load', `${s.itLoadMw} MW compute heat`, 'quiz', 'mimic-it')}
-          ${this.mimicNode('crah', '02', 'CRAH / CDU', `SA ${s.hallSupplyF}°F · RA ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
-          ${this.mimicNode('chw', '03', 'CHW Loop', `DP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
+          ${this.mimicNode('it', '01', 'IT load', `${s.itLoadMw} MW of IT heat`, 'quiz', 'mimic-it')}
+          ${this.mimicNode('crah', '02', 'CRAH / CDU', `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
+          ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
           ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
-          ${this.mimicNode('tower', '05', 'Tower + dry cooler', `WB ${s.wbF}°F · OAT ${s.oatF}°F · glycol ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
-          ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'ESCALATED' : 'Watch desk green', 'trouble', 'mimic-noc', Boolean(s.alarm))}
+          ${this.mimicNode('tower', '05', 'Cooling tower and dry cooler', `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
+          ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'Escalated' : 'The watch desk is normal', 'trouble', 'mimic-noc', Boolean(s.alarm))}
         </div>
       </div>
       <p class="plant-reason" id="plant-reason">${s.reason}</p>
@@ -363,7 +363,7 @@ export class App {
                   <h3>${m.title}</h3>
                   <p>${m.desc}</p>
                 </div>
-                <span class="status">${m.done ? 'DONE' : 'OPEN'}</span>
+                <span class="status">${m.done ? 'Done' : 'Open'}</span>
               </button>`,
               )
               .join('')}
@@ -371,14 +371,14 @@ export class App {
         </div>
         <div class="card" ${infoAttr('chaos-board')}>
           <h3>Inject chaos</h3>
-          <p class="empty-state" style="margin-bottom:12px">Stress the live board, then jump into Incident Clock with the same failure mode.</p>
+          <p class="empty-state" style="margin-bottom:12px">Apply a fault on the live board. Then open the incident clock for the same fault.</p>
           <div style="display:grid;gap:8px">
-            <button class="btn amber" type="button" data-incident="high-head" ${infoAttr('chaos-high-head')}>Peak weather · high head</button>
-            <button class="btn amber" type="button" data-incident="hall-hot" ${infoAttr('chaos-hall-hot')}>Hall hot · chiller idle</button>
-            <button class="btn rose" type="button" data-incident="landing" ${infoAttr('chaos-landing')}>ATS landing event</button>
-            <button class="btn rose" type="button" data-incident="failover" ${infoAttr('chaos-failover')}>Lead trip · failover</button>
-            <button class="btn ghost" type="button" data-incident="clear" ${infoAttr('chaos-clear')}>Clear incident</button>
-            <button class="btn" type="button" data-go="trouble">Open Incident Clock →</button>
+            <button class="btn amber" type="button" data-incident="high-head" ${infoAttr('chaos-high-head')}>Peak weather, high head</button>
+            <button class="btn amber" type="button" data-incident="hall-hot" ${infoAttr('chaos-hall-hot')}>Hot hall, low chiller load</button>
+            <button class="btn rose" type="button" data-incident="landing" ${infoAttr('chaos-landing')}>ATS landing</button>
+            <button class="btn rose" type="button" data-incident="failover" ${infoAttr('chaos-failover')}>Lead trip and failover</button>
+            <button class="btn ghost" type="button" data-incident="clear" ${infoAttr('chaos-clear')}>Clear the incident</button>
+            <button class="btn" type="button" data-go="trouble">Open the incident clock</button>
           </div>
         </div>
       </div>
@@ -407,11 +407,11 @@ export class App {
     const hallBad = s.hallSupplyF > 78
     const headBad = s.ch01.condPsig > 115
     return `
-      <div class="kpi ${hallBad ? 'bad' : 'ok'}" ${infoAttr('kpi-hall')}><div class="label">HALL SUPPLY</div><div class="val" data-k="hall">${s.hallSupplyF}°F</div></div>
+      <div class="kpi ${hallBad ? 'bad' : 'ok'}" ${infoAttr('kpi-hall')}><div class="label">Hall supply</div><div class="val" data-k="hall">${s.hallSupplyF}°F</div></div>
       <div class="kpi" ${infoAttr('kpi-lchlt')}><div class="label">LCHLT</div><div class="val" data-k="lchlt">${s.lchltAct}°F</div></div>
-      <div class="kpi" ${infoAttr('kpi-it')}><div class="label">IT LOAD</div><div class="val" data-k="it">${s.itLoadMw} MW</div></div>
-      <div class="kpi ${headBad ? 'warn' : ''}" ${infoAttr('kpi-head')}><div class="label">CH-01 HEAD</div><div class="val" data-k="head">${s.ch01.condPsig} psig</div></div>
-      <div class="kpi" ${infoAttr('kpi-outdoor')}><div class="label">OUTDOOR</div><div class="val" data-k="cwet">${s.oatF}°F</div></div>
+      <div class="kpi" ${infoAttr('kpi-it')}><div class="label">IT load</div><div class="val" data-k="it">${s.itLoadMw} MW</div></div>
+      <div class="kpi ${headBad ? 'warn' : ''}" ${infoAttr('kpi-head')}><div class="label">CH-01 head</div><div class="val" data-k="head">${s.ch01.condPsig} psig</div></div>
+      <div class="kpi" ${infoAttr('kpi-outdoor')}><div class="label">Outdoor</div><div class="val" data-k="cwet">${s.oatF}°F</div></div>
       <div class="kpi ${s.ch01.mode === 'alarm' ? 'bad' : 'ok'}" ${infoAttr('kpi-ch01')}><div class="label">CH-01</div><div class="val" data-k="ch1">${s.ch01.rla}%</div></div>
     `
   }
@@ -451,12 +451,12 @@ export class App {
       }
     }
     const bodies: Record<string, string> = {
-      it: `${s.itLoadMw} MW compute heat`,
-      crah: `SA ${s.hallSupplyF}°F · RA ${s.hallReturnF}°F`,
-      chw: `DP ${s.chwDpPsi} psi`,
+      it: `${s.itLoadMw} MW of IT heat`,
+      crah: `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`,
+      chw: `ΔP ${s.chwDpPsi} psi`,
       ch1: `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`,
-      tower: `WB ${s.wbF}°F · OAT ${s.oatF}°F · glycol ${s.freeCoolPct}%`,
-      noc: s.alarm ? 'ESCALATED' : 'Watch desk green',
+      tower: `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`,
+      noc: s.alarm ? 'Escalated' : 'The watch desk is normal',
     }
     for (const [id, text] of Object.entries(bodies)) {
       const el = this.root.querySelector(`[data-mimic-body="${id}"]`)
@@ -488,11 +488,11 @@ export class App {
           this.sim.incident = null
           this.sim.ch01Running = true
           this.sim.ch02Running = false
-          this.toast('Plant stabilized')
+          this.toast('The plant is stable.')
         } else {
           this.sim.incident = v as typeof this.sim.incident
           if (v === 'failover') this.sim.ch02Running = false
-          this.toast('Incident injected — board is live')
+          this.toast('The incident is active. The board is live.')
         }
         this.snap = this.sim.tick()
         this.patchLiveBoard()
@@ -506,7 +506,7 @@ export class App {
       <div class="view-head">
         <div>
           <h2>Cooling chain</h2>
-          <p>Where the YMC² sits in a mission-critical plant. Know upstream and downstream before you touch setpoints.</p>
+          <p>See where the YMC² sits in the plant. Know the upstream equipment and the downstream equipment before you change a setpoint.</p>
         </div>
         <span class="chip">Link ${this.plantIndex + 1}/${PLANT_NODES.length}</span>
       </div>
@@ -524,7 +524,7 @@ export class App {
         <p class="empty-state">${node.detail}</p>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
           <button class="btn ghost" type="button" data-plant-prev>Previous</button>
-          <button class="btn" type="button" data-plant-next>${this.plantIndex === PLANT_NODES.length - 1 ? 'Clear chain' : 'Next link'}</button>
+          <button class="btn" type="button" data-plant-next>${this.plantIndex === PLANT_NODES.length - 1 ? 'Finish the path' : 'Next unit'}</button>
         </div>
       </div>
     `
@@ -546,7 +546,7 @@ export class App {
         if (!this.progress.plantComplete) {
           this.progress.plantComplete = true
           this.progress = addXp(this.progress, 25)
-          this.toast('Cooling chain cleared (+25 XP)')
+          this.toast('You completed the cooling chain. You gain 25 XP.')
           this.persist()
         }
         return
@@ -559,9 +559,9 @@ export class App {
   private detailHtml() {
     const info = COMPONENTS.find((c) => c.id === this.selected)
     if (!info) {
-      return `<span class="tag">READY</span><h3>Pick a system</h3><p class="empty-state">Use the rail (best on phones) or tap the model. Mag bearings glow rose; OptiView is mint.</p><div class="tip">Clear all eight for walkdown credit.</div>`
+      return `<span class="tag">Ready</span><h3>Select a system</h3><p class="empty-state">Use the buttons on the rail, or select the model. The rail is the best control on a phone. Magnetic bearings glow rose. The OptiView area glows green.</p><div class="tip">Complete all eight assemblies for walkdown credit.</div>`
     }
-    return `<span class="tag">${info.short}</span><h3>${info.name}</h3><p class="empty-state">${info.summary}</p><ul>${info.details.map((d) => `<li>${d}</li>`).join('')}</ul><div class="tip"><strong>Operator tip:</strong> ${info.operatorTip}</div>`
+    return `<span class="tag">${info.short}</span><h3>${info.name}</h3><p class="empty-state">${info.summary}</p><ul>${info.details.map((d) => `<li>${d}</li>`).join('')}</ul><div class="tip"><strong>Operator action:</strong> ${info.operatorTip}</div>`
   }
 
   private hotspotRailHtml() {
@@ -588,7 +588,7 @@ export class App {
       rail.innerHTML = this.hotspotRailHtml()
       this.bindExplorerRail(rail)
     }
-    if (chip) chip.textContent = `${this.progress.explored.length}/8 explored`
+    if (chip) chip.textContent = `${this.progress.explored.length} of 8 complete`
   }
 
   private onExplorerSelect(id: ComponentId) {
@@ -617,17 +617,17 @@ export class App {
       <div class="view-head">
         <div>
           <h2>3D plant room</h2>
-          <p>Teal pipes are chilled water to the hall. Gold pipes are condenser water to the tower. Violet pipes are glycol to the dry cooler.</p>
+          <p>Teal pipes are CHW to the hall. Gold pipes are CW to the cooling tower. Violet pipes are glycol to the dry cooler.</p>
         </div>
-        <span class="chip" id="explore-chip">${this.progress.explored.length}/8 explored</span>
+        <span class="chip" id="explore-chip">${this.progress.explored.length} of 8 complete</span>
       </div>
       <div class="hero-panel">
         <div class="canvas-wrap">
           <div class="canvas-hud">
             <span class="pill">CH-01 · N+1</span>
-            <span class="pill" id="canvas-status">Loading 3D…</span>
+            <span class="pill" id="canvas-status">The 3D view starts.</span>
           </div>
-          <div class="canvas-boot" id="canvas-boot">Spinning up plant model…</div>
+          <div class="canvas-boot" id="canvas-boot">The plant model starts.</div>
           <canvas id="chiller-canvas"></canvas>
         </div>
         <aside class="detail-pane" id="detail" ${infoAttr(this.selected ? componentInfoId(this.selected) : 'detail-ready')}>${this.detailHtml()}</aside>
@@ -650,7 +650,7 @@ export class App {
         <h3>${title}</h3>
         <div class="pt-row"><span>${enterTag}</span><b id="pt-${line}-enter-t">—</b><b id="pt-${line}-enter-p">—</b></div>
         <div class="pt-row"><span>${leaveTag}</span><b id="pt-${line}-leave-t">—</b><b id="pt-${line}-leave-p">—</b></div>
-        <label ${infoAttr(pipeSliderInfo(line))}>Balancing valve <output id="${line}-valve-out">${valve}%</output>
+        <label ${infoAttr(pipeSliderInfo(line))}>Balance valve <output id="${line}-valve-out">${valve}%</output>
           <input id="${line}-valve" type="range" min="15" max="100" step="1" value="${valve}" />
         </label>
         <p class="dp-read" id="${line}-dp-read">ΔP —</p>
@@ -660,15 +660,15 @@ export class App {
       <section class="pipe-board" id="pipe-board">
         <div class="pipe-head">
           <h3>Field instruments</h3>
-          <label class="oat-row" ${infoAttr('slider-oat')}>Outdoor dry bulb <output id="oat-out">${s.oatF}°F</output>
+          <label class="oat-row" ${infoAttr('slider-oat')}>Outdoor dry-bulb <output id="oat-out">${s.oatF}°F</output>
             <input id="oat" type="range" min="20" max="110" step="1" value="${s.oatF}" />
           </label>
           <p id="pipe-note">${s.reason}</p>
         </div>
         <div class="pipe-grid">
-          ${card('chw', 'Chilled water · hall', 'CHWR', 'CHWS', s.chwValvePct)}
-          ${card('cw', 'Condenser water · tower', 'CWS', 'CWR', s.cwValvePct)}
-          ${card('gly', 'Glycol · dry cooler', 'GLS', 'GLR', s.glycolValvePct)}
+          ${card('chw', 'CHW to the hall', 'CHWR', 'CHWS', s.chwValvePct)}
+          ${card('cw', 'CW to the cooling tower', 'CWS', 'CWR', s.cwValvePct)}
+          ${card('gly', 'Glycol to the dry cooler', 'GLS', 'GLR', s.glycolValvePct)}
         </div>
       </section>`
   }
@@ -730,19 +730,19 @@ export class App {
       cw.classList.toggle('bad', s.cwDpPsi < 8 || s.cwDpPsi > 18)
     }
     if (gly) {
-      gly.textContent = `ΔP ${s.glycolDpPsi.toFixed(1)} psi · free cool ${s.freeCoolPct}%`
+      gly.textContent = `ΔP ${s.glycolDpPsi.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
       gly.classList.toggle('bad', s.oatF <= 48 && s.glycolDpPsi < 8)
     }
-    set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% stem`)
-    set('cw-gain', `${s.cwHeadGain.toFixed(1)} psi of head per 10% · WB ${s.wbF}°F`)
-    set('gly-gain', `${s.glycolGain.toFixed(1)} psi per 10% · dry fans ${s.dryFanPct}%`)
+    set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% of stem`)
+    set('cw-gain', `${s.cwHeadGain.toFixed(1)} psi of head per 10%. Wet-bulb ${s.wbF}°F`)
+    set('gly-gain', `${s.glycolGain.toFixed(1)} psi per 10%. Dry cooler fans ${s.dryFanPct}%`)
     const note = this.root.querySelector('#pipe-note')
     if (note) {
       const warn =
         s.chwDpPsi < 12
-          ? 'CHW ΔP is low. Open the chilled-water valve before the hall warms. '
+          ? 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
           : s.chwDpPsi > 24
-            ? 'CHW ΔP is high. Ease that valve back. '
+            ? 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
             : ''
       this.relinkText(note, warn + s.reason)
     }
@@ -776,8 +776,8 @@ export class App {
       const mod = await import('./3d/chillerScene')
       if (this.view !== 'explorer') return
       if (!mod.webglAvailable()) {
-        if (status) status.textContent = '3D unavailable'
-        if (boot) boot.textContent = 'WebGL unavailable — use buttons.'
+        if (status) status.textContent = 'The 3D view is not available.'
+        if (boot) boot.textContent = 'WebGL is not available. Use the buttons.'
         canvas.style.display = 'none'
         return
       }
@@ -792,12 +792,12 @@ export class App {
       this.scene.setFans(this.snap.dryFanPct, this.snap.towerFanPct)
       this.scene.setReadings(this.sceneReadings())
       if (this.selected) this.scene.select(this.selected)
-      if (status) status.textContent = mod.isLowPowerClient() ? 'Light 3D' : 'Orbit · tap a part'
+      if (status) status.textContent = mod.isLowPowerClient() ? 'Low-detail 3D' : 'Turn the model. Select a part.'
       boot?.remove()
     } catch (e) {
       console.error(e)
-      if (status) status.textContent = '3D failed'
-      if (boot) boot.textContent = '3D failed — buttons still train you.'
+      if (status) status.textContent = 'The 3D view failed.'
+      if (boot) boot.textContent = 'The 3D view failed. Use the buttons.'
       canvas.style.display = 'none'
     }
   }
@@ -814,7 +814,7 @@ export class App {
       <div class="view-head">
         <div>
           <h2>Refrigerant loop</h2>
-          <p>Heat from the hall enters as warm CHW return. Trace compression and rejection.</p>
+          <p>Heat from the hall enters as warm CHWR. Follow compression and heat rejection.</p>
         </div>
         <span class="chip">Stage ${this.cycleIndex + 1}/${CYCLE_NODES.length}</span>
       </div>
@@ -844,7 +844,7 @@ export class App {
         <p class="empty-state"><strong>${node.phase}</strong> — ${node.detail}</p>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
           <button class="btn ghost" type="button" data-cycle-prev>Previous</button>
-          <button class="btn" type="button" data-cycle-next>${this.cycleIndex === CYCLE_NODES.length - 1 ? 'Finish loop' : 'Next stage'}</button>
+          <button class="btn" type="button" data-cycle-next>${this.cycleIndex === CYCLE_NODES.length - 1 ? 'Finish the loop' : 'Next stage'}</button>
         </div>
       </div>
     `
@@ -866,7 +866,7 @@ export class App {
         if (!this.progress.cycleComplete) {
           this.progress.cycleComplete = true
           this.progress = addXp(this.progress, 25)
-          this.toast('Loop cleared (+25 XP)')
+          this.toast('You completed the refrigerant loop. You gain 25 XP.')
           this.persist()
         }
         return
@@ -882,11 +882,11 @@ export class App {
       <div class="view-head">
         <div>
           <h2>MOP drill</h2>
-          <p>Ticket → redundancy → power → water → start. Soft stop only after standby carries load.</p>
+          <p>The order is the ticket, then redundancy, then power, then water, and then the start. Use a soft stop only after the standby unit has the load.</p>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn ${this.opMode === 'start' ? '' : 'ghost'}" type="button" data-mode="start">Startup</button>
-          <button class="btn ${this.opMode === 'stop' ? 'amber' : 'ghost'}" type="button" data-mode="stop">Shutdown</button>
+          <button class="btn ${this.opMode === 'start' ? '' : 'ghost'}" type="button" data-mode="start">Start steps</button>
+          <button class="btn ${this.opMode === 'stop' ? 'amber' : 'ghost'}" type="button" data-mode="stop">Stop steps</button>
         </div>
       </div>
       <div class="steps">
@@ -921,7 +921,7 @@ export class App {
           if (!this.progress.operationComplete) {
             this.progress.operationComplete = true
             this.progress = addXp(this.progress, 30)
-            this.toast('MOP drill cleared (+30 XP)')
+            this.toast('You completed the MOP drill. You gain 30 XP.')
             this.persist()
           }
           this.opIndex = 0
@@ -936,10 +936,10 @@ export class App {
     return `
       <div class="view-head">
         <div>
-          <h2>OptiView · CH-01</h2>
-          <p>Panel tied to the live plant sim. Soft stop, safety stop, setpoint, MBC status.</p>
+          <h2>OptiView, CH-01</h2>
+          <p>The panel uses the live plant simulation. Use the soft stop, the safety stop, the setpoint, and the MBC status.</p>
         </div>
-        <span class="chip">${this.running ? 'RUNNING' : 'STOPPED'} · ${s.ch01.mbc}</span>
+        <span class="chip">${this.running ? 'In operation' : 'Stopped'} · ${s.ch01.mbc}</span>
       </div>
       <div class="optiview">
         <div class="optiview-top">
@@ -958,11 +958,11 @@ export class App {
               <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.sim.lchltSet}" style="width:100%;margin-top:6px"/>
             </label>
             <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.running ? 'disabled' : ''}>Start</button>
-            <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.running ? 'disabled' : ''}>Soft Shutdown</button>
-            <button class="btn rose" type="button" data-opti="safety" ${infoAttr('opti-safety')}>Safety Stop</button>
+            <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.running ? 'disabled' : ''}>Soft stop</button>
+            <button class="btn rose" type="button" data-opti="safety" ${infoAttr('opti-safety')}>Safety stop</button>
             <button class="btn ghost" type="button" data-opti="warn" ${infoAttr('opti-warn')}>Hall warning</button>
-            <button class="btn ghost" type="button" data-opti="noc" ${infoAttr('opti-noc')}>Page NOC</button>
-            <button class="btn ghost" type="button" data-opti="done" ${infoAttr('opti-done')}>Mark complete</button>
+            <button class="btn ghost" type="button" data-opti="noc" ${infoAttr('opti-noc')}>Page the NOC</button>
+            <button class="btn ghost" type="button" data-opti="done" ${infoAttr('opti-done')}>Mark the drill complete</button>
           </div>
         </div>
       </div>
@@ -978,11 +978,11 @@ export class App {
           <div class="gauge" ${infoAttr('gauge-landings')}><div class="label">LANDINGS</div><div class="value">${this.sim.incident === 'landing' ? 1 : 0}</div></div>
           <div class="gauge" ${infoAttr('gauge-vibe')}><div class="label">1× VIBE</div><div class="value">${(0.12 + Math.sin(s.t) * 0.02).toFixed(2)}</div></div>
         </div>
-        <div class="schematic">AXIAL  ·····●·····  gap ok
+        <div class="schematic">AXIAL  ·····●·····  gap normal
 RADIAL X ····●····  centered
 RADIAL Y ····●····  centered
 TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
-        <div class="message-log"><div class="${s.ch01.mbc === 'LANDED' ? 'alarm' : ''}">MBC stream · ${s.ch01.mbc}</div></div>`
+        <div class="message-log"><div class="${s.ch01.mbc === 'LANDED' ? 'alarm' : ''}">MBC status: ${s.ch01.mbc}</div></div>`
     }
     if (this.optiTab === 'alarms') {
       return `<div class="message-log">${this.optiLog
@@ -1039,7 +1039,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     })
     el.querySelector<HTMLInputElement>('#lchlt')?.addEventListener('input', (e) => {
       this.sim.lchltSet = Number((e.target as HTMLInputElement).value)
-      this.optiLog.push({ text: `Setpoint → ${this.sim.lchltSet.toFixed(1)}°F LCHLT` })
+      this.optiLog.push({ text: `Setpoint ${this.sim.lchltSet.toFixed(1)}°F LCHLT` })
       this.patchOptiLive()
     })
     el.querySelectorAll<HTMLButtonElement>('[data-opti]').forEach((btn) => {
@@ -1048,25 +1048,25 @@ COND ══╝     CHW → CRAH → HALL</div>
         if (a === 'start') {
           this.running = true
           this.sim.ch01Running = true
-          this.optiLog.push({ text: 'Start accepted — MBC levitating, VSD ramping' })
+          this.optiLog.push({ text: 'The start is accepted. The MBC levitates the rotor. The VSD increases speed.' })
         } else if (a === 'soft') {
           this.running = false
           this.sim.ch01Running = false
-          this.optiLog.push({ text: 'Soft shutdown — controlled deceleration' })
+          this.optiLog.push({ text: 'Soft stop. The speed decreases under control.' })
         } else if (a === 'safety') {
           this.running = false
           this.sim.ch01Running = false
-          this.optiLog.push({ text: 'SAFETY STOP', kind: 'alarm' })
+          this.optiLog.push({ text: 'Safety stop.', kind: 'alarm' })
         } else if (a === 'warn') {
-          this.optiLog.push({ text: 'WARNING: condenser approach / hall risk', kind: 'warn' })
+          this.optiLog.push({ text: 'Warning. Condenser approach and hall risk.', kind: 'warn' })
         } else if (a === 'noc') {
-          this.optiLog.push({ text: 'NOC TICKET OPENED', kind: 'alarm' })
-          this.toast('NOC paged (sim)')
+          this.optiLog.push({ text: 'The NOC ticket is open.', kind: 'alarm' })
+          this.toast('The trainer sent a message to the NOC.')
         } else if (a === 'done') {
           if (!this.progress.optiviewComplete) {
             this.progress.optiviewComplete = true
             this.progress = addXp(this.progress, 25)
-            this.toast('OptiView cleared (+25 XP)')
+            this.toast('You completed the OptiView drill. You gain 25 XP.')
             this.persist()
           }
         }
@@ -1078,7 +1078,7 @@ COND ══╝     CHW → CRAH → HALL</div>
   private matchHtml() {
     return `
       <div class="view-head">
-        <div><h2>Icon match</h2><p>Icon → system. Perfect board = rounds muscle memory.</p></div>
+        <div><h2>Icon match</h2><p>Match each icon to a system. A complete board builds recognition.</p></div>
         <div class="scoreline">
           <span class="chip">${this.matchScore}/8</span>
           <span class="chip">Best ${this.progress.matchBest}/8</span>
@@ -1126,7 +1126,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     el.querySelectorAll<HTMLButtonElement>('[data-label]').forEach((btn) => {
       btn.addEventListener('click', () => {
         if (!this.matchSelectedIcon) {
-          this.toast('Pick an icon first')
+          this.toast('Select an icon first.')
           return
         }
         const labelId = btn.dataset.label!
@@ -1140,13 +1140,13 @@ COND ══╝     CHW → CRAH → HALL</div>
           }
           if (this.matchScore === 8) {
             this.progress = addXp(this.progress, 40)
-            this.toast('Perfect board (+40 XP)')
+            this.toast('The board is complete. You gain 40 XP.')
             this.persist()
           }
           this.renderView()
         } else {
           btn.classList.add('wrong')
-          this.toast('Wrong system')
+          this.toast('That match is not correct.')
           window.setTimeout(() => btn.classList.remove('wrong'), 400)
         }
       })
@@ -1155,8 +1155,8 @@ COND ══╝     CHW → CRAH → HALL</div>
 
   private quizHtml() {
     if (this.quizIndex >= this.quizOrder.length) {
-      return `<div class="view-head"><div><h2>Gate complete</h2><p>Score ${this.quizScore}/${this.quizOrder.length}. Best ${Math.max(this.progress.quizBest, this.quizScore)}.</p></div></div>
-        <div class="quiz-card" ${infoAttr('quiz-done')}><button class="btn" type="button" data-quiz-restart>Retry shuffled</button></div>`
+      return `<div class="view-head"><div><h2>Gate complete</h2><p>Your score is ${this.quizScore} of ${this.quizOrder.length}. The best score is ${Math.max(this.progress.quizBest, this.quizScore)}.</p></div></div>
+        <div class="quiz-card" ${infoAttr('quiz-done')}><button class="btn" type="button" data-quiz-restart>Retry the questions</button></div>`
     }
     const q = this.quizOrder[this.quizIndex]
     return `
@@ -1197,7 +1197,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           else if (idx === i) b.classList.add('wrong')
         })
         if (i === q.answer) this.quizScore += 1
-        feedback.innerHTML = `<div class="feedback">${i === q.answer ? 'Correct. ' : 'Not quite. '}${q.explain}</div>`
+        feedback.innerHTML = `<div class="feedback">${i === q.answer ? 'That answer is correct. ' : 'That answer is not correct. '}${q.explain}</div>`
         linkGlossary(feedback)
         next.style.display = 'inline-flex'
       })
@@ -1209,7 +1209,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         if (this.quizScore > this.progress.quizBest) this.progress.quizBest = this.quizScore
         this.progress = addXp(this.progress, this.quizScore * 5)
         this.persist()
-        this.toast(`Gate: ${this.quizScore}/${QUIZ.length}`)
+        this.toast(`Knowledge gate score: ${this.quizScore} of ${QUIZ.length}.`)
       }
       this.renderView()
     })
@@ -1227,7 +1227,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         el.classList.toggle('critical', this.troubleSeconds <= 12)
       }
       if (this.troubleSeconds <= 0) {
-        this.toast('NOC timer expired — still answer')
+        this.toast('The NOC timer expired. Select an answer.')
         if (this.troubleTimer) clearInterval(this.troubleTimer)
       }
     }, 1000)
@@ -1246,12 +1246,12 @@ COND ══╝     CHW → CRAH → HALL</div>
       <div class="view-head">
         <div>
           <h2>Incident clock</h2>
-          <p>Scenario ${this.troubleIndex + 1}/${TROUBLE_CASES.length}. Live board is stressed. First action under time pressure.</p>
+          <p>This is scenario ${this.troubleIndex + 1} of ${TROUBLE_CASES.length}. The live board has the same fault. Select the first safe action before the timer ends.</p>
         </div>
         <div class="scoreline">
           <span class="timer ${this.troubleSeconds <= 12 ? 'critical' : ''}" id="incident-timer">${this.troubleSeconds}s</span>
-          <span class="chip">${this.progress.troubleSolved.length}/${TROUBLE_CASES.length}</span>
-          <button class="btn ghost" type="button" data-tr-prev>Prev</button>
+          <span class="chip">${this.progress.troubleSolved.length} of ${TROUBLE_CASES.length}</span>
+          <button class="btn ghost" type="button" data-tr-prev>Previous</button>
           <button class="btn ghost" type="button" data-tr-next>Next</button>
         </div>
       </div>
@@ -1270,7 +1270,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         </div>
         ${
           this.troublePicked !== null
-            ? `<div class="feedback">${t.options[this.troublePicked].feedback}<br/><br/><strong>Takeaway:</strong> ${t.teach}</div>`
+            ? `<div class="feedback">${t.options[this.troublePicked].feedback}<br/><br/><strong>Key point:</strong> ${t.teach}</div>`
             : ''
         }
       </div>`
@@ -1298,7 +1298,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           const bonus = this.troubleSeconds > 20 ? 30 : 20
           this.progress.troubleSolved.push(t.id)
           this.progress = addXp(this.progress, bonus)
-          this.toast(`Incident cleared (+${bonus} XP)`)
+          this.toast(`You cleared the incident. You gain ${bonus} XP.`)
           this.persist()
         }
         this.renderView()
@@ -1311,7 +1311,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     const done = items.every((i) => this.maintChecks.has(i.id))
     return `
       <div class="view-head">
-        <div><h2>Shift deck</h2><p>Tap to acknowledge 24/7 awareness items.</p></div>
+        <div><h2>Shift deck</h2><p>Select each item to record that you saw it.</p></div>
         <span class="chip">${this.maintChecks.size}/${items.length}</span>
       </div>
       <div class="maint-grid">
@@ -1325,7 +1325,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           )
           .join('')}
       </div>
-      ${done ? `<div class="feedback" style="margin-top:16px">Deck complete. Live work still follows site MOPs.</div>` : ''}`
+      ${done ? `<div class="feedback" style="margin-top:16px">The deck is complete. Live work still follows the site MOP.</div>` : ''}`
   }
 
   private bindMaintenance(el: Element) {
@@ -1337,7 +1337,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         if (this.maintChecks.size === MAINT_ITEMS.length && !this.progress.maintenanceComplete) {
           this.progress.maintenanceComplete = true
           this.progress = addXp(this.progress, 25)
-          this.toast('Shift deck cleared (+25 XP)')
+          this.toast('You completed the shift deck. You gain 25 XP.')
           this.persist()
         }
         this.renderView()
