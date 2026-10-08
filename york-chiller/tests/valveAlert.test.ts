@@ -22,13 +22,16 @@ test('steady red marks are the valve thresholds', () => {
   assert.equal(valveZone('chw', 41, 75), 'ok')
   assert.equal(valveZone('chw', 92, 75), 'ok')
   assert.equal(valveZone('chw', 93, 75), 'high')
-  assert.equal(valveZone('cw', 44, 75), 'low')
+  assert.equal(valveZone('cw', 43, 75), 'low')
+  assert.equal(valveZone('cw', 44, 75), 'ok')
   assert.equal(valveZone('cw', 45, 75), 'ok')
   assert.equal(valveZone('cw', 100, 75), 'ok')
   assert.equal(valveZone('gly', 15, 49), 'ok')
   assert.equal(valveZone('gly', 15, 48), 'low')
   assert.equal(valveZone('gly', 90, 48), 'ok')
   assert.equal(valveZone('gly', 15, 20), 'ok')
+  assert.equal(valveZone('gly', 22, 40), 'low')
+  assert.equal(valveZone('gly', 23, 40), 'ok')
 })
 
 test('a red entry alerts once, and later ticks in that zone do not enter again', () => {
@@ -116,4 +119,28 @@ test('glycol red follows outdoor temperature and does not repeat while the valve
 
   const open = step(held.state, { gly: 90, oatF: 40 })
   assert.equal(open.show, null)
+})
+
+test('two valves that enter red on the same tick show the later loop', () => {
+  const state = seedValveAlert(reading())
+  const both = step(state, { chw: 20, cw: 30 })
+  assert.equal(both.entered, true)
+  assert.equal(both.show?.loop, 'cw')
+  assert.match(both.show?.text ?? '', /CW return temperature rise/)
+})
+
+test('hall-hot 9.5 psi does not raise a valve alert that contradicts the board', () => {
+  const state = seedValveAlert(reading())
+  const hot = step(state, { chwDp: 9.5 })
+  assert.equal(hot.entered, false)
+  assert.equal(hot.show, null)
+
+  const wide = step(hot.state, { chw: 100, chwDp: 9.5 })
+  assert.equal(wide.entered, false)
+  assert.equal(wide.show, null)
+
+  const shut = step(wide.state, { chw: 20, chwDp: 9.5 })
+  assert.equal(shut.entered, true)
+  assert.equal(shut.show?.zone, 'low')
+  assert.match(shut.show?.text ?? '', /trainer limit of 12 psi/)
 })

@@ -25,15 +25,7 @@ import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { openTroubleView, shuffleChoices, troubleStep, type TroubleDestination } from './troubleOrder'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantController, type PlantChangeDetail } from './sim/controller'
-import {
-  chwHeaderDpPsi,
-  cwHeaderDpPsi,
-  glycolHeaderDpPsi,
-  isIncidentKind,
-  rankFor,
-  type IncidentKind,
-  type PlantSnapshot,
-} from './sim/plantSim'
+import { chwHeaderDpPsi, isIncidentKind, rankFor, type IncidentKind, type PlantSnapshot } from './sim/plantSim'
 import {
   dismissValveAlert,
   reduceValveAlert,
@@ -112,6 +104,13 @@ function pipeSliderInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
   }
 }
 
+/** Home CHW card only. The snapshot stays steady so the pipe board can match the incident. */
+function homeChwDpText(s: PlantSnapshot): string {
+  const steady = Math.round(chwHeaderDpPsi(s.chwValvePct) * 10) / 10
+  const live = s.chwDpPsi === steady ? s.chwDpPsi + Math.sin(s.t / 9) * 0.3 : s.chwDpPsi
+  return live.toFixed(1)
+}
+
 function lchltHint(s: PlantSnapshot): string {
   if (s.alarm && s.alarm.includes('LCHLT setpoint fights')) return s.alarm
   return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
@@ -131,6 +130,9 @@ export class App {
     cw: this.snap.cwValvePct,
     gly: this.snap.glycolValvePct,
     oatF: this.snap.oatF,
+    chwDp: this.snap.chwDpPsi,
+    cwDp: this.snap.cwDpPsi,
+    glyDp: this.snap.glycolDpPsi,
   })
   private raf = 0
   private lastFrame = 0
@@ -419,7 +421,7 @@ export class App {
         <div class="mimic-grid">
           ${this.mimicNode('it', '01', 'IT load', `${s.itLoadMw} MW of IT heat`, 'quiz', 'mimic-it')}
           ${this.mimicNode('crah', '02', 'CRAH / CDU', `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
-          ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
+          ${this.mimicNode('chw', '03', 'CHW loop', `ΔP ${homeChwDpText(s)} psi`, 'plant', 'mimic-chw')}
           ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
           ${this.mimicNode('tower', '05', 'Cooling tower and dry cooler', `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
           ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'Escalated' : 'The watch desk is normal', 'trouble', 'mimic-noc', Boolean(s.alarm))}
@@ -584,7 +586,7 @@ export class App {
     const bodies: Record<string, string> = {
       it: `${s.itLoadMw} MW of IT heat`,
       crah: `Supply ${s.hallSupplyF}°F · Return ${s.hallReturnF}°F`,
-      chw: `ΔP ${s.chwDpPsi} psi`,
+      chw: `ΔP ${homeChwDpText(s)} psi`,
       ch1: `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% FLA`,
       tower: `Wet-bulb ${s.wbF}°F · Dry-bulb ${s.oatF}°F · free cooling ${s.freeCoolPct}%`,
       noc: s.alarm ? 'Escalated' : 'The watch desk is normal',
@@ -866,20 +868,17 @@ export class App {
     const chw = this.root.querySelector('#chw-dp-read')
     const cw = this.root.querySelector('#cw-dp-read')
     const gly = this.root.querySelector('#gly-dp-read')
-    const chwDp = chwHeaderDpPsi(s.chwValvePct)
-    const cwDp = cwHeaderDpPsi(s.cwValvePct)
-    const glyDp = glycolHeaderDpPsi(s.glycolValvePct, s.oatF)
     if (chw) {
-      chw.textContent = `ΔP ${chwDp.toFixed(1)} psi · target ${s.chwTargetPsi}`
-      chw.classList.toggle('bad', chwDp < VALVE_RED.chwDpLowPsi || chwDp > VALVE_RED.chwDpHighPsi)
+      chw.textContent = `ΔP ${s.chwDpPsi.toFixed(1)} psi · target ${s.chwTargetPsi}`
+      chw.classList.toggle('bad', s.chwDpPsi < VALVE_RED.chwDpLowPsi || s.chwDpPsi > VALVE_RED.chwDpHighPsi)
     }
     if (cw) {
-      cw.textContent = `ΔP ${cwDp.toFixed(1)} psi · fans ${s.towerFanPct}%`
-      cw.classList.toggle('bad', cwDp < VALVE_RED.cwDpLowPsi || cwDp > VALVE_RED.cwDpHighPsi)
+      cw.textContent = `ΔP ${s.cwDpPsi.toFixed(1)} psi · fans ${s.towerFanPct}%`
+      cw.classList.toggle('bad', s.cwDpPsi < VALVE_RED.cwDpLowPsi || s.cwDpPsi > VALVE_RED.cwDpHighPsi)
     }
     if (gly) {
-      gly.textContent = `ΔP ${glyDp.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
-      gly.classList.toggle('bad', s.oatF <= VALVE_RED.glyOatAtOrBelow && glyDp < VALVE_RED.glyDpLowPsi)
+      gly.textContent = `ΔP ${s.glycolDpPsi.toFixed(1)} psi · free cooling ${s.freeCoolPct}%`
+      gly.classList.toggle('bad', s.oatF <= VALVE_RED.glyOatAtOrBelow && s.glycolDpPsi < VALVE_RED.glyDpLowPsi)
     }
     set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% of stem`)
     const cwGain = this.root.querySelector('#cw-gain')
@@ -888,9 +887,9 @@ export class App {
     const note = this.root.querySelector('#pipe-note')
     if (note) {
       const warn =
-        chwDp < VALVE_RED.chwDpLowPsi
+        s.chwDpPsi < VALVE_RED.chwDpLowPsi
           ? 'The CHW ΔP is low. Open the CHW valve before the hall gets hot. '
-          : chwDp > VALVE_RED.chwDpHighPsi
+          : s.chwDpPsi > VALVE_RED.chwDpHighPsi
             ? 'The CHW ΔP is high. Decrease the opening of the CHW valve. '
             : ''
       this.relinkText(note, warn + s.reason)
@@ -1895,6 +1894,9 @@ COND ══╝     CHW → CRAH → HALL</div>
       cw: s.cwValvePct,
       gly: s.glycolValvePct,
       oatF: s.oatF,
+      chwDp: s.chwDpPsi,
+      cwDp: s.cwDpPsi,
+      glyDp: s.glycolDpPsi,
     }).state
     this.paintValveAlert()
   }

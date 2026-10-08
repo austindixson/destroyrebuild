@@ -78,3 +78,26 @@ test('a balance valve dragged into red shows one alert until it leaves', async (
   await expect(alert).toBeVisible()
   await expect(alert).toContainText('CRAHs do not get enough flow')
 })
+
+test('hall-hot prints 9.5 psi in red on the pipe board', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/york-chiller/')
+  await page.locator('#view button[data-incident="hall-hot"]').click()
+  await page.locator('.nav [data-nav="explorer"]').click()
+  const read = page.locator('#chw-dp-read')
+  await expect(read).toContainText('ΔP 9.5 psi')
+  await expect(read).toHaveClass(/bad/)
+  await expect(page.locator('#pt-chw-enter-p')).toHaveText('52.0 psi')
+  await expect(page.locator('#pt-chw-leave-p')).toHaveText('42.5 psi')
+  await expect(page.locator('#pipe-note')).toContainText('The CHW ΔP is low')
+})
+
+test('a CW valve at 44% prints 8.0 psi and does not alert below 8', async ({ page }) => {
+  test.setTimeout(60_000)
+  await openExplorer(page)
+  await setRange(page.locator('#cw-valve'), '44')
+  const read = page.locator('#cw-dp-read')
+  await expect(read).toContainText('ΔP 8.0 psi')
+  await expect(read).not.toHaveClass(/bad/)
+  await expect(page.locator('#valve-alert')).toBeHidden()
+})

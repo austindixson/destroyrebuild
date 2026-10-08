@@ -3,18 +3,20 @@ import { cwHeaderDpPsi, chwHeaderDpPsi, glycolHeaderDpPsi } from './plantSim'
 /**
  * Balance-valve red zones for the trainer.
  *
- * These are trainer limits, not a York manual table. The zone is the steady
- * header curve compared with these marks. The pipe board prints that same
- * steady value, so the red number and this alert describe one opening.
- * The live snapshot still adds a sine (CHW ±0.3 psi, CW ±0.2 psi) for the
- * mimic. That sine is not used here, and it does not change the pipe-board red.
+ * These are trainer limits, not a York manual table. The zone uses the same
+ * 0.1 psi round the pipe board prints. A raw 7.96 psi prints as 8.0, and 8.0
+ * is not below 8, so that opening is not red.
  *
- * Steady edges from chwHeaderDpPsi / cwHeaderDpPsi / glycolHeaderDpPsi:
- * - CHW 40% is 11.81 psi and 41% is 12.00 psi
- * - CHW 92% is 23.87 psi and 93% is 24.13 psi
- * - CW 44% is 7.96 psi and 45% is 8.08 psi
+ * Rounded edges from the header curves:
+ * - CHW 40% prints 11.8 psi and 41% prints 12.0 psi
+ * - CHW 92% prints 23.9 psi and 93% prints 24.1 psi
+ * - CW 43% prints 7.8 psi and 44% prints 8.0 psi
  * - A wide CW valve stays under 18 psi, so CW has no high zone
- * - Glycol red depends on outdoor temperature because cold glycol is thicker
+ * - Glycol 22% at 40°F prints 7.9 psi and 23% prints 8.1 psi
+ *
+ * Hall-hot replaces the CHW ΔP with 9.5 psi. If that printed value is not in
+ * the same zone as the valve curve, this alert stays quiet so it does not
+ * contradict the board. The home CHW card is the only place that adds wobble.
  *
  * applyFlowAlarm uses CHW below 42% and CW below 40%. Those faults sit next to
  * these marks.
@@ -39,13 +41,16 @@ export interface ValveReading {
   cw: number
   gly: number
   oatF: number
+  /** Printed header ΔP. When it disagrees with the valve curve, the alert stays quiet. */
+  chwDp?: number
+  cwDp?: number
+  glyDp?: number
 }
 
 export interface ValveAlertState {
   zones: Record<ValveLoop, ValveZone>
-  /** Red loop that owns the panel. Null when the panel is hidden. */
+  /** Red loop that owns the panel. Null when the panel is hidden, including after dismiss. */
   shown: ValveLoop | null
-  dismissed: boolean
 }
 
 export interface ValveAlertShow {
@@ -74,11 +79,11 @@ const GLY_LOW =
   'Flow to the dry cooler is low. The glycol valve is too far closed for this outdoor temperature, so the glycol ΔP is below the trainer limit of 8 psi.'
 
 export function seedValveAlert(reading: ValveReading): ValveAlertState {
-  return { zones: zonesFor(reading), shown: null, dismissed: false }
+  return { zones: zonesFor(reading), shown: null }
 }
 
 export function dismissValveAlert(state: ValveAlertState): ValveAlertState {
-  return { ...state, shown: null, dismissed: true }
+  return { ...state, shown: null }
 }
 
 export function valveAlertShow(state: ValveAlertState): ValveAlertShow | null {
@@ -94,14 +99,8 @@ export function reduceValveAlert(state: ValveAlertState, reading: ValveReading):
   const zones = zonesFor(reading)
   const enteredId = enteredLoop(state.zones, zones)
   let shown = enteredId ?? keepOrDowngrade(state.shown, zones)
-  let dismissed = state.dismissed
-  if (enteredId) dismissed = false
-  if (!enteredId && dismissed) shown = null
-  if (allClear(zones)) {
-    shown = null
-    dismissed = false
-  }
-  const next: ValveAlertState = { zones, shown, dismissed }
+  if (allClear(zones)) shown = null
+  const next: ValveAlertState = { zones, shown }
   return { state: next, show: valveAlertShow(next), entered: enteredId !== null }
 }
 
@@ -122,29 +121,40 @@ export function valveZone(loop: ValveLoop, pct: number, oatF: number): ValveZone
 
 function zonesFor(reading: ValveReading): Record<ValveLoop, ValveZone> {
   return {
-    chw: chwZone(reading.chw),
-    cw: cwZone(reading.cw),
-    gly: glyZone(reading.gly, reading.oatF),
+    chw: agree(chwZone(reading.chw), reading.chwDp, VALVE_RED.chwDpLowPsi, VALVE_RED.chwDpHighPsi),
+    cw: agree(cwZone(reading.cw), reading.cwDp, VALVE_RED.cwDpLowPsi, VALVE_RED.cwDpHighPsi),
+    gly: agree(glyZone(reading.gly, reading.oatF), reading.glyDp, VALVE_RED.glyDpLowPsi, Number.POSITIVE_INFINITY),
   }
 }
 
-function chwZone(pct: number): ValveZone {
-  const dp = chwHeaderDpPsi(pct)
-  if (dp < VALVE_RED.chwDpLowPsi) return 'low'
-  if (dp > VALVE_RED.chwDpHighPsi) return 'high'
+function shownPsi(dp: number): number {
+  return Math.round(dp * 10) / 10
+}
+
+function dpZone(dp: number, low: number, high: number): ValveZone {
+  if (dp < low) return 'low'
+  if (dp > high) return 'high'
   return 'ok'
 }
 
+/** A printed ΔP in a different zone hides the valve alert. */
+function agree(curve: ValveZone, boardDp: number | undefined, low: number, high: number): ValveZone {
+  if (curve === 'ok' || boardDp === undefined) return curve
+  if (dpZone(boardDp, low, high) !== curve) return 'ok'
+  return curve
+}
+
+function chwZone(pct: number): ValveZone {
+  return dpZone(shownPsi(chwHeaderDpPsi(pct)), VALVE_RED.chwDpLowPsi, VALVE_RED.chwDpHighPsi)
+}
+
 function cwZone(pct: number): ValveZone {
-  const dp = cwHeaderDpPsi(pct)
-  if (dp < VALVE_RED.cwDpLowPsi) return 'low'
-  if (dp > VALVE_RED.cwDpHighPsi) return 'high'
-  return 'ok'
+  return dpZone(shownPsi(cwHeaderDpPsi(pct)), VALVE_RED.cwDpLowPsi, VALVE_RED.cwDpHighPsi)
 }
 
 function glyZone(pct: number, oatF: number): ValveZone {
   if (oatF > VALVE_RED.glyOatAtOrBelow) return 'ok'
-  if (glycolHeaderDpPsi(pct, oatF) < VALVE_RED.glyDpLowPsi) return 'low'
+  if (shownPsi(glycolHeaderDpPsi(pct, oatF)) < VALVE_RED.glyDpLowPsi) return 'low'
   return 'ok'
 }
 
