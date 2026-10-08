@@ -2,16 +2,19 @@ import { spawn } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /**
  * Outer macOS seatbelt for one york CLI call.
  * deny default, then allow system libraries and a short mach-lookup list.
  * The real home is denied. The CLI binary, its helper chain, and auth files
  * are allowed after that deny, so last-match still runs a binary that lives
- * under the home. Reads of /private/var are not opened. Only this call's
- * temp directory is writable. Linux tests check the text. They do not run
- * sandbox-exec.
+ * under the home. A version directory under the home (cursor-agent, Claude,
+ * grok downloads) is allowed after that deny, plus /usr/bin/env and /bin/bash.
+ * The root inode is readable so stat of / succeeds. ~/Library/Keychains is
+ * readable only when the caller asks, so Claude can open login.keychain-db.
+ * Reads of /private/var are not opened. Only this call's temp directory is
+ * writable. Linux tests check the text. They do not run sandbox-exec.
  *
  * A nested sandbox-exec inside this profile is allowed to start. macOS can
  * still refuse the inner sandbox. The startup probe uses /bin/cat, not a CLI.
@@ -22,6 +25,10 @@ export interface SandboxSpec {
   binPath: string
   execPaths: string[]
   allowRead: string[]
+  /** Directories under the home that hold a CLI and its bundled runtime. */
+  allowExecTrees?: string[]
+  /** Read of ~/Library/Keychains. Claude opens login.keychain-db by path. */
+  allowKeychain?: boolean
 }
 
 export interface LaunchCommand {
@@ -45,6 +52,8 @@ const MACH_NAMES = [
   'com.apple.lsd.mapdb',
   'com.apple.SecurityServer',
   'com.apple.securityd',
+  'com.apple.secd',
+  'com.apple.SecurityAgent',
   'com.apple.ocspd',
   'com.apple.trustd',
   'com.apple.system.DirectoryService.libinfo_v1',
@@ -114,6 +123,37 @@ export function helperExecPaths(env: NodeJS.ProcessEnv): string[] {
   return found
 }
 
+const FIXED_INTERPRETERS = ['/usr/bin/env', '/bin/bash', '/bin/sh'] as const
+
+/** Shebang interpreters. cursor-agent is `#!/usr/bin/env bash`. */
+export function fixedInterpreters(): string[] {
+  const found: string[] = []
+  for (const path of FIXED_INTERPRETERS) {
+    const resolved = resolvedPath(path)
+    try {
+      accessSync(resolved, constants.X_OK)
+      found.push(resolved)
+    } catch {
+      // This host has no interpreter at that path.
+    }
+  }
+  return found
+}
+
+const CLOSED_TREE = ['.grok', '.claude', '.cursor', '.codex', '.ssh', '.config', 'Library'] as const
+
+/**
+ * The directory that holds a CLI installed under the real home.
+ * The home itself, and the auth directories, are not returned.
+ */
+export function execTreeUnderHome(resolved: string, realHome: string): string | null {
+  if (!realHome.startsWith('/') || !resolved.startsWith(`${realHome}/`)) return null
+  const dir = dirname(resolved)
+  if (dir === realHome || dir === '/') return null
+  if (CLOSED_TREE.some((name) => dir === `${realHome}/${name}`)) return null
+  return dir
+}
+
 function filterBlock(op: string, paths: readonly string[], form: 'subpath' | 'literal'): string {
   const body = paths.map((path) => `(${form} ${sbString(path)})`).join('\n  ')
   return `(${op}\n  ${body})`
@@ -148,6 +188,7 @@ export function macSandboxProfile(spec: SandboxSpec): string {
     '(allow network-bind)',
     `(allow mach-lookup\n  ${mach})`,
     `(allow file-ioctl (literal ${sbString('/dev/null')}))`,
+    '(allow file-read* (literal "/"))',
     `(deny file-read* (subpath ${sbString('/Users')}))`,
     `(deny file-write* (subpath ${sbString('/Users')}))`,
     `(deny file-read* (subpath ${sbString(home)}))`,
@@ -167,10 +208,19 @@ export function macSandboxProfile(spec: SandboxSpec): string {
     `(allow file-read* (subpath ${sbString(spec.tempDir)}))`,
     `(allow file-write* (subpath ${sbString(spec.tempDir)}))`,
   ]
+  const trees = unique(spec.allowExecTrees ?? [])
+  if (trees.length > 0) {
+    lines.push(filterBlock('allow process-exec', trees, 'subpath'))
+    lines.push(filterBlock('allow file-read*', trees, 'subpath'))
+    lines.push(filterBlock('allow file-map-executable', trees, 'subpath'))
+  }
   if (execs.length > 0) {
     lines.push(filterBlock('allow process-exec', execs, 'literal'))
     lines.push(filterBlock('allow file-read*', execs, 'literal'))
     lines.push(filterBlock('allow file-map-executable', execs, 'literal'))
+  }
+  if (spec.allowKeychain) {
+    lines.push(`(allow file-read* (subpath ${sbString(`${home}/Library/Keychains`)}))`)
   }
   if (auth.length > 0) lines.push(filterBlock('allow file-read*', auth, 'literal'))
   lines.push(

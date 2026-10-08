@@ -1,3 +1,4 @@
+import { redactReason } from './leak.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
 export interface Adapter {
@@ -17,7 +18,9 @@ export async function cascade(adapters: Adapter[], req: LlmRequest, signal: Abor
       if (!text) throw new Error('empty')
       return { text, provider: adapter.id, model: adapter.model }
     } catch (err) {
-      lastError = err instanceof Error ? err.message : 'error'
+      const message = err instanceof Error ? err.message : 'error'
+      lastError = message
+      console.log(`york-api cli ${adapter.id} failed reason=${redactReason(message)}`)
     }
   }
   throw new Error(lastError)

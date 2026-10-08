@@ -43,10 +43,22 @@ test('cascade skips an error, an empty answer, and a disabled provider', async (
 })
 
 test('cascade throws when every provider fails', async () => {
-  await assert.rejects(
-    () => cascade([adapter('grok', GROK_MODEL, async () => { throw new Error('down') })], req, new AbortController().signal),
-    /down/,
-  )
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    await assert.rejects(
+      () => cascade([adapter('grok', GROK_MODEL, async () => { throw new Error('exit=71 stderr=sk-ant-abcdefghij failed') })], req, new AbortController().signal),
+      /exit=71/,
+    )
+  } finally {
+    console.log = log
+  }
+  assert.equal(lines.some((line) => line.startsWith('york-api cli grok failed reason=')), true)
+  assert.equal(lines.some((line) => line.includes('sk-ant-')), false)
+  assert.equal(lines.some((line) => line.includes('[redacted]')), true)
 })
 
 test('local CLIs are the cascade and codex stays off until asked', () => {
@@ -54,15 +66,15 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(grok.includes('-p'), false)
   assert.equal(grokLaunchArgsOk(grok), true)
   assert.equal(grokLaunchArgsOk(['-p']), false)
-  assert.equal(GROK_BUDGET_MS, 45_000)
-  assert.equal(CLAUDE_BUDGET_MS, 25_000)
-  assert.equal(CURSOR_BUDGET_MS, 30_000)
-  assert.equal(CODEX_BUDGET_MS, 25_000)
+  assert.equal(GROK_BUDGET_MS, 40_000)
+  assert.equal(CLAUDE_BUDGET_MS, 15_000)
+  assert.equal(CURSOR_BUDGET_MS, 50_000)
+  assert.equal(CODEX_BUDGET_MS, 10_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS < 110_000)
   const off = tierBudgetMs({})
-  assert.deepEqual(off, { grok: 45_000, claude: 25_000, cursor: 30_000, codex: 25_000 })
+  assert.deepEqual(off, { grok: 40_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
   const on = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.deepEqual(on, { grok: 30_000, claude: 25_000, cursor: 25_000, codex: 25_000 })
+  assert.deepEqual(on, { grok: 35_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
   assert.ok(on.grok + on.claude + on.cursor + on.codex <= 110_000)
   const runner = {
     async run() {

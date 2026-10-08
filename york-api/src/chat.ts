@@ -2,7 +2,7 @@ import { createBudget, type Budget } from './budget.ts'
 import { budgetKey } from './ip.ts'
 import type { Inflight } from './inflight.ts'
 import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAILABLE } from './copy.ts'
-import { containsSecretMaterial, publicSecrets } from './leak.ts'
+import { containsSecretMaterial, publicSecrets, redactReason } from './leak.ts'
 import { finishAnswer } from './finish.ts'
 import { buildPrompt } from './prompt.ts'
 import { planTurn } from './turn.ts'
@@ -106,7 +106,9 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
       return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
     }
     return { http: 200, body }
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'error'
+    console.log(`york-api chat failed reason=${redactReason(message)}`)
     return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   } finally {
     gate.release()

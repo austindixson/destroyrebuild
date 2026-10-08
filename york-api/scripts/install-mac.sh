@@ -36,6 +36,18 @@ npm ci
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 
+# Checklist-only. The default install leaves the daily cap, the rate, and the tier override unset.
+TEST_CAPS=""
+if [[ "${YORK_TEST_CAPS:-}" == "1" ]]; then
+  TEST_CAPS='
+    <key>YORK_DAILY_MESSAGE_CAP</key>
+    <string>5</string>
+    <key>YORK_RATE_PER_MINUTE</key>
+    <string>1000</string>
+    <key>YORK_ALLOW_TIER_OVERRIDE</key>
+    <string>1</string>'
+fi
+
 umask 077
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -71,7 +83,7 @@ cat > "$PLIST" <<EOF
     <key>PATH</key>
     <string>$(xml_escape "$PATH_VALUE")</string>
     <key>YORK_LOG_CLIENT</key>
-    <string>1</string>
+    <string>1</string>${TEST_CAPS}
   </dict>
   <key>StandardOutPath</key>
   <string>$(xml_escape "$HOME/Library/Logs/york-api.log")</string>
@@ -89,3 +101,10 @@ launchctl enable "gui/${UID_NUM}/xyz.destroyrebuild.york-api"
 echo "york-api is loaded for gui/${UID_NUM} and listens on 127.0.0.1:${PORT}."
 echo "Publish it with: tailscale funnel --bg ${PORT}"
 echo "On the Railway static site set YORK_API_UPSTREAM to that funnel origin and YORK_PROXY_SECRET to the same secret."
+if [[ "${YORK_TEST_CAPS:-}" == "1" ]]; then
+  echo "Test caps are on: daily cap 5, rate 1000, YORK_ALLOW_TIER_OVERRIDE=1."
+  echo "Re-run install-mac.sh without YORK_TEST_CAPS to turn those off."
+else
+  echo "YORK_ALLOW_TIER_OVERRIDE is not set. Per-tier checklist steps need it."
+  echo "Re-run with YORK_TEST_CAPS=1 for the checklist, then re-run without YORK_TEST_CAPS to turn the override off."
+fi

@@ -45,6 +45,22 @@ export function containsSecretMaterial(text: string, secrets: readonly string[] 
   return false
 }
 
+const TOKEN_G = new RegExp(TOKEN.source, 'g')
+const AWS_KEY_G = new RegExp(AWS_KEY.source, 'g')
+const JWT_G = new RegExp(JWT.source, 'g')
+
+/** First stderr line for an operator log. Tokens are removed. The prompt is not included. */
+export function redactReason(text: string): string {
+  const line = text.split(/\r?\n/).find((row) => row.trim().length > 0) ?? ''
+  return line
+    .trim()
+    .slice(0, 180)
+    .replace(TOKEN_G, '[redacted]')
+    .replace(AWS_KEY_G, '[redacted]')
+    .replace(JWT_G, '[redacted]')
+    .replace(PRIVATE_KEY, '[redacted]')
+}
+
 /** Proxy secret and canary, when they are long enough to be unambiguous. */
 export function publicSecrets(env: NodeJS.ProcessEnv = process.env): string[] {
   const found: string[] = []

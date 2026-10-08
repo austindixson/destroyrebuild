@@ -18,15 +18,15 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 45_000
-export const CLAUDE_BUDGET_MS = 25_000
-export const CURSOR_BUDGET_MS = 30_000
-export const CODEX_BUDGET_MS = 25_000
+export const GROK_BUDGET_MS = 40_000
+export const CLAUDE_BUDGET_MS = 15_000
+export const CURSOR_BUDGET_MS = 50_000
+export const CODEX_BUDGET_MS = 10_000
 
-/** Codex off keeps 45/25/30. Codex on shares the 110 s deadline as 30/25/25/25. */
+/** Codex off is 40/15/50. Codex on shares the 110 s deadline as 35/10/50/10. */
 export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
-    return { grok: 30_000, claude: CLAUDE_BUDGET_MS, cursor: 25_000, codex: CODEX_BUDGET_MS }
+    return { grok: 35_000, claude: 10_000, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
   }
   return { grok: GROK_BUDGET_MS, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
 }

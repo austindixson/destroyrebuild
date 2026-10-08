@@ -1,11 +1,33 @@
 import { spawn } from 'node:child_process'
-import { codexArgs, codexLaunchArgsOk, grokArgs, grokLaunchArgsOk } from './providers.ts'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { redactReason } from './leak.ts'
+import {
+  codexArgs,
+  codexLaunchArgsOk,
+  grokArgs,
+  grokLaunchArgsOk,
+  nodeRunner,
+  prepareClaudeLaunch,
+  prepareCodexLaunch,
+  prepareCursorLaunch,
+  prepareGrokLaunch,
+  replyText,
+} from './providers.ts'
 import { applySandboxProbe, probeSandbox, resolveBin } from './sandbox.ts'
+import type { LlmRequest } from './types.ts'
 
 /** Log-and-warn floors. An older binary still serves. A missing binary does not. */
 export const CLAUDE_CLI_MIN = '2.1.293'
 export const CURSOR_CLI_MIN = '2026.07.17'
 export const GROK_CLI_MIN = '1.0.50'
+
+/** A healthy grok or cursor answer took about 35 s. Eight seconds only proves the process started. */
+export const SMOKE_MS = 8_000
+
+const SMOKE_PROMPT: LlmRequest = { system: 'Reply with one word.', user: 'hall' }
+const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void/i
 
 const CLAUDE_MIN = [2, 1, 293] as const
 const CURSOR_MIN = [2026, 7, 17] as const
@@ -129,6 +151,73 @@ export async function probeAndLogClis(env: NodeJS.ProcessEnv): Promise<void> {
     env.YORK_CODEX_CLI = 'unavailable'
   }
   applySandboxProbe(env, await probeSandbox(env))
+  if (env.YORK_SANDBOX === 'ready') await smokeClis(env)
+}
+
+export interface SmokeVerdict {
+  ok: boolean
+  reason: string
+}
+
+function launchFailed(code: number | null, stdout: string, stderr: string): boolean {
+  if (LAUNCH_FAIL.test(stderr)) return true
+  if (!stdout.trim() && (code === 71 || LAUNCH_FAIL.test(stdout))) return true
+  return false
+}
+
+/** Pure logic. A live CLI is not started here. */
+export function smokeVerdict(code: number | null, stdout: string, stderr: string, timedOut: boolean): SmokeVerdict {
+  const reason = `exit=${code ?? 'null'} stderr=${redactReason(stderr)}`
+  if (launchFailed(code, stdout, stderr)) return { ok: false, reason }
+  if (code === 0 && replyText(stdout)) return { ok: true, reason: 'answered' }
+  if (timedOut) return { ok: true, reason: 'started' }
+  return { ok: false, reason }
+}
+
+function noteSmoke(env: NodeJS.ProcessEnv, name: string, flag: CliFlag, verdict: SmokeVerdict): void {
+  if (verdict.ok) {
+    console.log(`york-api cli ${name} status=ready reason=smoke ${verdict.reason}`)
+    return
+  }
+  console.log(`york-api cli ${name} status=unavailable reason=smoke ${verdict.reason}`)
+  env[flag] = 'unavailable'
+}
+
+async function smokeOne(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  flag: CliFlag,
+  prepare: (dir: string) => Promise<Awaited<ReturnType<typeof prepareGrokLaunch>>>,
+): Promise<void> {
+  if (env[flag] === 'unavailable') return
+  const dir = await mkdtemp(join(tmpdir(), `york-smoke-${name}-`))
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SMOKE_MS)
+  try {
+    const launch = await prepare(dir)
+    const result = await nodeRunner.run(launch.cmd, launch.args, launch.input, launch.env, controller.signal, { cwd: launch.cwd })
+    clearTimeout(timer)
+    const timedOut = controller.signal.aborted
+    noteSmoke(env, name, flag, smokeVerdict(result.code, result.stdout, result.stderr, timedOut))
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'error'
+    noteSmoke(env, name, flag, { ok: false, reason: redactReason(message) })
+  } finally {
+    clearTimeout(timer)
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
+  const jobs = [
+    smokeOne(env, 'grok', 'YORK_GROK_CLI', (dir) => prepareGrokLaunch(dir, SMOKE_PROMPT, env)),
+    smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env)),
+    smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env)),
+  ]
+  if (env.YORK_CODEX === '1') {
+    jobs.push(smokeOne(env, 'codex', 'YORK_CODEX_CLI', (dir) => prepareCodexLaunch(dir, SMOKE_PROMPT, env)))
+  }
+  await Promise.all(jobs)
 }
 
 async function logOne(

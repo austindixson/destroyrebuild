@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { chmod, copyFile, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { helperExecPaths, launchCommand, macSandboxProfile, profileDeniesHome, resolveBin, resolvedPath } from './sandbox.ts'
+import { redactReason } from './leak.ts'
+import { execTreeUnderHome, fixedInterpreters, helperExecPaths, launchCommand, macSandboxProfile, profileDeniesHome, resolveBin, resolvedPath } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
@@ -217,10 +218,13 @@ export const GROK_COMPAT_OFF: Record<string, string> = {
   GROK_CURSOR_AGENTS_ENABLED: '0',
   GROK_CURSOR_MCPS_ENABLED: '0',
   GROK_CURSOR_HOOKS_ENABLED: '0',
+  // Session names follow the skills/rules pattern. grok 1.0.50 was not checked for these three.
+  GROK_CLAUDE_SESSIONS_ENABLED: '0',
+  GROK_CURSOR_SESSIONS_ENABLED: '0',
+  GROK_CODEX_SESSIONS_ENABLED: '0',
 }
 
 const GROK_AUTH = ['auth.json', 'credentials.json', '.credentials.json'] as const
-const CLAUDE_AUTH = ['.credentials.json', 'credentials.json'] as const
 const CURSOR_AUTH = ['auth.json', 'cli-auth.json'] as const
 
 export interface CliLaunch {
@@ -329,12 +333,24 @@ function tomlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
+function grokWritable(realHome: string, writableDir: string): string[] {
+  if (!writableDir.startsWith('/')) return []
+  if (writableDir === realHome || writableDir.startsWith(`${realHome}/`)) return []
+  return [
+    'read_write = [',
+    `  ${tomlString(writableDir)},`,
+    `  ${tomlString(`${writableDir}/**`)},`,
+    ']',
+  ]
+}
+
 /**
  * Absolute deny paths. Grok 1.0.50 does not expand $HOME or ~. Those strings
  * became folders inside the cwd. Auth is copied into the temp GROK_HOME, so
- * this profile does not allow a read of the real home.
+ * this profile does not allow a read of the real home. read_write names the
+ * per-request temp directory so grok can rewrite config.toml there.
  */
-export function grokSandboxToml(realHome: string): string {
+export function grokSandboxToml(realHome: string, writableDir = ''): string {
   const home = realHome.startsWith('/') ? realHome : '/Users'
   const deny = [
     home,
@@ -363,6 +379,7 @@ export function grokSandboxToml(realHome: string): string {
     'deny = [',
     ...deny.map((path) => `  ${tomlString(path)},`),
     ']',
+    ...grokWritable(home, writableDir),
     '',
   ].join('\n')
 }
@@ -390,6 +407,23 @@ async function linkAuth(sourceDir: string, destDir: string, names: readonly stri
     } catch {
       // The auth file is absent. The CLI may still use the keychain.
     }
+  }
+}
+
+/**
+ * Ghost128 stores the Claude account in ~/.claude.json. The login secrets
+ * stay in the macOS login keychain. There is no ~/.claude/.credentials.json.
+ */
+async function copyClaudeAccount(realHome: string, homeDir: string): Promise<void> {
+  const source = join(realHome, '.claude.json')
+  try {
+    const info = await lstat(source)
+    if (!info.isFile() && !info.isSymbolicLink()) return
+    const dest = join(homeDir, '.claude.json')
+    await copyFile(source, dest)
+    await chmod(dest, 0o600)
+  } catch {
+    // The account file is absent. Keychain login may still work.
   }
 }
 
@@ -424,39 +458,56 @@ function authPaths(home: string, dirName: string, names: readonly string[]): str
   return names.map((name) => join(home, dirName, name))
 }
 
-async function seatbeltWrap(
-  dir: string,
-  bin: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  realHome: string,
-  allowRead: string[],
-): Promise<{ cmd: string; args: string[] }> {
-  if (platform !== 'darwin') return { cmd: bin, args }
-  const resolved = resolveBin(bin, env)
+interface SeatbeltRequest {
+  dir: string
+  bin: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  platform: NodeJS.Platform
+  realHome: string
+  allowRead: string[]
+  allowKeychain: boolean
+}
+
+async function seatbeltWrap(spec: SeatbeltRequest): Promise<{ cmd: string; args: string[] }> {
+  if (spec.platform !== 'darwin') return { cmd: spec.bin, args: spec.args }
+  const resolved = resolveBin(spec.bin, spec.env)
   if (!resolved) throw new Error('sandbox wrapper skipped')
-  const home = resolvedPath(realHome)
-  const tempDir = resolvedPath(dir)
-  const execPaths = [resolved, ...helperExecPaths(env)]
+  const home = resolvedPath(spec.realHome)
+  const tempDir = resolvedPath(spec.dir)
+  const tree = execTreeUnderHome(resolved, home)
   const text = macSandboxProfile({
     realHome: home,
     tempDir,
     binPath: resolved,
-    execPaths,
-    allowRead,
+    execPaths: [resolved, ...fixedInterpreters(), ...helperExecPaths(spec.env)],
+    allowRead: spec.allowRead,
+    allowExecTrees: tree ? [tree] : [],
+    allowKeychain: spec.allowKeychain,
   })
   if (!profileDeniesHome(text, home)) throw new Error('sandbox profile void')
-  const profile = join(dir, '.york.sb')
+  const profile = join(spec.dir, '.york.sb')
   await writeFile(profile, text)
-  return launchCommand(resolved, args, profile, platform)
+  return launchCommand(resolved, spec.args, profile, spec.platform)
+}
+
+/** Exit code plus the first stderr line. Stdout is omitted so the prompt stays out of the log. */
+export function failureReason(code: number, stderr: string): string {
+  return `exit=${code} stderr=${redactReason(stderr)}`
 }
 
 async function runLaunch(launch: CliLaunch, signal: AbortSignal, run: ProcessRunner): Promise<string> {
   const result = await run.run(launch.cmd, launch.args, launch.input, launch.env, signal, { cwd: launch.cwd })
-  if (result.code !== 0) throw new Error('cli failed')
+  if (result.code !== 0) {
+    const reason = failureReason(result.code, result.stderr)
+    console.log(`york-api cli launch failed reason=${redactReason(reason)}`)
+    throw new Error(reason)
+  }
   const text = replyText(result.stdout)
-  if (!text) throw new Error('cli empty')
+  if (!text) {
+    console.log('york-api cli launch failed reason=cli empty')
+    throw new Error('cli empty')
+  }
   return text
 }
 
@@ -474,13 +525,22 @@ export async function prepareGrokLaunch(
   const promptFile = join(dir, 'prompt.txt')
   await writeFile(promptFile, promptOf(req))
   await writeFile(join(grokHome, 'config.toml'), grokConfigToml())
-  const sandbox = grokSandboxToml(realHome)
+  const sandbox = grokSandboxToml(realHome, resolvedPath(dir))
   await writeFile(join(grokHome, 'sandbox.toml'), sandbox)
   await writeFile(join(dir, '.grok', 'sandbox.toml'), sandbox)
   if (realHome) await copyAuth(join(realHome, '.grok'), grokHome, GROK_AUTH)
   const bin = env.GROK_BIN || 'grok'
   const args = grokArgs(promptFile)
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, [])
+  const wrapped = await seatbeltWrap({
+    dir,
+    bin,
+    args,
+    env,
+    platform,
+    realHome,
+    allowRead: [],
+    allowKeychain: false,
+  })
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
@@ -506,8 +566,17 @@ export async function prepareClaudeLaunch(
   const homeDir = await isolatedHome(dir)
   const bin = env.CLAUDE_BIN || 'claude'
   const args = claudeArgs(CLAUDE_MODEL)
-  if (realHome) await linkAuth(join(realHome, '.claude'), join(homeDir, '.claude'), CLAUDE_AUTH)
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.claude', CLAUDE_AUTH))
+  if (realHome) await copyClaudeAccount(realHome, homeDir)
+  const wrapped = await seatbeltWrap({
+    dir,
+    bin,
+    args,
+    env,
+    platform,
+    realHome,
+    allowRead: [],
+    allowKeychain: true,
+  })
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
@@ -533,7 +602,16 @@ export async function prepareCursorLaunch(
   const configDir = await prepareCursorWorkspace(homeDir, realHome)
   const bin = env.CURSOR_BIN || 'agent'
   const args = cursorArgs(CURSOR_MODEL, dir)
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.cursor', CURSOR_AUTH))
+  const wrapped = await seatbeltWrap({
+    dir,
+    bin,
+    args,
+    env,
+    platform,
+    realHome,
+    allowRead: authPaths(realHome, '.cursor', CURSOR_AUTH),
+    allowKeychain: false,
+  })
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
@@ -559,7 +637,16 @@ export async function prepareCodexLaunch(
   const bin = env.CODEX_BIN || 'codex'
   const args = codexArgs()
   if (realHome) await linkAuth(join(realHome, '.codex'), join(homeDir, '.codex'), ['auth.json'])
-  const wrapped = await seatbeltWrap(dir, bin, args, env, platform, realHome, authPaths(realHome, '.codex', ['auth.json']))
+  const wrapped = await seatbeltWrap({
+    dir,
+    bin,
+    args,
+    env,
+    platform,
+    realHome,
+    allowRead: authPaths(realHome, '.codex', ['auth.json']),
+    allowKeychain: false,
+  })
   return {
     cmd: wrapped.cmd,
     args: wrapped.args,
