@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ste": "node scripts/ste-check.mjs"
   },
   "dependencies": {
     "@types/three": "^0.186.0",

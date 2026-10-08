@@ -113,7 +113,7 @@ export class PlantSim {
       cwrF += 10
       cond += 28
       ch01Rla = Math.min(105, ch01Rla + 22)
-      alarm = 'HIGH CONDENSER PRESSURE · tower rejection limited'
+      alarm = 'High condenser pressure. The cooling tower cannot reject enough heat.'
       mode1 = 'alarm'
     } else if (this.incident === 'hall-hot') {
       hallSupplyF += 9
@@ -121,26 +121,26 @@ export class PlantSim {
       chwDpPsi = 9.5
       ch01Rla = Math.max(18, ch01Rla * 0.45)
       lchltAct = this.lchltSet + 0.2
-      alarm = 'HALL HOT · CHW delivery / CRAH path suspect (chiller unloaded)'
+      alarm = 'The hall is hot. Examine the CHW path and the CRAHs. The chiller load is low.'
     } else if (this.incident === 'landing') {
       mbc1 = 'LANDED'
       mode1 = 'alarm'
       ch01Rla = 0
       this.ch01Running = false
-      alarm = 'MBC POWER-FAIL LANDING · investigate UPS / ATS'
+      alarm = 'The MBC recorded a power-fail landing. Examine the UPS and the ATS.'
     } else if (this.incident === 'failover') {
       this.ch01Running = false
       mode1 = 'offline'
       ch01Rla = 0
       mbc1 = 'LANDED'
       if (!this.ch02Running) {
-        alarm = 'LEAD OFFLINE · STANDBY START INHIBIT'
+        alarm = 'The lead chiller is offline. The standby start has an inhibit.'
         mode2 = 'alarm'
         hallSupplyF += 6
       } else {
         mode2 = 'lead'
         ch02Rla = 55 + itLoadMw * 5
-        alarm = 'FAILOVER ACTIVE · CH-02 carrying load'
+        alarm = 'Failover is active. CH-02 has the load.'
       }
     }
 
@@ -148,12 +148,12 @@ export class PlantSim {
       const starve = (42 - this.chwValvePct) / 42
       hallSupplyF += starve * 6
       hallReturnF += starve * 7
-      alarm = 'LOW CHW ΔP · header valve is starving CRAHs'
+      alarm = 'The CHW ΔP is low. The header valve does not give the CRAHs enough flow.'
     } else if (!this.incident && this.cwValvePct < 40) {
       cond += (40 - this.cwValvePct) * 0.55
-      alarm = 'LOW CW ΔP · tower water flow is down, head will climb'
+      alarm = 'The CW ΔP is low. The cooling tower flow is low, and the head will increase.'
     } else if (!this.incident && oat < 48 && this.glycolValvePct < 30 && freeCoolPct < 8) {
-      alarm = 'Glycol economizer is shut. The dry cooler could be carrying part of this load.'
+      alarm = 'The glycol valve is shut. The dry cooler can remove part of this load.'
     }
 
     const chwTargetPsi = oat >= 92 ? 20 : oat <= 48 ? 14 : 17
@@ -266,23 +266,24 @@ function plantReason(p: {
   fansPinned: boolean
   dryFanPct: number
 }) {
+  const pct = Math.round(p.freeCoolPct)
   const heat =
     p.oat <= 48
-      ? `At ${p.oat}°F the dry cooler can take about ${Math.round(p.freeCoolPct)}% of the load in glycol, so the tower and the chiller both unload. Hold CHW water ΔP near ${p.chwTargetPsi} psi.`
+      ? `At ${p.oat}°F the dry cooler can remove about ${pct}% of the load, so the cooling tower and the chiller decrease load. Hold the CHW ΔP near ${p.chwTargetPsi} psi.`
       : p.oat >= 92
-        ? `At ${p.oat}°F glycol leaving the dry cooler is warmer than chilled-water return, so free cooling is gone. The tower (wet bulb ${p.wb.toFixed(0)}°F) is the heat sink. Hold CHW ΔP near ${p.chwTargetPsi} psi while head is high.`
-        : `Outdoor ${p.oat}°F, tower wet bulb ${p.wb.toFixed(0)}°F. Water ΔP target is about ${p.chwTargetPsi} psi. Glycol is only a trim.`
+        ? `At ${p.oat}°F glycol from the dry cooler is warmer than the CHWR, so the dry cooler cannot remove this heat. The cooling tower is the heat sink at wet-bulb ${p.wb.toFixed(0)}°F, so hold the CHW ΔP near ${p.chwTargetPsi} psi while the head is high.`
+        : `The outdoor temperature is ${p.oat}°F and the cooling tower wet-bulb is ${p.wb.toFixed(0)}°F. The CHW ΔP target is about ${p.chwTargetPsi} psi, and glycol removes only a small part of the heat.`
   const valve =
     p.chwValve < 40
-      ? ` The CHW water valve is on the steep part of the curve: 10% of stem is about ${p.chwGain.toFixed(1)} psi.`
+      ? ` The CHW valve is on the steep part of the flow curve, and a 10% stem move is about ${p.chwGain.toFixed(1)} psi.`
       : p.chwValve > 85
-        ? ` The CHW valve is almost wide open, so 10% more stem is only about ${p.chwGain.toFixed(1)} psi. Piping and coils are the restriction now.`
+        ? ` The CHW valve is almost fully open. A further 10% of stem gives only about ${p.chwGain.toFixed(1)} psi, because the piping and the coils are the restriction.`
         : ''
   const sink = p.fansPinned
-    ? ` Tower fans are pinned, so the condenser-water valve barely moves head (${p.cwHeadGain.toFixed(1)} psi per 10%).`
+    ? ` The cooling tower fans are at maximum speed, so the CW valve changes the head by only about ${p.cwHeadGain.toFixed(1)} psi per 10%.`
     : p.oat <= 48
-      ? ` Cold glycol is thicker, so the glycol valve is touchy: about ${p.glycolGain.toFixed(1)} psi per 10%, and it changes free cooling.`
-      : ` Condenser-water valve still moves head, about ${p.cwHeadGain.toFixed(1)} psi per 10%, because the tower has fan left.`
+      ? ` Cold glycol is thick, so a 10% valve move is about ${p.glycolGain.toFixed(1)} psi and changes the heat removal.`
+      : ` The CW valve still changes the head by about ${p.cwHeadGain.toFixed(1)} psi per 10%, because the cooling tower has spare fan capacity.`
   return heat + valve + sink
 }
 
@@ -296,5 +297,5 @@ export function rankFor(mastery: number, xp: number): { title: string; tier: num
   if (score >= 85) return { title: 'Plant Lead', tier: 4 }
   if (score >= 60) return { title: 'Shift Operator', tier: 3 }
   if (score >= 30) return { title: 'NOC Trainee', tier: 2 }
-  return { title: 'Yard Hand', tier: 1 }
+  return { title: 'New operator', tier: 1 }
 }
