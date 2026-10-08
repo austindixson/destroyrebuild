@@ -1552,3 +1552,237 @@ body::after {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* Info teaching control. One button, portaled panel. */
+.info-host {
+  position: relative;
+  min-width: 0;
+}
+
+.info-host > .info-btn {
+  appearance: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(46, 230, 214, 0.45);
+  background: rgba(8, 18, 28, 0.92);
+  color: var(--cyan);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.info-host > .info-btn:hover {
+  border-color: var(--cyan);
+}
+
+.info-host > .info-btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
+}
+
+.kpi.info-host .label,
+.gauge.info-host .label,
+.card.info-host > h3,
+.pipe-card.info-host > h3,
+.quiz-card.info-host > h3,
+.trouble-card.info-host > h3,
+.detail-pane.info-host > h3 {
+  padding-right: 36px;
+}
+
+.kpi.info-host .val,
+.gauge.info-host .value {
+  padding-right: 28px;
+}
+
+label.info-host,
+.weather-seg.info-host {
+  padding-right: 40px;
+}
+
+.info-host > .mission,
+.info-host > .match-tile,
+.info-host > .maint-item,
+.info-host > .mimic-node,
+.info-host > .plant-node,
+.info-host > .btn {
+  padding-right: 42px;
+}
+
+.mission-list > .info-host > .mission,
+.match-tiles > .info-host > .match-tile,
+.maint-grid > .info-host > .maint-item,
+.mimic-grid > .info-host > .mimic-node,
+.plant-flow > .info-host > .plant-node,
+.opti-actions > .info-host > .btn,
+.card .info-host > .btn {
+  width: 100%;
+}
+
+.mimic-grid > .info-host,
+.plant-flow > .info-host {
+  display: flex;
+}
+
+.mimic-grid > .info-host > .mimic-node,
+.plant-flow > .info-host > .plant-node {
+  flex: 1;
+}
+
+.info-host > .mimic-node .pulse {
+  right: 42px;
+}
+
+.step.info-host {
+  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+}
+
+.step.info-host > .info-btn {
+  position: static;
+  flex-shrink: 0;
+}
+
+.info-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+.info-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.info-panel {
+  position: fixed;
+  z-index: 1;
+  max-height: min(70vh, 440px);
+  overflow: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 12px;
+  font-family: var(--font);
+}
+
+.info-panel.sheet {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: 100%;
+  max-height: 70vh;
+  border-radius: 20px 20px 0 0;
+}
+
+.info-layer:has(.sheet) .info-backdrop {
+  background: rgba(5, 8, 13, 0.55);
+}
+
+.info-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.info-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.info-close {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.info-close:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.info-now {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: pre-line;
+  color: var(--cyan);
+}
+
+.info-points {
+  margin: 10px 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.info-points li + li {
+  margin-top: 6px;
+}
+
+.info-foot {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .info-host > .info-btn,
+  .step.info-host > .info-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .kpi.info-host .label,
+  .gauge.info-host .label,
+  .card.info-host > h3,
+  .pipe-card.info-host > h3,
+  .quiz-card.info-host > h3,
+  .trouble-card.info-host > h3,
+  .detail-pane.info-host > h3,
+  label.info-host,
+  .weather-seg.info-host {
+    padding-right: 50px;
+  }
+
+  .info-host > .mission,
+  .info-host > .match-tile,
+  .info-host > .maint-item,
+  .info-host > .mimic-node,
+  .info-host > .plant-node,
+  .info-host > .btn {
+    padding-right: 52px;
+  }
+
+  .info-host > .mimic-node .pulse {
+    right: 52px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .info-panel {
+    transition: none;
+  }
+}

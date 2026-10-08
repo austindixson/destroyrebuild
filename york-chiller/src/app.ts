@@ -8,13 +8,24 @@ import {
   SHUTDOWN_STEPS,
   STARTUP_STEPS,
   TROUBLE_CASES,
+  chainInfoId,
+  componentInfoId,
+  cycleInfoId,
+  infoAttr,
+  maintInfoId,
+  missionInfoId,
+  quizInfoId,
+  stepInfoId,
+  troubleInfoId,
   type ComponentId,
+  type InfoId,
   type ViewId,
 } from './data/content'
 import type { ChillerScene, SceneReadings } from './3d/chillerScene'
 import { addXp, loadProgress, masteryPercent, saveProgress, type ProgressState } from './progress'
 import { PlantSim, rankFor, type PlantSnapshot } from './sim/plantSim'
 import { iconSvg } from './ui/icons'
+import { InfoDock } from './ui/info'
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live Plant', icon: 'home' },
@@ -28,6 +39,36 @@ const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'trouble', label: 'Incident Clock', icon: 'trouble' },
   { id: 'maintenance', label: 'Shift Deck', icon: 'wrench' },
 ]
+
+function pipeCardInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
+  switch (line) {
+    case 'chw':
+      return 'pipe-chw'
+    case 'cw':
+      return 'pipe-cw'
+    case 'gly':
+      return 'pipe-gly'
+    default: {
+      const unknown: never = line
+      return unknown
+    }
+  }
+}
+
+function pipeSliderInfo(line: 'chw' | 'cw' | 'gly'): InfoId {
+  switch (line) {
+    case 'chw':
+      return 'slider-chw'
+    case 'cw':
+      return 'slider-cw'
+    case 'gly':
+      return 'slider-gly'
+    default: {
+      const unknown: never = line
+      return unknown
+    }
+  }
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr]
@@ -49,6 +90,8 @@ export class App {
   private snap: PlantSnapshot = this.sim.tick()
   private raf = 0
   private lastUi = 0
+  private lastInfo = 0
+  private info: InfoDock
 
   private opMode: 'start' | 'stop' = 'start'
   private opIndex = 0
@@ -78,6 +121,11 @@ export class App {
   constructor(root: HTMLElement) {
     this.root = root
     this.sim.ch01Running = true
+    this.info = new InfoDock(document.body, this.root, () => ({
+      snap: this.snap,
+      running: this.running,
+      landing: this.sim.incident === 'landing',
+    }))
     this.render()
     this.loop()
   }
@@ -97,6 +145,10 @@ export class App {
     if (this.view === 'explorer' && now - this.lastUi > 250) {
       this.lastUi = now
       this.patchPipeBoard()
+    }
+    if (now - this.lastInfo > 250) {
+      this.lastInfo = now
+      this.info.sync()
     }
   }
 
@@ -147,6 +199,7 @@ export class App {
   }
 
   render() {
+    this.info.dismiss()
     const pct = masteryPercent(this.progress)
     const rank = rankFor(pct, this.progress.xp)
     this.root.innerHTML = `
@@ -236,6 +289,7 @@ export class App {
       },
     }
     map[this.view]()
+    this.info.mount(el)
   }
 
   private homeHtml() {
@@ -257,7 +311,7 @@ export class App {
           <h2>Central plant · live board</h2>
           <p>This isn’t flashcards. Watch IT heat move through the plant, stress the weather, throw incidents, then train the muscle memory.</p>
         </div>
-        <div class="weather-seg">
+        <div class="weather-seg" ${infoAttr('weather-preset')}>
           <button type="button" data-oat="40" class="${s.oatF <= 50 ? 'on' : ''}">40°F economizer</button>
           <button type="button" data-oat="75" class="${s.oatF > 50 && s.oatF < 90 ? 'on' : ''}">75°F mild</button>
           <button type="button" data-oat="100" class="${s.oatF >= 90 ? 'on' : ''}">100°F hot</button>
@@ -268,23 +322,23 @@ export class App {
       <div class="mimic">
         <div class="mimic-flow"><i></i></div>
         <div class="mimic-grid">
-          ${this.mimicNode('it', '01', 'IT Load', `${s.itLoadMw} MW compute heat`, 'quiz')}
-          ${this.mimicNode('crah', '02', 'CRAH / CDU', `SA ${s.hallSupplyF}°F · RA ${s.hallReturnF}°F`, 'plant')}
-          ${this.mimicNode('chw', '03', 'CHW Loop', `DP ${s.chwDpPsi} psi`, 'plant')}
-          ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`, 'explorer', s.ch01.mode === 'alarm')}
-          ${this.mimicNode('tower', '05', 'Tower + dry cooler', `WB ${s.wbF}°F · OAT ${s.oatF}°F · glycol ${s.freeCoolPct}%`, 'cycle')}
-          ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'ESCALATED' : 'Watch desk green', 'trouble', Boolean(s.alarm))}
+          ${this.mimicNode('it', '01', 'IT Load', `${s.itLoadMw} MW compute heat`, 'quiz', 'mimic-it')}
+          ${this.mimicNode('crah', '02', 'CRAH / CDU', `SA ${s.hallSupplyF}°F · RA ${s.hallReturnF}°F`, 'plant', 'mimic-crah')}
+          ${this.mimicNode('chw', '03', 'CHW Loop', `DP ${s.chwDpPsi} psi`, 'plant', 'mimic-chw')}
+          ${this.mimicNode('ch1', '04', 'CH-01 YMC²', `${s.ch01.mode.toUpperCase()} · ${s.ch01.rla}% RLA`, 'explorer', 'mimic-chiller', s.ch01.mode === 'alarm')}
+          ${this.mimicNode('tower', '05', 'Tower + dry cooler', `WB ${s.wbF}°F · OAT ${s.oatF}°F · glycol ${s.freeCoolPct}%`, 'cycle', 'mimic-tower')}
+          ${this.mimicNode('noc', '06', 'NOC / BMS', s.alarm ? 'ESCALATED' : 'Watch desk green', 'trouble', 'mimic-noc', Boolean(s.alarm))}
         </div>
       </div>
       <p class="plant-reason" id="plant-reason">${s.reason}</p>
       <div class="home-split">
-        <div class="card">
+        <div class="card" ${infoAttr('drill-queue')}>
           <h3>Drill queue</h3>
           <div class="mission-list">
             ${missions
               .map(
                 (m) => `
-              <button type="button" class="mission ${m.done ? 'done' : ''}" data-go="${m.id}">
+              <button type="button" class="mission ${m.done ? 'done' : ''}" data-go="${m.id}" ${infoAttr(missionInfoId(m.id))}>
                 <div class="card-icon">${iconSvg(NAV.find((n) => n.id === m.id)?.icon ?? 'explore', 22)}</div>
                 <div>
                   <h3>${m.title}</h3>
@@ -296,15 +350,15 @@ export class App {
               .join('')}
           </div>
         </div>
-        <div class="card">
+        <div class="card" ${infoAttr('chaos-board')}>
           <h3>Inject chaos</h3>
           <p class="empty-state" style="margin-bottom:12px">Stress the live board, then jump into Incident Clock with the same failure mode.</p>
           <div style="display:grid;gap:8px">
-            <button class="btn amber" type="button" data-incident="high-head">Peak weather · high head</button>
-            <button class="btn amber" type="button" data-incident="hall-hot">Hall hot · chiller idle</button>
-            <button class="btn rose" type="button" data-incident="landing">ATS landing event</button>
-            <button class="btn rose" type="button" data-incident="failover">Lead trip · failover</button>
-            <button class="btn ghost" type="button" data-incident="clear">Clear incident</button>
+            <button class="btn amber" type="button" data-incident="high-head" ${infoAttr('chaos-high-head')}>Peak weather · high head</button>
+            <button class="btn amber" type="button" data-incident="hall-hot" ${infoAttr('chaos-hall-hot')}>Hall hot · chiller idle</button>
+            <button class="btn rose" type="button" data-incident="landing" ${infoAttr('chaos-landing')}>ATS landing event</button>
+            <button class="btn rose" type="button" data-incident="failover" ${infoAttr('chaos-failover')}>Lead trip · failover</button>
+            <button class="btn ghost" type="button" data-incident="clear" ${infoAttr('chaos-clear')}>Clear incident</button>
             <button class="btn" type="button" data-go="trouble">Open Incident Clock →</button>
           </div>
         </div>
@@ -318,10 +372,11 @@ export class App {
     title: string,
     body: string,
     go: ViewId,
+    infoId: InfoId,
     alarm = false,
   ) {
     return `
-      <button type="button" class="mimic-node ${alarm ? 'alarm' : ''}" data-mimic="${id}" data-go="${go}">
+      <button type="button" class="mimic-node ${alarm ? 'alarm' : ''}" data-mimic="${id}" data-go="${go}" ${infoAttr(infoId)}>
         <span class="pulse"></span>
         <div class="n">${n}</div>
         <h3>${title}</h3>
@@ -333,12 +388,12 @@ export class App {
     const hallBad = s.hallSupplyF > 78
     const headBad = s.ch01.condPsig > 115
     return `
-      <div class="kpi ${hallBad ? 'bad' : 'ok'}"><div class="label">HALL SUPPLY</div><div class="val" data-k="hall">${s.hallSupplyF}°F</div></div>
-      <div class="kpi"><div class="label">LCHLT</div><div class="val" data-k="lchlt">${s.lchltAct}°F</div></div>
-      <div class="kpi"><div class="label">IT LOAD</div><div class="val" data-k="it">${s.itLoadMw} MW</div></div>
-      <div class="kpi ${headBad ? 'warn' : ''}"><div class="label">CH-01 HEAD</div><div class="val" data-k="head">${s.ch01.condPsig} psig</div></div>
-      <div class="kpi"><div class="label">OUTDOOR</div><div class="val" data-k="cwet">${s.oatF}°F</div></div>
-      <div class="kpi ${s.ch01.mode === 'alarm' ? 'bad' : 'ok'}"><div class="label">CH-01</div><div class="val" data-k="ch1">${s.ch01.rla}%</div></div>
+      <div class="kpi ${hallBad ? 'bad' : 'ok'}" ${infoAttr('kpi-hall')}><div class="label">HALL SUPPLY</div><div class="val" data-k="hall">${s.hallSupplyF}°F</div></div>
+      <div class="kpi" ${infoAttr('kpi-lchlt')}><div class="label">LCHLT</div><div class="val" data-k="lchlt">${s.lchltAct}°F</div></div>
+      <div class="kpi" ${infoAttr('kpi-it')}><div class="label">IT LOAD</div><div class="val" data-k="it">${s.itLoadMw} MW</div></div>
+      <div class="kpi ${headBad ? 'warn' : ''}" ${infoAttr('kpi-head')}><div class="label">CH-01 HEAD</div><div class="val" data-k="head">${s.ch01.condPsig} psig</div></div>
+      <div class="kpi" ${infoAttr('kpi-outdoor')}><div class="label">OUTDOOR</div><div class="val" data-k="cwet">${s.oatF}°F</div></div>
+      <div class="kpi ${s.ch01.mode === 'alarm' ? 'bad' : 'ok'}" ${infoAttr('kpi-ch01')}><div class="label">CH-01</div><div class="val" data-k="ch1">${s.ch01.rla}%</div></div>
     `
   }
 
@@ -350,7 +405,16 @@ export class App {
       banner.textContent = s.alarm ?? ''
     }
     const strip = this.root.querySelector('#kpi-strip')
-    if (strip) strip.innerHTML = this.kpiHtml(s)
+    if (strip) {
+      const active = document.activeElement
+      const focusedId =
+        active instanceof HTMLButtonElement && strip.contains(active) ? active.dataset.infoBtn : undefined
+      strip.innerHTML = this.kpiHtml(s)
+      this.info.mount(strip)
+      if (focusedId) {
+        strip.querySelector<HTMLButtonElement>(`.info-btn[data-info-btn="${CSS.escape(focusedId)}"]`)?.focus()
+      }
+    }
     const bodies: Record<string, string> = {
       it: `${s.itLoadMw} MW compute heat`,
       crah: `SA ${s.hallSupplyF}°F · RA ${s.hallReturnF}°F`,
@@ -414,13 +478,13 @@ export class App {
       <div class="plant-flow">
         ${PLANT_NODES.map(
           (n, i) => `
-          <button type="button" class="plant-node ${i === this.plantIndex ? 'active' : ''}" data-plant="${i}">
+          <button type="button" class="plant-node ${i === this.plantIndex ? 'active' : ''}" data-plant="${i}" ${infoAttr(chainInfoId(n.id))}>
             <span class="n">0${i + 1}</span><strong>${n.label}</strong>
           </button>
           ${i < PLANT_NODES.length - 1 ? '<div class="plant-arrow">→</div>' : ''}`,
         ).join('')}
       </div>
-      <div class="card" style="margin-top:16px">
+      <div class="card" style="margin-top:16px" ${infoAttr(chainInfoId(node.id))}>
         <h3>${node.label}</h3>
         <p class="empty-state">${node.detail}</p>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
@@ -480,7 +544,11 @@ export class App {
     const detail = this.root.querySelector('#detail')
     const rail = this.root.querySelector('#hotspot-rail')
     const chip = this.root.querySelector('#explore-chip')
-    if (detail) detail.innerHTML = this.detailHtml()
+    if (detail instanceof HTMLElement) {
+      detail.dataset.info = this.selected ? componentInfoId(this.selected) : 'detail-ready'
+      detail.innerHTML = this.detailHtml()
+      this.info.mount(detail)
+    }
     if (rail) {
       rail.innerHTML = this.hotspotRailHtml()
       this.bindExplorerRail(rail)
@@ -527,7 +595,7 @@ export class App {
           <div class="canvas-boot" id="canvas-boot">Spinning up plant model…</div>
           <canvas id="chiller-canvas"></canvas>
         </div>
-        <aside class="detail-pane" id="detail">${this.detailHtml()}</aside>
+        <aside class="detail-pane" id="detail" ${infoAttr(this.selected ? componentInfoId(this.selected) : 'detail-ready')}>${this.detailHtml()}</aside>
       </div>
       <div class="hotspot-rail" id="hotspot-rail">${this.hotspotRailHtml()}</div>
       ${this.pipeBoardHtml()}
@@ -543,11 +611,11 @@ export class App {
       leaveTag: string,
       valve: number,
     ) => `
-      <article class="pipe-card" data-line="${line}">
+      <article class="pipe-card" data-line="${line}" ${infoAttr(pipeCardInfo(line))}>
         <h3>${title}</h3>
         <div class="pt-row"><span>${enterTag}</span><b id="pt-${line}-enter-t">—</b><b id="pt-${line}-enter-p">—</b></div>
         <div class="pt-row"><span>${leaveTag}</span><b id="pt-${line}-leave-t">—</b><b id="pt-${line}-leave-p">—</b></div>
-        <label>Balancing valve <output id="${line}-valve-out">${valve}%</output>
+        <label ${infoAttr(pipeSliderInfo(line))}>Balancing valve <output id="${line}-valve-out">${valve}%</output>
           <input id="${line}-valve" type="range" min="15" max="100" step="1" value="${valve}" />
         </label>
         <p class="dp-read" id="${line}-dp-read">ΔP —</p>
@@ -557,7 +625,7 @@ export class App {
       <section class="pipe-board" id="pipe-board">
         <div class="pipe-head">
           <h3>Field instruments</h3>
-          <label class="oat-row">Outdoor dry bulb <output id="oat-out">${s.oatF}°F</output>
+          <label class="oat-row" ${infoAttr('slider-oat')}>Outdoor dry bulb <output id="oat-out">${s.oatF}°F</output>
             <input id="oat" type="range" min="20" max="110" step="1" value="${s.oatF}" />
           </label>
           <p id="pipe-note">${s.reason}</p>
@@ -736,7 +804,7 @@ export class App {
           }).join('')}
         </svg>
       </div>
-      <div class="card" style="margin-top:14px">
+      <div class="card" style="margin-top:14px" ${infoAttr(cycleInfoId(node.id))}>
         <h3>${node.label}</h3>
         <p class="empty-state"><strong>${node.phase}</strong> — ${node.detail}</p>
         <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
@@ -790,7 +858,7 @@ export class App {
         ${steps
           .map((s, i) => {
             const cls = i < this.opIndex ? 'done' : i === this.opIndex ? 'active' : ''
-            return `<div class="step ${cls}">
+            return `<div class="step ${cls}" ${infoAttr(stepInfoId(this.opMode, s.id))}>
               <div class="step-num">${i < this.opIndex ? '✓' : i + 1}</div>
               <div><h4>${s.title}</h4><p>${s.body}</p></div>
               <button class="btn ghost" type="button" data-step="${i}" ${i !== this.opIndex ? 'disabled' : ''}>${i < this.opIndex ? 'Done' : 'Complete'}</button>
@@ -851,15 +919,15 @@ export class App {
         <div class="optiview-body">
           <div class="opti-screen" id="opti-screen">${this.optiScreenHtml()}</div>
           <div class="opti-actions">
-            <label style="font-size:.85rem;color:#86efac">LCHLT setpoint
+            <label style="font-size:.85rem;color:#86efac" ${infoAttr('slider-lchlt')}>LCHLT setpoint
               <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.sim.lchltSet}" style="width:100%;margin-top:6px"/>
             </label>
-            <button class="btn" type="button" data-opti="start" ${this.running ? 'disabled' : ''}>Start</button>
-            <button class="btn amber" type="button" data-opti="soft" ${!this.running ? 'disabled' : ''}>Soft Shutdown</button>
-            <button class="btn rose" type="button" data-opti="safety">Safety Stop</button>
-            <button class="btn ghost" type="button" data-opti="warn">Hall warning</button>
-            <button class="btn ghost" type="button" data-opti="noc">Page NOC</button>
-            <button class="btn ghost" type="button" data-opti="done">Mark complete</button>
+            <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.running ? 'disabled' : ''}>Start</button>
+            <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.running ? 'disabled' : ''}>Soft Shutdown</button>
+            <button class="btn rose" type="button" data-opti="safety" ${infoAttr('opti-safety')}>Safety Stop</button>
+            <button class="btn ghost" type="button" data-opti="warn" ${infoAttr('opti-warn')}>Hall warning</button>
+            <button class="btn ghost" type="button" data-opti="noc" ${infoAttr('opti-noc')}>Page NOC</button>
+            <button class="btn ghost" type="button" data-opti="done" ${infoAttr('opti-done')}>Mark complete</button>
           </div>
         </div>
       </div>
@@ -871,9 +939,9 @@ export class App {
     if (this.optiTab === 'mbc') {
       return `
         <div class="gauge-row">
-          <div class="gauge"><div class="label">MBC</div><div class="value" style="font-size:1.1rem;margin-top:8px">${s.ch01.mbc}</div></div>
-          <div class="gauge"><div class="label">LANDINGS</div><div class="value">${this.sim.incident === 'landing' ? 1 : 0}</div></div>
-          <div class="gauge"><div class="label">1× VIBE</div><div class="value">${(0.12 + Math.sin(s.t) * 0.02).toFixed(2)}</div></div>
+          <div class="gauge" ${infoAttr('gauge-mbc')}><div class="label">MBC</div><div class="value" style="font-size:1.1rem;margin-top:8px">${s.ch01.mbc}</div></div>
+          <div class="gauge" ${infoAttr('gauge-landings')}><div class="label">LANDINGS</div><div class="value">${this.sim.incident === 'landing' ? 1 : 0}</div></div>
+          <div class="gauge" ${infoAttr('gauge-vibe')}><div class="label">1× VIBE</div><div class="value">${(0.12 + Math.sin(s.t) * 0.02).toFixed(2)}</div></div>
         </div>
         <div class="schematic">AXIAL  ·····●·····  gap ok
 RADIAL X ····●····  centered
@@ -890,14 +958,14 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
     }
     return `
       <div class="gauge-row">
-        <div class="gauge"><div class="label">LCHLT SET</div><div class="value" data-ov="set">${s.lchltSet.toFixed(1)}°F</div></div>
-        <div class="gauge"><div class="label">LCHLT ACT</div><div class="value" data-ov="act">${this.running ? s.lchltAct.toFixed(1) : '58.2'}°F</div></div>
-        <div class="gauge"><div class="label">% RLA</div><div class="value" data-ov="rla">${this.running ? s.ch01.rla : 0}%</div></div>
+        <div class="gauge" ${infoAttr('gauge-set')}><div class="label">LCHLT SET</div><div class="value" data-ov="set">${s.lchltSet.toFixed(1)}°F</div></div>
+        <div class="gauge" ${infoAttr('gauge-act')}><div class="label">LCHLT ACT</div><div class="value" data-ov="act">${this.running ? s.lchltAct.toFixed(1) : '58.2'}°F</div></div>
+        <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% RLA</div><div class="value" data-ov="rla">${this.running ? s.ch01.rla : 0}%</div></div>
       </div>
       <div class="gauge-row">
-        <div class="gauge"><div class="label">EVAP</div><div class="value">${this.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
-        <div class="gauge"><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span style="font-size:.75rem"> psig</span></div></div>
-        <div class="gauge"><div class="label">HALL SA</div><div class="value" data-ov="hall">${s.hallSupplyF}°F</div></div>
+        <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
+        <div class="gauge" ${infoAttr('gauge-cond')}><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span style="font-size:.75rem"> psig</span></div></div>
+        <div class="gauge" ${infoAttr('gauge-hall')}><div class="label">HALL SA</div><div class="value" data-ov="hall">${s.hallSupplyF}°F</div></div>
       </div>
       <div class="schematic">EVAP ══╗
        ║  COMP ▶ VSD ▶ MBC ${s.ch01.mbc}
@@ -987,7 +1055,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           ${this.matchIcons
             .map((p) => {
               const locked = this.matchLocked.has(p.id)
-              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${locked ? 'disabled' : ''}>
+              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${infoAttr(componentInfoId(p.id as ComponentId))} ${locked ? 'disabled' : ''}>
                 <span class="card-icon" style="color:${COMPONENTS.find((c) => c.id === p.id)?.color}">${iconSvg(p.icon, 28)}</span>
                 <span style="color:var(--muted);font-family:var(--mono);font-size:.78rem">${locked ? 'Matched' : 'Select'}</span>
               </button>`
@@ -998,7 +1066,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           ${this.matchLabels
             .map((p) => {
               const locked = this.matchLocked.has(p.id)
-              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''}" data-label="${p.id}" ${locked ? 'disabled' : ''}><strong>${p.label}</strong></button>`
+              return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''}" data-label="${p.id}" ${infoAttr(componentInfoId(p.id as ComponentId))} ${locked ? 'disabled' : ''}><strong>${p.label}</strong></button>`
             })
             .join('')}
         </div></div>
@@ -1053,7 +1121,7 @@ COND ══╝     CHW → CRAH → HALL</div>
   private quizHtml() {
     if (this.quizIndex >= this.quizOrder.length) {
       return `<div class="view-head"><div><h2>Gate complete</h2><p>Score ${this.quizScore}/${this.quizOrder.length}. Best ${Math.max(this.progress.quizBest, this.quizScore)}.</p></div></div>
-        <div class="quiz-card"><button class="btn" type="button" data-quiz-restart>Retry shuffled</button></div>`
+        <div class="quiz-card" ${infoAttr('quiz-done')}><button class="btn" type="button" data-quiz-restart>Retry shuffled</button></div>`
     }
     const q = this.quizOrder[this.quizIndex]
     return `
@@ -1061,7 +1129,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         <div><h2>Knowledge gate</h2><p>${q.topic} · ${this.quizIndex + 1}/${this.quizOrder.length}</p></div>
         <span class="chip">Score ${this.quizScore}</span>
       </div>
-      <div class="quiz-card">
+      <div class="quiz-card" ${infoAttr(quizInfoId(q.id))}>
         <h3 style="margin-top:0">${q.prompt}</h3>
         <div class="choices">${q.choices.map((c, i) => `<button type="button" class="choice" data-choice="${i}">${c}</button>`).join('')}</div>
         <div id="quiz-feedback"></div>
@@ -1153,7 +1221,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       </div>
       <div class="alarm-banner show">${this.snap.alarm ?? t.title}</div>
       <div class="kpi-strip">${this.kpiHtml(this.snap)}</div>
-      <div class="trouble-card">
+      <div class="trouble-card" ${infoAttr(troubleInfoId(t.id))}>
         <h3 style="margin-top:0">${t.title}</h3>
         <ul>${t.symptoms.map((s) => `<li>${s}</li>`).join('')}</ul>
         <div class="choices">
@@ -1214,7 +1282,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         ${items
           .map(
             (i) => `
-          <button type="button" class="maint-item ${this.maintChecks.has(i.id) ? 'on' : ''}" data-maint="${i.id}">
+          <button type="button" class="maint-item ${this.maintChecks.has(i.id) ? 'on' : ''}" data-maint="${i.id}" ${infoAttr(maintInfoId(i.id))}>
             <div class="when">${i.when}</div>
             <div style="margin-top:6px;font-weight:600">${i.text}</div>
           </button>`,
