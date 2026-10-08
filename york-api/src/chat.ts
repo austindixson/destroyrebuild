@@ -69,16 +69,17 @@ function answerBody(answer: string, provider: string, model: string, sources: Ch
 
 async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps, llm: LlmAnswer, nearCap: boolean): Promise<ChatResponse> {
   const planned = planTurn(llm.text, req.snapshot.blocksWrites === true)
-  if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1 }
-  if (planned.kind === 'confirm') return { status: 'confirm', confirm: planned.confirm, round: req.round + 1 }
+  const notice = nearCap ? DAILY_NOTICE : undefined
+  if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1, notice }
+  if (planned.kind === 'confirm') return { status: 'confirm', confirm: planned.confirm, round: req.round + 1, notice }
   if (req.snapshot.blocksWrites === true && !planned.answer) {
-    return answerBody(CLOCK_BLOCK, llm.provider, llm.model, [])
+    return answerBody(CLOCK_BLOCK, llm.provider, llm.model, [], notice)
   }
   const finished = await finishAnswer(planned.answer, planned.cites, chunks, req.snapshot, async (prompt) => {
     const next = await deps.complete(prompt, deps.signal)
     return next.text
   })
-  return answerBody(finished.answer, llm.provider, llm.model, finished.sources, nearCap ? DAILY_NOTICE : undefined)
+  return answerBody(finished.answer, llm.provider, llm.model, finished.sources, notice)
 }
 
 export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: number; body: ChatResponse }> {

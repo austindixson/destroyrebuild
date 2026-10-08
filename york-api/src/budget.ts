@@ -10,6 +10,11 @@ export interface Budget {
   size(): { hits: number; daily: number }
 }
 
+export interface BudgetTune {
+  pruneEvery?: number
+  pruneMs?: number
+}
+
 interface DailyRow {
   day: string
   count: number
@@ -38,10 +43,19 @@ function prune(hits: Map<string, number[]>, daily: Map<string, DailyRow>, day: s
   }
 }
 
-export function createBudget(dailyCap: number, perMinute: number, globalDailyCap: number): Budget {
+export function createBudget(
+  dailyCap: number,
+  perMinute: number,
+  globalDailyCap: number,
+  tune: BudgetTune = {},
+): Budget {
+  const pruneEvery = tune.pruneEvery ?? 100
+  const pruneMs = tune.pruneMs ?? 60_000
   const hits = new Map<string, number[]>()
   const daily = new Map<string, DailyRow>()
   let global: DailyRow = { day: '', count: 0 }
+  let lastPrune = 0
+  let sincePrune = 0
   return {
     size() {
       return { hits: hits.size, daily: daily.size }
@@ -50,8 +64,13 @@ export function createBudget(dailyCap: number, perMinute: number, globalDailyCap
       if (round < 0) return { ok: false, nearCap: false }
       const key = budgetKey(ip)
       const day = dayKey(now)
-      prune(hits, daily, day, now)
-      const recent = hits.get(key) ?? []
+      sincePrune += 1
+      if (lastPrune === 0 || sincePrune >= pruneEvery || now - lastPrune >= pruneMs) {
+        lastPrune = now
+        sincePrune = 0
+        prune(hits, daily, day, now)
+      }
+      const recent = (hits.get(key) ?? []).filter((stamp) => now - stamp < 60_000)
       if (recent.length >= perMinute) return { ok: false, nearCap: false }
       recent.push(now)
       hits.set(key, recent)

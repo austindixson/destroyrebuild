@@ -19,12 +19,29 @@
 		respond 200
 	}
 
-	# York trainer chat. Same origin. The API is a second Railway service.
-	# YORK_API_HOST is the york-api address. Forward the Railway edge X-Real-IP.
-	# Do not replace it with the proxy address. See york-api/ENV.md.
+	# York trainer chat. The API process runs on the captain's Mac.
+	# YORK_API_UPSTREAM is the Tailscale Funnel URL. An unset value dials a
+	# closed port, and handle_errors returns the honest unavailable sentence.
+	# The proxy secret is added here. The browser cannot supply it.
+	# X-York-Client-IP is the edge client, not a header the browser sent.
 	handle /api/york/* {
-		reverse_proxy {$YORK_API_HOST:127.0.0.1:8787} {
-			header_up X-Real-IP {http.request.header.X-Real-IP}
+		reverse_proxy {$YORK_API_UPSTREAM:127.0.0.1:9} {
+			header_up X-York-Proxy-Secret {env.YORK_PROXY_SECRET}
+			header_up X-York-Client-IP {remote_host}
+			header_up -X-Real-IP
+			header_up -X-Forwarded-For
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 110s
+			}
+		}
+	}
+
+	handle_errors {
+		@york path /api/york/*
+		handle @york {
+			header Content-Type "application/json; charset=utf-8"
+			respond "{\"status\":\"unavailable\",\"answer\":\"The AI chat is not available now.\"}" 200
 		}
 	}
 

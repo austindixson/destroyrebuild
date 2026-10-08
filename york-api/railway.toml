@@ -1,12 +1,7 @@
-# Second Railway service. Set the service root directory to york-api/.
-# Do not add a start script to the repository root package.json.
-# The static site keeps Railpack/Caddy from the root railway.toml.
-#
-# YORK_API_HOST belongs on the static site, not on this service.
-# It is the address Caddy uses for /api/york/*. See ENV.md.
-# This service must have no public domain, TCP proxy, or other callers.
-# X-Real-IP is trusted only when Caddy and the Railway edge are the only path in.
-# The image pins Claude Code 2.1.295 and Cursor agent 2026.10.01-e373342.
+# The live York chat process runs on the captain's Mac, not in this service.
+# The static site Caddy proxies /api/york/* to YORK_API_UPSTREAM (Tailscale Funnel).
+# Set YORK_PROXY_SECRET on the static site and on the Mac. See ENV.md.
+# This file remains so an old Railway service root does not advertise CLI pins.
 
 [build]
 builder = "DOCKERFILE"

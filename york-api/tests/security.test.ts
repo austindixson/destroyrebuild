@@ -9,18 +9,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { claudeVersionOk, cursorVersionOk } from '../src/cliVersions.ts'
+import { claudeVersionOk, cliProbeEnv, cursorVersionOk, grokVersionOk, readCliVersion } from '../src/cliVersions.ts'
 import { INCIDENT_KINDS } from '../../york-chiller/src/sim/plantSim.ts'
 import { buildAdapters } from '../src/adapters.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { TOOL_GATES } from '../src/gates.ts'
 import { createInflight } from '../src/inflight.ts'
-import { budgetKey, trustedClientIp } from '../src/ip.ts'
+import { budgetKey, proxySecretOk, trustedClientIp } from '../src/ip.ts'
 import {
+  claudeArgs,
   CLI_STDOUT_MAX_BYTES,
   completeClaude,
   completeCursor,
+  cursorArgs,
   nodeRunner,
   providerChildEnv,
 } from '../src/providers.ts'
@@ -108,30 +110,21 @@ test('tool args that fail the schema are dropped and not echoed', async () => {
   assert.deepEqual(result.body.calls, [{ name: 'plant.getAlarms', args: {} }])
 })
 
-test('a CLI child does not receive other provider secrets', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'york-env-'))
-  try {
-    const env = providerChildEnv({
-      PATH: process.env.PATH,
-      CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
-      XAI_API_KEY: 'xai-secret',
-      CURSOR_API_KEY: 'cursor-secret',
-      CANARY: 'canary-secret',
-    }, 'CLAUDE_CODE_OAUTH_TOKEN', home)
-    const script = "process.stdout.write(require('node:fs').readFileSync('/proc/self/environ'))"
-    const result = await nodeRunner.run(process.execPath, ['-e', script], '', env, new AbortController().signal)
-    const keys = result.stdout.split('\0').map((row) => row.split('=')[0]).filter((key) => key.length > 0)
-    assert.deepEqual(keys.sort(), ['CLAUDE_CODE_OAUTH_TOKEN', 'HOME', 'PATH', 'TMPDIR'])
-    assert.equal(result.stdout.includes('xai-secret'), false)
-    assert.equal(result.stdout.includes('cursor-secret'), false)
-    assert.equal(result.stdout.includes('canary-secret'), false)
-    assert.equal(result.stdout.includes('claude-secret'), true)
-  } finally {
-    await rm(home, { recursive: true, force: true })
-  }
+test('fast guard: a CLI child keeps the signed-in home and drops the proxy secret', async () => {
+  const env = providerChildEnv({
+    PATH: process.env.PATH,
+    HOME: '/Users/ghost128',
+    YORK_PROXY_SECRET: 'proxy-secret',
+    CANARY: 'canary-secret',
+  })
+  const script = "process.stdout.write(require('node:fs').readFileSync('/proc/self/environ'))"
+  const result = await nodeRunner.run(process.execPath, ['-e', script], '', env, new AbortController().signal)
+  assert.equal(result.stdout.includes('proxy-secret'), false)
+  assert.equal(result.stdout.includes('canary-secret'), true)
+  assert.equal(result.stdout.includes('HOME=/Users/ghost128'), true)
 })
 
-test('claude runs in an empty temp dir with a stripped environment', async () => {
+test('fast guard: claude runs in an empty temp dir and keeps HOME', async () => {
   const binDir = await mkdtemp(join(tmpdir(), 'york-bin-'))
   const bin = join(binDir, 'fake-claude.sh')
   writeFileSync(bin, `#!/bin/sh
@@ -144,10 +137,9 @@ cat /proc/self/environ
   try {
     const text = await completeClaude(req, new AbortController().signal, nodeRunner, {
       PATH: process.env.PATH,
+      HOME: '/Users/ghost128',
       CLAUDE_BIN: bin,
-      CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
-      XAI_API_KEY: 'xai-secret',
-      CURSOR_API_KEY: 'cursor-secret',
+      YORK_PROXY_SECRET: 'proxy-secret',
       CANARY: 'canary-secret',
     })
     assert.match(text, /FILES:0/)
@@ -155,10 +147,9 @@ cat /proc/self/environ
     const cwdLine = text.split('\n').find((line) => line.startsWith('CWD:')) ?? ''
     assert.match(cwdLine, /york-claude-/)
     assert.notEqual(cwdLine.slice(4), process.cwd())
-    assert.equal(text.includes('xai-secret'), false)
-    assert.equal(text.includes('cursor-secret'), false)
-    assert.equal(text.includes('canary-secret'), false)
-    assert.equal(text.includes('claude-secret'), true)
+    assert.equal(text.includes('proxy-secret'), false)
+    assert.equal(text.includes('canary-secret'), true)
+    assert.equal(text.includes('HOME=/Users/ghost128'), true)
   } finally {
     await rm(binDir, { recursive: true, force: true })
   }
@@ -178,23 +169,21 @@ test('fast guard: cursor config file includes the workspace boundary and vim mod
       assert.equal(cli.version, 1)
       assert.equal(cli.editor?.vimMode, false)
       assert.equal(cli.sandbox?.readBoundary, 'workspace')
-      assert.equal(env.CURSOR_API_KEY, 'cursor-secret')
-      assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined)
-      assert.equal(env.CANARY, undefined)
+      assert.equal(env.HOME, '/Users/ghost128')
+      assert.equal(env.YORK_PROXY_SECRET, undefined)
+      assert.equal(env.CANARY, 'canary-secret')
       assert.equal(args.includes('--force'), false)
+      assert.equal(args.includes(cwd), true)
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
     },
   }, {
     PATH: process.env.PATH,
-    CURSOR_API_KEY: 'cursor-secret',
-    CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
-    XAI_API_KEY: 'xai-secret',
+    HOME: '/Users/ghost128',
+    YORK_PROXY_SECRET: 'proxy-secret',
     CANARY: 'canary-secret',
   })
   assert.equal(text, 'The hall is stable.')
-  const adapters = buildAdapters({ CURSOR_API_KEY: 'cur', XAI_API_KEY: 'xai' }, async () => {
-    throw new Error('no http')
-  }, { async run() { return { code: 0, stdout: 'ok', stderr: '' } } })
+  const adapters = buildAdapters({}, { async run() { return { code: 0, stdout: 'ok', stderr: '' } } })
   assert.equal(adapters.some((item) => item.id === 'cursor' && item.enabled()), true)
   assert.equal(CLI_STDOUT_MAX_BYTES, 256 * 1024)
 })
@@ -238,17 +227,24 @@ test('a global daily ceiling stops a second address', () => {
   assert.equal(budget.allow('10.0.0.2', 0, now + 1).ok, false)
 })
 
-test('a spoofed leftmost X-Forwarded-For is ignored', () => {
-  assert.equal(trustedClientIp({ 'x-forwarded-for': '1.2.3.4, 9.9.9.9' }, '10.0.0.5'), '9.9.9.9')
+test('fast guard: forwarded headers are ignored until the proxy secret matches', () => {
+  assert.equal(proxySecretOk('same-secret-value', 'same-secret-value'), true)
+  assert.equal(proxySecretOk('wrong-secret-value', 'same-secret-value'), false)
+  assert.equal(proxySecretOk('short', 'same-secret-value'), false)
+  assert.equal(trustedClientIp({
+    'x-york-client-ip': '203.0.113.9',
+    'x-real-ip': '1.2.3.4',
+    'x-forwarded-for': '8.8.8.8, 9.9.9.9',
+    'x-york-proxy-secret': 'same-secret-value',
+  }, '127.0.0.1', 'same-secret-value'), '203.0.113.9')
+  assert.equal(trustedClientIp({
+    'x-york-client-ip': '198.51.100.4',
+    'x-york-proxy-secret': 'attacker-secret',
+  }, '127.0.0.1', 'same-secret-value'), null)
   assert.equal(trustedClientIp({
     'x-real-ip': '203.0.113.9',
     'x-forwarded-for': '1.2.3.4, 9.9.9.9',
-  }), '203.0.113.9')
-  assert.notEqual(trustedClientIp({
-    'x-real-ip': '203.0.113.9',
-    'x-forwarded-for': '1.2.3.4',
-  }), '1.2.3.4')
-  assert.equal(trustedClientIp({}, '127.0.0.1'), '127.0.0.1')
+  }, '10.0.0.5', ''), '10.0.0.5')
 })
 
 test('the in-flight cap rejects a second LLM call', async () => {
@@ -312,10 +308,11 @@ test('a client disconnect kills the CLI child', async () => {
   }
 })
 
-test('the server uses X-Real-IP and ignores a spoofed left X-Forwarded-For', async () => {
+test('fast guard: the server trusts X-York-Client-IP only with the proxy secret', async () => {
   const seen: string[] = []
   const inner = createBudget(10, 30, 100)
   const server = createYorkServer({
+    proxySecret: 'same-secret-value',
     budget: {
       allow(ip, round, now) {
         seen.push(ip)
@@ -333,12 +330,25 @@ test('the server uses X-Real-IP and ignores a spoofed left X-Forwarded-For', asy
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Real-IP': '203.0.113.9',
-        'X-Forwarded-For': '1.2.3.4, 9.9.9.9',
+        'X-York-Proxy-Secret': 'same-secret-value',
+        'X-York-Client-IP': '203.0.113.9',
+        'X-Real-IP': '1.2.3.4',
+        'X-Forwarded-For': '8.8.8.8, 9.9.9.9',
       },
       body: JSON.stringify({ question: 'Read the hall', snapshot: {} }),
     })
     assert.equal(res.status, 200)
+    const spoof = await fetch(`http://127.0.0.1:${port}/api/york/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-York-Proxy-Secret': 'attacker-secret',
+        'X-York-Client-IP': '198.51.100.4',
+      },
+      body: JSON.stringify({ question: 'Read the hall', snapshot: {} }),
+    })
+    const spoofBody = await spoof.json() as { status?: string }
+    assert.equal(spoofBody.status, 'unavailable')
     assert.deepEqual(seen, ['203.0.113.9'])
   } finally {
     server.closeAllConnections()
@@ -349,6 +359,9 @@ test('the server uses X-Real-IP and ignores a spoofed left X-Forwarded-For', asy
 test('fast guard: valve percent clamps and free text stays bounded', () => {
   assert.deepEqual(validateToolArgs('plant.setValve', { loop: 'chw', pct: 1e9 }), { loop: 'chw', pct: 100 })
   assert.deepEqual(validateToolArgs('plant.setValve', { loop: 'chw', pct: -4 }), { loop: 'chw', pct: 0 })
+  assert.deepEqual(validateToolArgs('plant.configureFleet', {
+    units: [{ id: 'CH-01', running: true, capacityMw: -5 }],
+  }), { units: [{ id: 'CH-01', running: true, capacityMw: 0 }] })
   assert.equal(validateToolArgs('chiller.start', { unit: 'A'.repeat(81) }), null)
   assert.equal(validateToolArgs('chiller.start', { unit: 'A'.repeat(80) })?.unit, 'A'.repeat(80))
   const units = Array.from({ length: 64 }, (_item, index) => ({ id: `U${index}`, running: true, capacityMw: 1 }))
@@ -363,6 +376,10 @@ test('fast guard: IPv6 clients share a /64 and old budget rows are pruned', () =
   assert.equal(budgetKey('2001:db8:85a3::1'), budgetKey('2001:db8:85a3:0:ffff::2'))
   assert.notEqual(budgetKey('2001:db8:85a3::1'), budgetKey('2001:db8:85a4::1'))
   assert.equal(budgetKey('::ffff:10.0.0.8'), '10.0.0.8')
+  assert.equal(budgetKey('::ffff:cb00:7105'), '203.0.113.5')
+  assert.notEqual(budgetKey('::ffff:cb00:7105'), budgetKey('::1'))
+  assert.equal(budgetKey('64:ff9b::192.0.2.1'), '192.0.2.1')
+  assert.equal(budgetKey('64:ff9b::c000:201'), '192.0.2.1')
   const budget = createBudget(2, 30, 100)
   const start = Date.parse('2026-10-08T00:00:00Z')
   assert.equal(budget.allow('2001:db8:85a3::1', 0, start).ok, true)
@@ -374,66 +391,115 @@ test('fast guard: IPv6 clients share a /64 and old budget rows are pruned', () =
   assert.equal(budget.size().hits, 1)
 })
 
-test('fast guard: an old CLI tier is marked unavailable', () => {
+test('fast guard: version floors warn, and only a missing binary is off', () => {
   assert.equal(cursorVersionOk('2026.10.01-e373342'), true)
-  assert.equal(cursorVersionOk('2026.09.30-aaaaaaa'), false)
-  assert.equal(cursorVersionOk('2026.10.02-bbbbbbb'), true)
-  assert.equal(claudeVersionOk('2.1.295 (Claude Code)'), true)
-  assert.equal(claudeVersionOk('2.1.294'), false)
-  assert.equal(claudeVersionOk('2.2.0'), true)
+  assert.equal(cursorVersionOk('2026.07.17-anything'), true)
+  assert.equal(cursorVersionOk('2026.07.16-aaaaaaa'), false)
+  assert.equal(cursorVersionOk('2026.09.30-aaaaaaa'), true)
+  assert.equal(claudeVersionOk('2.1.293 (Claude Code)'), true)
+  assert.equal(claudeVersionOk('2.1.292'), false)
+  assert.equal(claudeVersionOk('claude-2.1.293'), false)
+  assert.equal(grokVersionOk('1.0.50'), true)
+  assert.equal(grokVersionOk('1.0.49'), false)
+  assert.equal(grokVersionOk('grok-1.0.50'), false)
+  const probed = cliProbeEnv({
+    PATH: '/usr/bin',
+    HOME: '/Users/ghost128',
+    YORK_PROXY_SECRET: 'nope',
+    CURSOR_API_KEY: 'cursor-secret',
+    CLAUDE_BIN: '/bin/claude',
+  }, 'claude')
+  assert.equal(probed.CLAUDE_BIN, '/bin/claude')
+  assert.equal(probed.HOME, '/Users/ghost128')
+  assert.equal(probed.CURSOR_API_KEY, undefined)
+  assert.equal(probed.YORK_PROXY_SECRET, undefined)
   const adapters = buildAdapters(
-    { CURSOR_API_KEY: 'cur', CLAUDE_CODE_OAUTH_TOKEN: 'tok', YORK_CURSOR_CLI: 'unavailable' },
-    async () => { throw new Error('no http') },
+    { YORK_CURSOR_CLI: 'unavailable' },
     { async run() { return { code: 0, stdout: 'ok', stderr: '' } } },
   )
   assert.equal(adapters.find((item) => item.id === 'cursor')?.enabled(), false)
   assert.equal(adapters.find((item) => item.id === 'claude')?.enabled(), true)
 })
 
-test('fast guard: a grandchild dies with the process group and the slot waits for exit', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'york-group-'))
+function groupScripts(dir: string, parentDiesOnTerm: boolean, parentExits: boolean): { parent: string; grand: string; childPid: string; grandPid: string } {
   const childPid = join(dir, 'child')
   const grandPid = join(dir, 'grand')
   const grand = join(dir, 'grand.cjs')
   const parent = join(dir, 'parent.cjs')
-  writeFileSync(grand, `process.on('SIGTERM', () => {});\nrequire('node:fs').writeFileSync(process.env.GRAND_PID, String(process.pid));\nsetInterval(() => { try { process.stdout.write('x'); } catch (err) {} }, 30);\n`)
-  writeFileSync(parent, `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nspawn(process.execPath, [process.argv[2]], { stdio: 'inherit', env: process.env });\nfs.writeFileSync(process.env.CHILD_PID, String(process.pid));\nprocess.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n`)
+  writeFileSync(grand, `process.on('SIGTERM', () => {});\nprocess.on('SIGINT', () => {});\nrequire('node:fs').writeFileSync(process.env.GRAND_PID, String(process.pid));\nsetInterval(() => {}, 1000);\n`)
+  const trap = parentDiesOnTerm ? '' : `process.on('SIGTERM', () => {});\n`
+  const leave = parentExits
+    ? `const wait = setInterval(() => { if (fs.existsSync(process.env.GRAND_PID)) { clearInterval(wait); process.exit(0); } }, 10);\n`
+    : `setInterval(() => {}, 1000);\n`
+  writeFileSync(parent, `const { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nspawn(process.execPath, [process.argv[2]], { stdio: 'ignore', env: process.env });\nfs.writeFileSync(process.env.CHILD_PID, String(process.pid));\n${trap}${leave}`)
+  return { parent, grand, childPid, grandPid }
+}
+
+test('fast guard: a parent that dies on TERM still kills the grandchild', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-group-'))
+  const files = groupScripts(dir, true, false)
   const controller = new AbortController()
-  const env = { PATH: process.env.PATH, CHILD_PID: childPid, GRAND_PID: grandPid }
+  const env = { PATH: process.env.PATH, CHILD_PID: files.childPid, GRAND_PID: files.grandPid }
+  const pending = nodeRunner.run(process.execPath, [files.parent, files.grand], '', env, controller.signal, { killGraceMs: 8_000 })
+  try {
+    await waitFor(() => existsSync(files.childPid) && existsSync(files.grandPid))
+    const grandId = Number(readFileSync(files.grandPid, 'utf8'))
+    const started = Date.now()
+    controller.abort()
+    await pending
+    assert.ok(Date.now() - started < 3_000)
+    assert.equal(alive(grandId), false)
+  } finally {
+    controller.abort()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('fast guard: a normal exit kills a lingering grandchild before the slot frees', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-group-exit-'))
+  const files = groupScripts(dir, true, true)
+  const env = { PATH: process.env.PATH, CHILD_PID: files.childPid, GRAND_PID: files.grandPid }
   const inflight = createInflight(1)
   let held = true
   const complete: ChatDeps['complete'] = (_prompt, signal) => nodeRunner.run(
     process.execPath,
-    [parent, grand],
+    [files.parent, files.grand],
     '',
     env,
     signal,
-    { killGraceMs: 200 },
+    { killGraceMs: 8_000 },
   ).then(() => {
+    const grandId = Number(readFileSync(files.grandPid, 'utf8'))
+    assert.equal(alive(grandId), false)
     held = false
     return answer('{"answer":"The board is stable.","cites":[],"tools":[]}')
   })
-  const first = handleChat({ question: 'Hold', snapshot: {} }, deps(complete, { inflight, signal: controller.signal }))
+  const first = handleChat({ question: 'Hold', snapshot: {} }, deps(complete, { inflight }))
   try {
-    await waitFor(() => existsSync(childPid) && existsSync(grandPid))
-    const child = Number(readFileSync(childPid, 'utf8'))
-    const grandId = Number(readFileSync(grandPid, 'utf8'))
-    controller.abort()
-    const second = await handleChat(
-      { question: 'Too soon', snapshot: {} },
-      deps(async () => answer('{"answer":"The board is stable.","cites":[],"tools":[]}'), { inflight }),
-    )
-    assert.equal(second.body.status, 'unavailable')
-    assert.equal(held, true)
     await first
     assert.equal(held, false)
-    assert.equal(alive(child), false)
-    assert.equal(alive(grandId), false)
-    const third = await handleChat(
+    const second = await handleChat(
       { question: 'After', snapshot: {} },
       deps(async () => answer('{"answer":"The board is stable.","cites":[],"tools":[]}'), { inflight }),
     )
-    assert.equal(third.body.status, 'answer')
+    assert.equal(second.body.status, 'answer')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('fast guard: the grace SIGKILL still runs when the parent ignores TERM', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-group-grace-'))
+  const files = groupScripts(dir, false, false)
+  const controller = new AbortController()
+  const env = { PATH: process.env.PATH, CHILD_PID: files.childPid, GRAND_PID: files.grandPid }
+  const pending = nodeRunner.run(process.execPath, [files.parent, files.grand], '', env, controller.signal, { killGraceMs: 150 })
+  try {
+    await waitFor(() => existsSync(files.grandPid))
+    const grandId = Number(readFileSync(files.grandPid, 'utf8'))
+    controller.abort()
+    await pending
+    assert.equal(alive(grandId), false)
   } finally {
     controller.abort()
     await rm(dir, { recursive: true, force: true })
@@ -442,6 +508,21 @@ test('fast guard: a grandchild dies with the process group and the slot waits fo
 
 test('fast guard: the real-call checklist refuses to run on its own', () => {
   const script = fileURLToPath(new URL('../scripts/real-call-checklist.mjs', import.meta.url))
+  const source = readFileSync(script, 'utf8')
+  assert.match(source, /https:\/\/www\.destroyrebuild\.xyz\/api\/york\/chat/)
+  assert.equal(source.includes('REVIEW'), false)
+  assert.match(source, /The daily trainer chat limit is close/)
+  assert.match(source, /Grep/)
+  assert.match(source, /Glob/)
+  assert.match(source, /--strict-mcp-config/)
+  for (const arg of claudeArgs('claude-haiku-5-5')) {
+    const needle = arg === '' ? "'--tools', ''" : `'${arg}'`
+    assert.equal(source.includes(needle), true, arg)
+  }
+  for (const arg of cursorArgs('auto', '/tmp/york')) {
+    if (arg === '/tmp/york' || arg === 'auto') continue
+    assert.equal(source.includes(`'${arg}'`), true, arg)
+  }
   const blocked = spawnSync(process.execPath, [script], { encoding: 'utf8' })
   assert.notEqual(blocked.status, 0)
   assert.match(blocked.stderr, /YORK_REAL_CALL/)
@@ -451,4 +532,37 @@ test('fast guard: the real-call checklist refuses to run on its own', () => {
   })
   assert.notEqual(fake.status, 0)
   assert.match(fake.stderr, /fake/)
+})
+
+test('fast guard: budget pruning is amortized', () => {
+  const budget = createBudget(10, 2, 100_000, { pruneEvery: 1_000, pruneMs: 600_000 })
+  const start = 1_700_000_000_000
+  for (let i = 0; i < 40; i += 1) budget.allow(`10.8.0.${i}`, 0, start)
+  assert.equal(budget.size().hits, 40)
+  assert.equal(budget.allow('10.8.0.3', 0, start + 1).ok, true)
+  assert.equal(budget.allow('10.8.0.3', 0, start + 2).ok, false)
+  assert.equal(budget.allow('10.8.0.3', 0, start + 61_000).ok, true)
+  assert.equal(budget.size().hits, 40)
+})
+
+test('fast guard: a version probe does not wait on a stray pipe', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-version-'))
+  const strayFile = join(dir, 'stray')
+  const bin = join(dir, 'fake-version.sh')
+  writeFileSync(bin, `#!/bin/sh
+node -e 'const {spawn}=require("node:child_process"); const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{detached:true,stdio:"inherit"}); child.unref(); require("node:fs").writeFileSync(process.env.STRAY, String(child.pid)); process.stdout.write("2.1.293\\n");'
+`)
+  chmodSync(bin, 0o755)
+  try {
+    const started = Date.now()
+    const text = await readCliVersion(bin, { PATH: process.env.PATH, HOME: dir, STRAY: strayFile })
+    assert.ok(Date.now() - started < 1_500)
+    assert.match(text ?? '', /2\.1\.293/)
+  } finally {
+    if (existsSync(strayFile)) {
+      const stray = Number(readFileSync(strayFile, 'utf8'))
+      try { process.kill(stray, 'SIGKILL') } catch { /* already gone */ }
+    }
+    await rm(dir, { recursive: true, force: true })
+  }
 })

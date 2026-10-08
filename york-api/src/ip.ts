@@ -1,31 +1,32 @@
+import { timingSafeEqual } from 'node:crypto'
+
 /**
  * Client address for rate limits.
  *
- * Trusted header: X-Real-IP. On public Railway ingress the edge replaces this
- * header with the connecting client. It does not append the caller value.
- * Private *.railway.internal traffic is not sanitized, so it is not a client
- * identity. Caddy on the static site forwards the edge-written value.
+ * The public path is Railway Caddy, then Tailscale Funnel, then this process
+ * on 127.0.0.1. Caddy sets X-York-Proxy-Secret and X-York-Client-IP. The
+ * client IP header is used only after the secret matches. X-Real-IP and
+ * X-Forwarded-For are not a client identity on this path.
  *
- * Fallback, only when X-Real-IP is absent: the rightmost hop of
- * X-Forwarded-For. The leftmost hop is client-supplied and is never used.
- * With neither header, the socket remote address is the identity.
+ * With no configured secret, the socket address is the identity and forwarded
+ * headers are ignored.
  *
- * Budget keys use budgetKey(). IPv4 stays as written. IPv6 collapses to /64
- * so one client cannot rotate host bits. IPv4-mapped IPv6 uses the IPv4 form.
+ * Budget keys use budgetKey(). IPv4 stays as written. IPv4-mapped IPv6,
+ * including the hex form ::ffff:cb00:7105, uses the IPv4 form so it does not
+ * share the ::/64 bucket with ::1. NAT64 64:ff9b::/96 does the same. Other
+ * IPv6 addresses collapse to /64.
  */
-export function trustedClientIp(
-  headers: NodeJS.Dict<string | string[] | undefined>,
-  socketAddr?: string | null,
-): string {
-  const real = oneAddress(headerValue(headers['x-real-ip']))
-  if (real) return real
-  const forwarded = oneAddress(headerValue(headers['x-forwarded-for']))
-  if (forwarded) return forwarded
-  const socket = socketAddr?.trim()
-  return socket ? socket : 'local'
+export function proxySecretOk(provided: string, secret: string): boolean {
+  const got = Buffer.from(provided)
+  const want = Buffer.from(secret)
+  if (got.length !== want.length) {
+    timingSafeEqual(want, want)
+    return false
+  }
+  return timingSafeEqual(got, want)
 }
 
-function headerValue(value: string | string[] | undefined): string {
+export function headerText(value: string | string[] | undefined): string {
   if (Array.isArray(value)) {
     const last = value[value.length - 1]
     return typeof last === 'string' ? last.trim() : ''
@@ -44,12 +45,25 @@ function oneAddress(raw: string): string {
   return ''
 }
 
+export function trustedClientIp(
+  headers: NodeJS.Dict<string | string[] | undefined>,
+  socketAddr: string | null | undefined,
+  secret: string,
+): string | null {
+  const socket = socketAddr?.trim() || 'local'
+  if (!secret) return socket
+  if (!proxySecretOk(headerText(headers['x-york-proxy-secret']), secret)) return null
+  const client = oneAddress(headerText(headers['x-york-client-ip']))
+  return client || socket
+}
+
 export function budgetKey(ip: string): string {
-  const raw = ip.trim().toLowerCase()
-  const mapped = raw.startsWith('::ffff:') ? raw.slice('::ffff:'.length) : raw
-  if (isIpv4(mapped)) return mapped
-  const prefix = ipv6Prefix(raw)
-  return prefix ?? raw
+  const raw = (ip.trim().toLowerCase().split('%')[0] ?? '').trim()
+  if (isIpv4(raw)) return raw
+  const expanded = expandIpv6(embedDotted(raw))
+  if (!expanded) return raw
+  if (isMapped(expanded) || isNat64(expanded)) return ipv4FromLast(expanded)
+  return `${expanded.slice(0, 4).join(':')}::/64`
 }
 
 function isIpv4(value: string): boolean {
@@ -58,10 +72,30 @@ function isIpv4(value: string): boolean {
   return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
 
-function ipv6Prefix(value: string): string | null {
-  const hextets = expandIpv6(value)
-  if (!hextets) return null
-  return `${hextets.slice(0, 4).join(':')}::/64`
+function embedDotted(value: string): string {
+  const match = value.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/)
+  if (!match?.[1] || !match[2] || !isIpv4(match[2])) return value
+  const parts = match[2].split('.').map((part) => Number(part))
+  const hi = (((parts[0] ?? 0) << 8) | (parts[1] ?? 0)).toString(16)
+  const lo = (((parts[2] ?? 0) << 8) | (parts[3] ?? 0)).toString(16)
+  return `${match[1]}${hi}:${lo}`
+}
+
+function ipv4FromLast(hextets: string[]): string {
+  const hi = Number.parseInt(hextets[6] ?? '0', 16)
+  const lo = Number.parseInt(hextets[7] ?? '0', 16)
+  const n = ((hi << 16) | lo) >>> 0
+  return `${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`
+}
+
+function isMapped(hextets: string[]): boolean {
+  return hextets[5] === 'ffff' && hextets.slice(0, 5).every((part) => part === '0000')
+}
+
+function isNat64(hextets: string[]): boolean {
+  return hextets[0] === '0064'
+    && hextets[1] === 'ff9b'
+    && hextets.slice(2, 6).every((part) => part === '0000')
 }
 
 function splitSide(side: string): string[] | null {
@@ -82,7 +116,7 @@ function expandIpv6(value: string): string[] | null {
   const missing = 8 - left.length - right.length
   if (sides.length === 1 && missing !== 0) return null
   if (sides.length === 2 && missing < 1) return null
-  const zeros = Array<string>(missing).fill('0000')
+  const zeros = Array<string>(Math.max(0, missing)).fill('0000')
   const parts = [...left, ...zeros, ...right]
   if (parts.length !== 8) return null
   return parts.map((part) => part.padStart(4, '0'))

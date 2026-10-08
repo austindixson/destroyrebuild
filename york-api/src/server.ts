@@ -20,6 +20,7 @@ export interface YorkServerOptions {
   budget?: Budget
   inflight?: Inflight
   search?: (query: string) => Chunk[]
+  proxySecret?: string
 }
 
 function send(res: ServerResponse, http: number, body: unknown): void {
@@ -29,8 +30,8 @@ function send(res: ServerResponse, http: number, body: unknown): void {
   res.end(payload)
 }
 
-function clientIp(req: IncomingMessage): string {
-  return trustedClientIp(req.headers, req.socket.remoteAddress)
+function clientIp(req: IncomingMessage, secret: string): string | null {
+  return trustedClientIp(req.headers, req.socket.remoteAddress, secret)
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -62,12 +63,19 @@ function requestSignal(res: ServerResponse): { signal: AbortSignal; stop(): void
   }
 }
 
-async function onChat(req: IncomingMessage, res: ServerResponse, options: YorkServerOptions, budget: Budget, inflight: Inflight): Promise<void> {
+async function onChat(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: YorkServerOptions,
+  budget: Budget,
+  inflight: Inflight,
+  ip: string,
+): Promise<void> {
   const abort = requestSignal(res)
   try {
     const raw = await readJson(req)
     const result = await handleChat(raw, {
-      ip: clientIp(req),
+      ip,
       now: () => Date.now(),
       budget,
       inflight,
@@ -86,14 +94,21 @@ async function onChat(req: IncomingMessage, res: ServerResponse, options: YorkSe
 export function createYorkServer(options: YorkServerOptions = {}) {
   const budget = options.budget ?? defaultBudget()
   const inflight = options.inflight ?? defaultInflight()
+  const proxySecret = options.proxySecret ?? ''
   return createServer((req, res) => {
     const url = req.url ?? ''
+    const york = url.startsWith('/api/york/health') || url.startsWith('/api/york/chat')
+    const ip = york ? clientIp(req, proxySecret) : 'local'
+    if (york && !ip) {
+      send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })
+      return
+    }
     if (req.method === 'GET' && (url === '/api/york/health' || url.startsWith('/api/york/health?'))) {
       send(res, 200, { ok: true })
       return
     }
     if (req.method === 'POST' && (url === '/api/york/chat' || url.startsWith('/api/york/chat?'))) {
-      void onChat(req, res, options, budget, inflight)
+      void onChat(req, res, options, budget, inflight, ip ?? 'local')
       return
     }
     send(res, 404, { status: 'error', answer: UNAVAILABLE })
@@ -101,8 +116,9 @@ export function createYorkServer(options: YorkServerOptions = {}) {
 }
 
 const port = Number(process.env.PORT || 8787)
+const host = process.env.YORK_BIND_HOST || '127.0.0.1'
 const isMain = Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
 if (isMain) {
   await probeAndLogClis(process.env)
-  createYorkServer().listen(port)
+  createYorkServer({ proxySecret: process.env.YORK_PROXY_SECRET ?? '' }).listen(port, host)
 }

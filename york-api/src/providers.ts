@@ -7,9 +7,9 @@ import type { LlmRequest } from './types.ts'
 export const GROK_MODEL = 'grok-4.7'
 export const CLAUDE_MODEL = 'claude-haiku-5-5'
 export const CURSOR_MODEL = 'auto'
+export const CODEX_MODEL = 'codex'
 export const CLI_STDOUT_MAX_BYTES = 256 * 1024
 export const CLI_KILL_GRACE_MS = 200
-const GROK_URL = 'https://api.x.ai/v1/chat/completions'
 
 /**
  * Deny rules written into the Cursor CLI config for the temp workspace.
@@ -54,14 +54,6 @@ export interface ProcessRunner {
   ): Promise<ProcessRun>
 }
 
-export interface FetchResponse {
-  ok: boolean
-  status: number
-  json(): Promise<unknown>
-}
-
-export type FetchLike = (url: string, init: RequestInit) => Promise<FetchResponse>
-
 function take(bucket: Buffer[], size: number, chunk: Buffer, max: number): number | null {
   const next = size + chunk.length
   if (next > max) return null
@@ -85,6 +77,16 @@ function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+/** True only when the process group has no members left. */
+export function groupGone(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH'
+  }
+}
+
 export const nodeRunner: ProcessRunner = {
   run(cmd, args, input, env, signal, options) {
     const max = options?.maxBytes ?? CLI_STDOUT_MAX_BYTES
@@ -103,17 +105,30 @@ export const nodeRunner: ProcessRunner = {
       let errSize = 0
       let settled = false
       let failure: Error | null = null
+      let code: number | null = null
       let killTimer: ReturnType<typeof setTimeout> | undefined
+      let pollTimer: ReturnType<typeof setTimeout> | undefined
+      const pid = child.pid
+
       const finish = (fn: () => void) => {
         if (settled) return
         settled = true
         signal.removeEventListener('abort', onAbort)
         if (killTimer) clearTimeout(killTimer)
-        fn()
-      }
-      const settle = (code: number | null) => {
+        if (pollTimer) clearTimeout(pollTimer)
         child.stdout?.destroy()
         child.stderr?.destroy()
+        fn()
+      }
+
+      const release = () => {
+        if (settled) return
+        if (pid !== undefined && !groupGone(pid)) {
+          killGroup(child, 'SIGKILL')
+          if (pollTimer) clearTimeout(pollTimer)
+          pollTimer = setTimeout(release, 20)
+          return
+        }
         finish(() => {
           if (failure) reject(failure)
           else resolveRun({
@@ -123,10 +138,13 @@ export const nodeRunner: ProcessRunner = {
           })
         })
       }
+
       const onAbort = () => {
         killGroup(child, 'SIGTERM')
+        if (killTimer) clearTimeout(killTimer)
         killTimer = setTimeout(() => killGroup(child, 'SIGKILL'), grace)
       }
+
       signal.addEventListener('abort', onAbort, { once: true })
       const overflow = () => {
         failure = new Error('output too large')
@@ -145,12 +163,21 @@ export const nodeRunner: ProcessRunner = {
       child.stdin.on('error', () => {})
       child.stdout.on('error', () => {})
       child.stderr.on('error', () => {})
-      child.on('error', (error) => finish(() => reject(error)))
-      child.on('exit', (code) => {
-        const drain = setTimeout(() => settle(code), 100)
+      child.on('error', (error) => {
+        failure = error
+        if (pid !== undefined) release()
+        else finish(() => reject(error))
+      })
+      child.on('exit', (exited) => {
+        code = exited
+        // The main child is gone. Keep a group SIGKILL so a grandchild that
+        // ignored SIGTERM, or that outlived a normal exit, does not stay up.
+        // The slot stays held until kill(-pid, 0) returns ESRCH.
+        killGroup(child, 'SIGKILL')
+        const drain = setTimeout(() => release(), 50)
         child.once('close', () => {
           clearTimeout(drain)
-          settle(code)
+          release()
         })
       })
       child.stdin.end(input)
@@ -158,34 +185,19 @@ export const nodeRunner: ProcessRunner = {
   },
 }
 
-function textFromGrok(body: unknown): string {
-  if (!body || typeof body !== 'object') return ''
-  const choices = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices
-  const content = choices?.[0]?.message?.content
-  return typeof content === 'string' ? content.trim() : ''
+/** The signed-in user environment, minus the proxy secret. HOME stays put. */
+export function providerChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue
+    if (key === 'YORK_PROXY_SECRET') continue
+    next[key] = value
+  }
+  return next
 }
 
-export async function completeGrok(req: LlmRequest, signal: AbortSignal, fetchImpl: FetchLike, env: NodeJS.ProcessEnv): Promise<string> {
-  const key = env.XAI_API_KEY
-  if (!key) throw new Error('XAI_API_KEY missing')
-  const model = env.XAI_MODEL || GROK_MODEL
-  const res = await fetchImpl(GROK_URL, {
-    method: 'POST',
-    signal,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: req.system },
-        { role: 'user', content: req.user },
-      ],
-    }),
-  })
-  if (!res.ok) throw new Error(`grok ${res.status}`)
-  const text = textFromGrok(await res.json())
-  if (!text) throw new Error('grok empty')
-  return text
+export function grokArgs(): string[] {
+  return ['-p']
 }
 
 export function claudeArgs(model: string): string[] {
@@ -209,17 +221,8 @@ export function cursorArgs(model: string, workspace: string): string[] {
   return ['-p', '--model', model, '--mode', 'ask', '--output-format', 'text', '--sandbox', 'enabled', '--trust', '--workspace', workspace]
 }
 
-/** HOME is the temp workspace, so the child does not load the host CLI config. */
-export function providerChildEnv(
-  env: NodeJS.ProcessEnv,
-  secretName: 'CLAUDE_CODE_OAUTH_TOKEN' | 'CURSOR_API_KEY',
-  home: string,
-): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = { HOME: home, TMPDIR: home }
-  if (typeof env.PATH === 'string' && env.PATH.length > 0) next.PATH = env.PATH
-  const secret = env[secretName]
-  if (typeof secret === 'string' && secret.length > 0) next[secretName] = secret
-  return next
+export function codexArgs(): string[] {
+  return ['exec', '--skip-git-repo-check']
 }
 
 async function completeCli(
@@ -239,21 +242,43 @@ async function completeCli(
   return text
 }
 
+async function completeLocal(
+  prefix: string,
+  bin: string,
+  args: string[],
+  req: LlmRequest,
+  signal: AbortSignal,
+  run: ProcessRunner,
+  env: NodeJS.ProcessEnv,
+  prepare?: (dir: string) => Promise<void>,
+): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix))
+  try {
+    if (prepare) await prepare(dir)
+    return await completeCli(bin, args, req, signal, run, providerChildEnv(env), { cwd: dir })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+export async function completeGrok(
+  req: LlmRequest,
+  signal: AbortSignal,
+  run: ProcessRunner,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  const bin = env.GROK_BIN || 'grok'
+  return completeLocal('york-grok-', bin, grokArgs(), req, signal, run, env)
+}
+
 export async function completeClaude(
   req: LlmRequest,
   signal: AbortSignal,
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  if (!env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error('CLAUDE_CODE_OAUTH_TOKEN missing')
-  const home = await mkdtemp(join(tmpdir(), 'york-claude-'))
-  try {
-    const bin = env.CLAUDE_BIN || 'claude'
-    const childEnv = providerChildEnv(env, 'CLAUDE_CODE_OAUTH_TOKEN', home)
-    return await completeCli(bin, claudeArgs(CLAUDE_MODEL), req, signal, run, childEnv, { cwd: home })
-  } finally {
-    await rm(home, { recursive: true, force: true })
-  }
+  const bin = env.CLAUDE_BIN || 'claude'
+  return completeLocal('york-claude-', bin, claudeArgs(CLAUDE_MODEL), req, signal, run, env)
 }
 
 function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string, unknown> } {
@@ -273,7 +298,7 @@ function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string,
   return { sandbox, cli }
 }
 
-async function prepareCursorWorkspace(workspace: string): Promise<void> {
+export async function prepareCursorWorkspace(workspace: string): Promise<void> {
   const dir = join(workspace, '.cursor')
   await mkdir(dir, { recursive: true })
   const { sandbox, cli } = cursorConfig()
@@ -288,14 +313,22 @@ export async function completeCursor(
   run: ProcessRunner,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  if (!env.CURSOR_API_KEY) throw new Error('CURSOR_API_KEY missing')
-  const home = await mkdtemp(join(tmpdir(), 'york-cursor-'))
+  const bin = env.CURSOR_BIN || 'agent'
+  const dir = await mkdtemp(join(tmpdir(), 'york-cursor-'))
   try {
-    await prepareCursorWorkspace(home)
-    const bin = env.CURSOR_BIN || 'agent'
-    const childEnv = providerChildEnv(env, 'CURSOR_API_KEY', home)
-    return await completeCli(bin, cursorArgs(CURSOR_MODEL, home), req, signal, run, childEnv, { cwd: home })
+    await prepareCursorWorkspace(dir)
+    return await completeCli(bin, cursorArgs(CURSOR_MODEL, dir), req, signal, run, providerChildEnv(env), { cwd: dir })
   } finally {
-    await rm(home, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true })
   }
+}
+
+export async function completeCodex(
+  req: LlmRequest,
+  signal: AbortSignal,
+  run: ProcessRunner,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  const bin = env.CODEX_BIN || 'codex'
+  return completeLocal('york-codex-', bin, codexArgs(), req, signal, run, env)
 }

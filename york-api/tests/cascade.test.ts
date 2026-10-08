@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildAdapters } from '../src/adapters.ts'
 import { cascade, type Adapter } from '../src/cascade.ts'
-import { claudeArgs, completeGrok, cursorArgs, GROK_MODEL } from '../src/providers.ts'
+import { claudeArgs, codexArgs, cursorArgs, grokArgs, GROK_MODEL } from '../src/providers.ts'
 import type { LlmRequest } from '../src/types.ts'
 
 const req: LlmRequest = { system: 'sys', user: 'user' }
@@ -48,43 +48,37 @@ test('cascade throws when every provider fails', async () => {
   )
 })
 
-test('grok HTTP falls through on rate limit and parses a real body', async () => {
-  await assert.rejects(
-    () => completeGrok(req, new AbortController().signal, async () => ({ ok: false, status: 429, json: async () => ({}) }), { XAI_API_KEY: 'test' }),
-    /grok 429/,
-  )
-  const text = await completeGrok(
-    req,
-    new AbortController().signal,
-    async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ choices: [{ message: { content: 'Hall supply is high.' } }] }),
-    }),
-    { XAI_API_KEY: 'test', XAI_MODEL: 'grok-4.7' },
-  )
-  assert.equal(text, 'Hall supply is high.')
+test('local CLIs are the cascade and codex stays off until asked', () => {
+  assert.deepEqual(grokArgs(), ['-p'])
+  const adapters = buildAdapters({}, {
+    async run() {
+      return { code: 0, stdout: 'The hall is stable.', stderr: '' }
+    },
+  })
+  assert.deepEqual(adapters.map((item) => item.id), ['grok', 'claude', 'cursor', 'codex'])
+  assert.equal(adapters[0]?.enabled(), true)
+  assert.equal(adapters.find((item) => item.id === 'codex')?.enabled(), false)
+  const withCodex = buildAdapters({ YORK_CODEX: '1' }, {
+    async run() {
+      return { code: 0, stdout: 'The hall is stable.', stderr: '' }
+    },
+  })
+  assert.equal(withCodex.find((item) => item.id === 'codex')?.enabled(), true)
 })
 
-test('cascade skips claude when that provider is off', async () => {
+test('cascade skips claude when that binary is missing', async () => {
   const calls: string[] = []
-  const adapters = buildAdapters(
-    { XAI_API_KEY: 'xai', CURSOR_API_KEY: 'cur', PATH: '/usr/bin' },
-    async () => {
-      calls.push('grok')
-      return { ok: false, status: 503, json: async () => ({}) }
+  const adapters = buildAdapters({ YORK_CLAUDE_CLI: 'unavailable' }, {
+    async run(cmd) {
+      calls.push(cmd)
+      if (cmd === 'grok') return { code: 1, stdout: '', stderr: 'grok failed' }
+      return { code: 0, stdout: 'The hall is stable.', stderr: '' }
     },
-    {
-      async run() {
-        calls.push('cursor')
-        return { code: 0, stdout: 'The hall is stable.', stderr: '' }
-      },
-    },
-  )
+  })
   assert.equal(adapters.find((item) => item.id === 'claude')?.enabled(), false)
   const result = await cascade(adapters, req, new AbortController().signal)
   assert.equal(result.provider, 'cursor')
-  assert.deepEqual(calls, ['grok', 'cursor'])
+  assert.deepEqual(calls, ['grok', 'agent'])
 })
 
 test('claude and cursor commands use the verified model ids', () => {
@@ -105,4 +99,6 @@ test('claude and cursor commands use the verified model ids', () => {
   assert.ok(cursorArgs('auto', '/tmp/york').includes('auto'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('ask'))
   assert.ok(cursorArgs('auto', '/tmp/york').includes('/tmp/york'))
+  assert.equal(cursorArgs('auto', '/tmp/york').includes('--force'), false)
+  assert.deepEqual(codexArgs(), ['exec', '--skip-git-repo-check'])
 })

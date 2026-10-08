@@ -31,8 +31,8 @@ export interface ChatRequest {
 
 export type ChatResponse =
   | { status: 'answer'; answer: string; sources: ChatSource[]; provider: string; model: string; notice?: string }
-  | { status: 'tools'; calls: ToolCall[]; round: number }
-  | { status: 'confirm'; confirm: ToolCall; round: number }
+  | { status: 'tools'; calls: ToolCall[]; round: number; notice?: string }
+  | { status: 'confirm'; confirm: ToolCall; round: number; notice?: string }
   | { status: 'unavailable'; answer: string }
   | { status: 'error'; answer: string }
 

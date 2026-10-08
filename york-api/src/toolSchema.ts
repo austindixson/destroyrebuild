@@ -95,7 +95,7 @@ function readUnit(item: unknown): { id: string; running: boolean; capacityMw: nu
   if (typeof item.id !== 'string' || item.id.length === 0 || item.id.length > 64) return null
   if (typeof item.running !== 'boolean') return null
   if (typeof item.capacityMw !== 'number' || !Number.isFinite(item.capacityMw)) return null
-  return { id: item.id, running: item.running, capacityMw: item.capacityMw }
+  return { id: item.id, running: item.running, capacityMw: Math.max(0, item.capacityMw) }
 }
 
 function readUnits(value: unknown): Read {

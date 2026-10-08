@@ -30,7 +30,10 @@ export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string
     .slice(-6)
     .map((item) => `${item.role}: ${item.text.slice(0, 400)}`)
     .join('\n')
-  const results = req.toolResults.map((row) => `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message}`).join('\n')
+  const results = req.toolResults
+    .slice(0, 8)
+    .map((row) => `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message.slice(0, 400)}`)
+    .join('\n')
   const user = [
     `Question: ${req.question}`,
     `Earlier questions: ${req.previousQuestions.slice(-6).join(' | ')}`,

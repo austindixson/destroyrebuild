@@ -1,67 +1,128 @@
 import { spawn } from 'node:child_process'
 
-export const CURSOR_CLI_MIN = '2026.10.01-e373342'
-export const CLAUDE_CLI_MIN = '2.1.295'
+/** Log-and-warn floors. An older binary still serves. A missing binary does not. */
+export const CLAUDE_CLI_MIN = '2.1.293'
+export const CURSOR_CLI_MIN = '2026.07.17'
+export const GROK_CLI_MIN = '1.0.50'
 
-const CURSOR_PIN = { year: 2026, month: 10, day: 1, hash: 'e373342' }
-const CLAUDE_PIN = [2, 1, 295] as const
+const CLAUDE_MIN = [2, 1, 293] as const
+const CURSOR_MIN = [2026, 7, 17] as const
+const GROK_MIN = [1, 0, 50] as const
 
-export function cursorVersionOk(text: string): boolean {
-  const match = text.match(/(\d{4})\.(\d{2})\.(\d{2})-([0-9a-fA-F]+)/)
-  if (!match) return false
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  if (year !== CURSOR_PIN.year) return year > CURSOR_PIN.year
-  if (month !== CURSOR_PIN.month) return month > CURSOR_PIN.month
-  if (day !== CURSOR_PIN.day) return day > CURSOR_PIN.day
-  return match[4]?.toLowerCase() === CURSOR_PIN.hash
+const SHARED_PROBE = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'SHELL', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'] as const
+
+const OWN_PROBE: Record<string, readonly string[]> = {
+  grok: ['GROK_BIN'],
+  claude: ['CLAUDE_BIN', 'CLAUDE_CONFIG_DIR'],
+  cursor: ['CURSOR_BIN'],
+  codex: ['CODEX_BIN', 'CODEX_HOME'],
 }
 
-export function claudeVersionOk(text: string): boolean {
-  const match = text.match(/(\d+)\.(\d+)\.(\d+)/)
-  if (!match) return false
-  const got = [Number(match[1]), Number(match[2]), Number(match[3])]
-  for (let i = 0; i < CLAUDE_PIN.length; i += 1) {
+export function cliProbeEnv(env: NodeJS.ProcessEnv, name: string): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {}
+  const keys = [...SHARED_PROBE, ...(OWN_PROBE[name] ?? [])]
+  for (const key of keys) {
+    const value = env[key]
+    if (typeof value === 'string' && value.length > 0) next[key] = value
+  }
+  return next
+}
+
+function atLeast(got: number[], min: readonly number[]): boolean {
+  for (let i = 0; i < min.length; i += 1) {
     const part = got[i] ?? 0
-    const pin = CLAUDE_PIN[i] ?? 0
+    const pin = min[i] ?? 0
     if (part !== pin) return part > pin
   }
   return true
 }
 
-function readVersion(bin: string): Promise<string | null> {
+export function cursorVersionOk(text: string): boolean {
+  const match = text.match(/(?:^|\D)(\d{4})\.(\d{2})\.(\d{2})\b/m)
+  if (!match) return false
+  return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CURSOR_MIN)
+}
+
+export function claudeVersionOk(text: string): boolean {
+  const match = text.match(/^\s*v?(\d+)\.(\d+)\.(\d+)\b/m)
+  if (!match) return false
+  return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CLAUDE_MIN)
+}
+
+export function grokVersionOk(text: string): boolean {
+  const match = text.match(/^\s*v?(\d+)\.(\d+)\.(\d+)\b/m)
+  if (!match) return false
+  return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], GROK_MIN)
+}
+
+/**
+ * Reads --version. Resolves on exit. A grandchild that keeps the pipe open
+ * cannot hold this past the timeout, and the group is killed on the way out.
+ */
+export function readCliVersion(bin: string, env: NodeJS.ProcessEnv): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, ['--version'], {
+      env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     const chunks: Buffer[] = []
-    const timer = setTimeout(() => child.kill('SIGKILL'), 5_000)
-    const done = (text: string | null) => {
+    let settled = false
+    const finish = (text: string | null) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      const pid = child.pid
+      if (pid) {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // The group is already gone.
+        }
+      }
       resolve(text)
     }
+    const timer = setTimeout(() => {
+      finish(chunks.length > 0 ? Buffer.concat(chunks).toString('utf8') : null)
+    }, 3_000)
     child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
     child.stderr?.on('data', (chunk: Buffer) => chunks.push(chunk))
-    child.on('error', () => done(null))
-    child.on('close', () => done(Buffer.concat(chunks).toString('utf8')))
+    child.on('error', () => finish(null))
+    child.on('exit', () => {
+      // A short drain catches the version line. Do not wait for 'close':
+      // a grandchild holding the pipe must not block listen.
+      setTimeout(() => finish(Buffer.concat(chunks).toString('utf8')), 100)
+    })
   })
 }
 
+type CliFlag = 'YORK_GROK_CLI' | 'YORK_CLAUDE_CLI' | 'YORK_CURSOR_CLI' | 'YORK_CODEX_CLI'
+
 export async function probeAndLogClis(env: NodeJS.ProcessEnv): Promise<void> {
-  await logOne(env, 'claude', env.CLAUDE_BIN || 'claude', claudeVersionOk, 'YORK_CLAUDE_CLI')
-  await logOne(env, 'cursor', env.CURSOR_BIN || 'agent', cursorVersionOk, 'YORK_CURSOR_CLI')
+  await Promise.all([
+    logOne(env, 'grok', env.GROK_BIN || 'grok', GROK_CLI_MIN, grokVersionOk, 'YORK_GROK_CLI'),
+    logOne(env, 'claude', env.CLAUDE_BIN || 'claude', CLAUDE_CLI_MIN, claudeVersionOk, 'YORK_CLAUDE_CLI'),
+    logOne(env, 'cursor', env.CURSOR_BIN || 'agent', CURSOR_CLI_MIN, cursorVersionOk, 'YORK_CURSOR_CLI'),
+    logOne(env, 'codex', env.CODEX_BIN || 'codex', '', () => true, 'YORK_CODEX_CLI'),
+  ])
 }
 
 async function logOne(
   env: NodeJS.ProcessEnv,
   name: string,
   bin: string,
+  minimum: string,
   okText: (text: string) => boolean,
-  flag: 'YORK_CLAUDE_CLI' | 'YORK_CURSOR_CLI',
+  flag: CliFlag,
 ): Promise<void> {
-  const text = await readVersion(bin)
-  const version = text?.trim() || 'missing'
-  const ok = text !== null && okText(text)
-  const status = ok ? 'ready' : 'unavailable'
-  console.log(`york-api cli ${name} version=${version} status=${status}`)
-  if (!ok) env[flag] = 'unavailable'
+  const text = await readCliVersion(bin, cliProbeEnv(env, name))
+  if (text === null) {
+    console.log(`york-api cli ${name} version=missing status=unavailable`)
+    env[flag] = 'unavailable'
+    return
+  }
+  const version = text.trim() || 'unparsed'
+  const ok = minimum.length === 0 || okText(text)
+  console.log(`york-api cli ${name} version=${version} status=ready`)
+  if (!ok) console.warn(`york-api cli ${name} is older than ${minimum}. This tier stays on.`)
 }
