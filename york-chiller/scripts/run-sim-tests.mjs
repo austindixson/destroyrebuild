@@ -1,11 +1,14 @@
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { build } from 'esbuild'
 
 const entries = ['tests/phase0.test.ts', 'tests/valveAlert.test.ts']
+const outdir = mkdtempSync(path.join(tmpdir(), 'york-sim-'))
 
 for (const entry of entries) {
-  const outfile = path.join('/tmp', `${path.basename(entry, '.ts')}.mjs`)
+  const outfile = path.join(outdir, `${path.basename(entry, '.ts')}.mjs`)
   await build({
     entryPoints: [entry],
     bundle: true,

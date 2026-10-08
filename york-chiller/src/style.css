@@ -2292,8 +2292,29 @@ button.jargon:hover {
 .kpi .val button.jargon,
 .kpi .val .jargon,
 .pipe-card p.dp-read .jargon,
-.chaos-status .jargon {
+.chaos-status .jargon,
+.valve-alert-head .jargon {
   color: inherit;
+}
+
+.valve-alert-head {
+  display: block;
+  color: var(--york-text-alert);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.45;
+}
+
+.valve-alert-body {
+  display: block;
+  margin-top: 6px;
+  color: var(--york-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.valve-alert-body:empty {
+  display: none;
 }
 
 .opti-set-label {

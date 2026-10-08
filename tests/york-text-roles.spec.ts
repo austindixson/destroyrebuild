@@ -166,7 +166,10 @@ test('status color beats role ink on KPIs, pipe delta P, and chaos status', asyn
 
   const head = page.locator('[data-k="head"]')
   await expect(head.locator('xpath=..')).toHaveClass(/warn|bad/)
-  const headColor = await head.evaluate((el) => getComputedStyle(el).color)
+  let headColor = ''
+  await expect
+    .poll(async () => (headColor = await head.evaluate((el) => (el.isConnected ? getComputedStyle(el).color : ''))))
+    .toMatch(/^rgb\(255, (176, 32|93, 122)\)$/)
   expect([STATUS.amber, STATUS.rose]).toContain(headColor)
   expect(headColor).not.toBe(STATUS.value)
   const headTerm = head.locator('button.jargon')
@@ -189,4 +192,15 @@ test('status color beats role ink on KPIs, pipe delta P, and chaos status', asyn
   await expect(chw).toHaveCSS('color', STATUS.rose)
   await expect(chw).not.toHaveCSS('color', STATUS.value)
   await expect(chw).not.toHaveCSS('color', STATUS.mint)
+})
+
+test('active cycle step sits on the solid disc in title ink', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/york-chiller/')
+  await page.locator('.nav [data-nav="cycle"]').click()
+  const step = page.locator('.cycle-svg .node.active .sub')
+  await expect(step).toHaveText('01')
+  await expect(step).toHaveCSS('fill', INK.title)
+  await expect(page.locator('.cycle-svg .node.active circle')).toHaveCSS('fill', 'rgb(22, 72, 82)')
+  await expect(step).not.toHaveCSS('fill', INK.label)
 })

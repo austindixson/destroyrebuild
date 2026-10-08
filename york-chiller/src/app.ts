@@ -116,6 +116,12 @@ function lchltHint(s: PlantSnapshot): string {
   return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
 }
 
+function splitValveAlert(text: string): { head: string; body: string } {
+  const cut = text.indexOf('. ')
+  if (cut < 0) return { head: text, body: '' }
+  return { head: text.slice(0, cut + 1), body: text.slice(cut + 2) }
+}
+
 export class App {
   private root: HTMLElement
   private view: ViewId = 'home'
@@ -801,7 +807,7 @@ export class App {
     return `
       <section class="pipe-board" id="pipe-board">
         <div id="valve-alert" class="valve-alert-panel" hidden role="status">
-          <p id="valve-alert-text" class="valve-alert"></p>
+          <p id="valve-alert-text" class="valve-alert"><span id="valve-alert-head" class="valve-alert-head"></span> <span id="valve-alert-body" class="valve-alert-body"></span></p>
           <button type="button" class="btn ghost" id="valve-alert-dismiss">Dismiss</button>
         </div>
         <div class="pipe-head">
@@ -1910,20 +1916,32 @@ COND ══╝     CHW → CRAH → HALL</div>
 
   private paintValveAlert() {
     const panel = this.root.querySelector<HTMLElement>('#valve-alert')
-    const copy = panel?.querySelector('#valve-alert-text')
-    if (!panel || !copy) return
+    const copy = panel?.querySelector<HTMLElement>('#valve-alert-text')
+    const head = panel?.querySelector('#valve-alert-head')
+    const body = panel?.querySelector('#valve-alert-body')
+    if (!panel || !copy || !head || !body) return
     const show = valveAlertShow(this.valveAlert)
     const visible = !panel.hidden
-    const current = visible ? (copy.textContent ?? '') : ''
+    const current = visible ? (copy.textContent ?? '').replace(/\s+/g, ' ').trim() : ''
     const next = show?.text ?? ''
     if (current === next && visible === Boolean(show)) return
     if (!show) {
       panel.hidden = true
-      copy.textContent = ''
+      head.textContent = ''
+      body.textContent = ''
       return
     }
+    const parts = splitValveAlert(show.text)
+    const active = document.activeElement
+    const glossary =
+      active instanceof HTMLElement && active.classList.contains('jargon') && copy.contains(active)
+        ? active.dataset.glossary
+        : undefined
     panel.hidden = false
-    this.relinkText(copy, show.text)
+    head.textContent = parts.head
+    body.textContent = parts.body
+    linkGlossary(copy)
+    if (glossary) copy.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
   }
 
   private applyTroubleIncident() {
