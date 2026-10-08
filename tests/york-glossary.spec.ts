@@ -144,40 +144,51 @@ test('wet-bulb, LCHLT, and % FLA open glossary definitions', async ({ page }) =>
   await expect(page.locator('#cw-gain').getByRole('button', { name: 'Show the meaning of Wet-bulb' })).toBeFocused()
 })
 
-test('quiz and incident cards have no glossary links before a choice', async ({ page }) => {
+test('quiz and incident prompts can open glossary before a choice', async ({ page }) => {
   await page.goto('/york-chiller/')
   await page.locator('.nav [data-nav="quiz"]').click()
-  let quizSawFla = false
-  let quizSawWet = false
-  for (let i = 0; i < 10; i++) {
+  const dialog = page.getByRole('dialog')
+  let openedQuiz = false
+  for (let i = 0; i < 10 && !openedQuiz; i++) {
     const card = page.locator('.quiz-card')
     await expect(card).toBeVisible()
     await expect(card).not.toHaveAttribute('data-info')
-    await expect(card.locator('button.jargon')).toHaveCount(0)
-    const text = await card.innerText()
-    if (text.includes('% FLA')) quizSawFla = true
-    if (/wet-bulb/i.test(text)) quizSawWet = true
+    const jargon = card.locator('h3 button.jargon')
+    if ((await jargon.count()) > 0) {
+      await jargon.first().click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('#info-title')).not.toHaveText('')
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      await expect(card).not.toHaveAttribute('data-info')
+      openedQuiz = true
+      break
+    }
     await card.locator('.choice').first().click()
     await page.locator('[data-quiz-next]').click()
   }
-  expect(quizSawFla).toBe(true)
-  expect(quizSawWet).toBe(true)
+  expect(openedQuiz).toBe(true)
 
   await page.locator('.nav [data-nav="trouble"]').click()
-  let troubleSawFla = false
-  let troubleSawWet = false
-  for (let i = 0; i < 5; i++) {
+  let openedTrouble = false
+  for (let i = 0; i < 5 && !openedTrouble; i++) {
     const card = page.locator('.trouble-card')
     await expect(card).toBeVisible()
     await expect(card).not.toHaveAttribute('data-info')
-    await expect(card.locator('button.jargon')).toHaveCount(0)
-    const text = await card.innerText()
-    if (text.includes('% FLA')) troubleSawFla = true
-    if (/wet-bulb/i.test(text)) troubleSawWet = true
+    const jargon = card.locator('li button.jargon')
+    if ((await jargon.count()) > 0) {
+      await jargon.first().click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('#info-title')).not.toHaveText('')
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+      await expect(card).not.toHaveAttribute('data-info')
+      openedTrouble = true
+      break
+    }
     await page.locator('[data-tr-next]').click()
   }
-  expect(troubleSawFla).toBe(true)
-  expect(troubleSawWet).toBe(true)
+  expect(openedTrouble).toBe(true)
 })
 
 test('quiz choices and inputs are not glossary links', async ({ page }) => {
