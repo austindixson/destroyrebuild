@@ -364,73 +364,170 @@ export class ChillerScene {
   }
 
   /**
-   * Three loops leave the nozzle face (world +X after the measured yaw):
-   * teal water to the hall, gold water to the tower, violet glycol to the dry cooler.
+   * Bore centers of the drive-end water-box nozzles, in ymc2.glb local space.
+   * The package is one mesh. These were measured from the flange faces: local +Z
+   * is the nozzle axis, and after mountModel()'s +90° yaw that axis is world +X.
+   * Evaporator nozzles are the local -X pair (CHW). Condenser nozzles are the local +X pair (CW).
+   */
+  private readonly nozzleLocal: Record<'chws' | 'chwr' | 'cws' | 'cwr', THREE.Vector3> = {
+    chws: new THREE.Vector3(-0.2382, -0.165, 0.903),
+    chwr: new THREE.Vector3(-0.238, -0.3625, 0.895),
+    cwr: new THREE.Vector3(0.0049, -0.224, 0.945),
+    cws: new THREE.Vector3(0.1439, -0.3364, 0.937),
+  }
+
+  /**
+   * Three loops. CHW and CW leave the water-box nozzles. The GLB has no glycol
+   * nozzles, so GLS/GLR leave a floor-mounted header beside the opposite end.
    */
   private buildFieldPiping(box: THREE.Box3) {
     const group = new THREE.Group()
-    const size = box.getSize(new THREE.Vector3())
-    const face = box.max.x - 0.08
-    const yBase = box.min.y + size.y * 0.36
     const zMid = (box.min.z + box.max.z) / 2
     const front = box.max.z + 1.05
     const towerX = box.max.x + 3.15
     const towerZ = zMid - 0.1
     const coolX = box.min.x - 2.55
     const coolZ = front - 0.15
+    const outward = new THREE.Vector3(0, 0, 1).transformDirection(this.model!.matrixWorld).normalize()
 
-    const chw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
-      { id: 'chw-return', color: 0x146e78, y: yBase, z: zMid + size.z * 0.18, rack: 0, tag: 'CHWR' },
-      { id: 'chw-supply', color: 0x2ec4c4, y: yBase + 0.26, z: zMid + size.z * 0.04, rack: 1, tag: 'CHWS' },
+    const chw: { key: 'chws' | 'chwr'; id: InstrumentId; color: number; rackY: number; tag: PlantTag }[] = [
+      { key: 'chwr', id: 'chw-return', color: 0x146e78, rackY: 0.42, tag: 'CHWR' },
+      { key: 'chws', id: 'chw-supply', color: 0x2ec4c4, rackY: 1.14, tag: 'CHWS' },
     ]
     for (const line of chw) {
-      const rackY = 0.9 + line.rack * 0.24
-      const out = face + 0.85
+      const seat = this.seatNozzle(this.nozzleLocal[line.key])
+      const out = seat.face.clone().addScaledVector(outward, 0.78)
+      const rack = out.clone()
+      rack.y = line.rackY
       this.layLine(group, [
-        new THREE.Vector3(face - 0.2, line.y, line.z),
-        new THREE.Vector3(out, line.y, line.z),
-        new THREE.Vector3(out, rackY, line.z),
-        new THREE.Vector3(out, rackY, front),
-        new THREE.Vector3(box.min.x + 0.5, rackY, front),
-      ], line, 'chw')
+        seat.into,
+        seat.face.clone().addScaledVector(outward, 0.24),
+        out,
+        rack,
+        new THREE.Vector3(out.x, line.rackY, front),
+        new THREE.Vector3(box.min.x + 0.5, line.rackY, front),
+      ], line, 'chw', seat.face, 'x')
     }
 
-    const cw: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
-      { id: 'cw-supply', color: 0xd4a017, y: yBase + 0.04, z: zMid - size.z * 0.14, rack: 0, tag: 'CWS' },
-      { id: 'cw-return', color: 0x8a5a12, y: yBase + 0.3, z: zMid - size.z * 0.28, rack: 1, tag: 'CWR' },
+    const cw: { key: 'cws' | 'cwr'; id: InstrumentId; color: number; rackY: number; tag: PlantTag }[] = [
+      { key: 'cws', id: 'cw-supply', color: 0xd4a017, rackY: 1.2, tag: 'CWS' },
+      { key: 'cwr', id: 'cw-return', color: 0x8a5a12, rackY: 1.46, tag: 'CWR' },
     ]
     for (const line of cw) {
-      const rackY = 1.2 + line.rack * 0.26
-      const out = face + 0.55
+      const seat = this.seatNozzle(this.nozzleLocal[line.key])
+      const out = seat.face.clone().addScaledVector(outward, 0.62)
+      const rack = out.clone()
+      rack.y = line.rackY
       this.layLine(group, [
-        new THREE.Vector3(face - 0.15, line.y, line.z),
-        new THREE.Vector3(out, line.y, line.z),
-        new THREE.Vector3(out, rackY, line.z),
-        new THREE.Vector3(towerX - 0.95, rackY, line.z),
-        new THREE.Vector3(towerX - 0.95, rackY, towerZ),
+        seat.into,
+        seat.face.clone().addScaledVector(outward, 0.22),
+        out,
+        rack,
+        new THREE.Vector3(towerX - 0.95, line.rackY, out.z),
+        new THREE.Vector3(towerX - 0.95, line.rackY, towerZ),
         new THREE.Vector3(towerX - 0.7, 1.25, towerZ),
-      ], line, 'cw')
+      ], line, 'cw', seat.face, 'x')
     }
     this.buildTower(group, towerX, towerZ)
 
-    const gly: { id: InstrumentId; color: number; y: number; z: number; rack: number; tag: PlantTag }[] = [
-      { id: 'gly-supply', color: 0x7c5cff, y: yBase + 0.48, z: zMid + size.z * 0.32, rack: 0, tag: 'GLS' },
-      { id: 'gly-return', color: 0xb9a6ff, y: yBase + 0.7, z: zMid + size.z * 0.4, rack: 1, tag: 'GLR' },
+    const header = new THREE.Vector3(box.min.x - 0.95, 0, box.max.z + 0.2)
+    const faces = this.buildGlycolHeader(group, header)
+    const gly: { id: InstrumentId; color: number; rackY: number; tag: PlantTag; face: THREE.Vector3 }[] = [
+      { id: 'gly-supply', color: 0x7c5cff, rackY: 1.82, tag: 'GLS', face: faces[0] },
+      { id: 'gly-return', color: 0xb9a6ff, rackY: 2.06, tag: 'GLR', face: faces[1] },
     ]
     for (const line of gly) {
-      const rackY = 1.82 + line.rack * 0.24
-      const out = face + 1.25
+      const tip = line.face.clone()
+      const away = tip.clone()
+      away.x -= 0.7
+      const rack = away.clone()
+      rack.y = line.rackY
       this.layLine(group, [
-        new THREE.Vector3(face - 0.1, line.y, line.z),
-        new THREE.Vector3(out, line.y, line.z),
-        new THREE.Vector3(out, rackY, line.z),
-        new THREE.Vector3(out, rackY, front + 0.45),
-        new THREE.Vector3(coolX + 1.05, rackY, front + 0.45),
+        tip,
+        new THREE.Vector3(tip.x - 0.28, tip.y, tip.z),
+        away,
+        rack,
+        new THREE.Vector3(away.x, line.rackY, coolZ),
+        new THREE.Vector3(coolX + 1.05, line.rackY, coolZ),
         new THREE.Vector3(coolX + 1.05, 1.15, coolZ),
-      ], line, 'gly')
+      ], line, 'gly', tip, 'x')
     }
     this.buildDryCooler(group, coolX, coolZ)
     this.root.add(group)
+  }
+
+  /**
+   * Project a model-local nozzle onto its flange. A ring of rays around the bore
+   * finds the face so the pipe meets the opening and does not stop in mid-air
+   * or run through the shell. `into` steps a short way down the bore.
+   */
+  private seatNozzle(localFace: THREE.Vector3): { face: THREE.Vector3; into: THREE.Vector3 } {
+    const model = this.model!
+    const outward = new THREE.Vector3(0, 0, 1).transformDirection(model.matrixWorld).normalize()
+    const axisX = new THREE.Vector3(1, 0, 0).transformDirection(model.matrixWorld).normalize()
+    const axisY = new THREE.Vector3(0, 1, 0).transformDirection(model.matrixWorld).normalize()
+    const nominal = localFace.clone().applyMatrix4(model.matrixWorld)
+    const dir = outward.clone().negate()
+    const savedFar = this.raycaster.far
+    this.raycaster.far = 2
+    let shift = 0
+    let samples = 0
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2
+      const origin = nominal
+        .clone()
+        .addScaledVector(outward, 0.85)
+        .addScaledVector(axisX, Math.cos(angle) * 0.15)
+        .addScaledVector(axisY, Math.sin(angle) * 0.15)
+      this.raycaster.set(origin, dir)
+      const hits = this.raycaster.intersectObject(model, true)
+      for (const hit of hits) {
+        const along = hit.point.clone().sub(nominal).dot(outward)
+        if (along < -0.25 || along > 0.12) continue
+        shift += along
+        samples += 1
+        break
+      }
+    }
+    this.raycaster.far = savedFar
+    const face = nominal.clone()
+    if (samples > 0) face.addScaledVector(outward, shift / samples)
+    return { face, into: face.clone().addScaledVector(outward, -0.045) }
+  }
+
+  /** Floor-mounted glycol header. The package mesh has no glycol flanges of its own. */
+  private buildGlycolHeader(group: THREE.Group, origin: THREE.Vector3): THREE.Vector3[] {
+    const g = new THREE.Group()
+    g.position.copy(origin)
+    const legMat = this.steel(0x2a2438, 0.45, 0.5)
+    for (const lz of [-0.42, 0.42]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.38, 0.08), legMat)
+      leg.position.set(0, 0.19, lz)
+      g.add(leg)
+    }
+    const drum = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.11, 0.11, 1.15, this.segs(16, 10)),
+      this.steel(0x4c3d6e, 0.5, 0.42),
+    )
+    drum.rotation.x = Math.PI / 2
+    drum.position.y = 0.52
+    g.add(drum)
+    const faces: THREE.Vector3[] = []
+    for (const spec of [
+      { z: -0.28, y: 0.4 },
+      { z: 0.28, y: 0.64 },
+    ]) {
+      const nozzle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.075, 0.075, 0.2, this.segs(12, 8)),
+        this.steel(0x6d5a96, 0.55, 0.38),
+      )
+      nozzle.rotation.z = Math.PI / 2
+      nozzle.position.set(-0.14, spec.y, spec.z)
+      g.add(nozzle)
+      faces.push(origin.clone().add(new THREE.Vector3(-0.24, spec.y, spec.z)))
+    }
+    group.add(g)
+    return faces
   }
 
   private layLine(
@@ -438,9 +535,11 @@ export class ChillerScene {
     points: THREE.Vector3[],
     line: { id: InstrumentId; color: number; tag: PlantTag },
     kind: LoopKind,
+    flangeAt: THREE.Vector3,
+    flangeAxis: 'x' | 'z',
   ) {
     this.runPipe(group, points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
-    this.addFlange(group, points[0], 'x')
+    this.addFlange(group, flangeAt, flangeAxis)
     this.addValve(group, points[1].clone().lerp(points[2], 0.55), line.id, kind, line.tag)
     const run = points.length - 2
     this.addGauge(group, points[run - 1].clone().lerp(points[run], 0.34), 'p')
