@@ -35,6 +35,13 @@ test('glossary definitions stay short and aliases do not collide', () => {
   expect(glossaryIdsIn('IT LOAD is 1.2 MW')).toEqual(['it-load', 'mw'])
   expect(glossaryIdsIn('xNOCx')).toEqual([])
   expect(glossaryIdsIn('Tell the NOC.')).toEqual(['noc'])
+  expect(glossaryIdsIn('Wet-bulb, then wet bulb, then WET BULB')).toEqual(['wet-bulb'])
+  expect(glossaryIdsIn('A peak outdoor wet-bulb day')).toEqual(['wet-bulb'])
+  expect(glossaryIdsIn('LCHLT setpoint')).toEqual(['lchlt', 'setpoint'])
+  expect(glossaryIdsIn('low %RLA')).toEqual(['rla'])
+  expect(glossaryIdsIn('% RLA')).toEqual(['rla'])
+  expect(glossaryIdsIn('45% RLA')).toEqual(['rla'])
+  expect(glossaryIdsIn('xRLAx')).toEqual([])
 })
 
 test('NOC is clickable and shows its definition', async ({ page }, testInfo) => {
@@ -77,6 +84,38 @@ test('NOC is clickable and shows its definition', async ({ page }, testInfo) => 
   await page.screenshot({ path: testInfo.outputPath('glossary-mobile-390x844.png'), fullPage: false })
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
+})
+
+test('wet-bulb, LCHLT, and %RLA open glossary definitions', async ({ page }) => {
+  await page.goto('/york-chiller/')
+  await page.getByRole('button', { name: 'Information about Outdoor temperature' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Show the meaning of Wet-bulb' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('Wet-bulb')
+  await expect(dialog).toContainText('saturation')
+  await expect(dialog).toContainText('cooling tower')
+  await expect(dialog).toContainText('free cooling')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+
+  await page.getByRole('button', { name: 'Show the meaning of LCHLT' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('LCHLT')
+  await expect(dialog).toContainText('leaving chilled liquid temperature')
+  await expect(dialog).toContainText('55°F')
+  await page.keyboard.press('Escape')
+
+  await page.locator('.nav [data-nav="optiview"]').click()
+  await page.locator('.gauge[data-info="gauge-rla"]').getByRole('button', { name: 'Show the meaning of %RLA' }).click()
+  await expect(dialog.locator('#info-title')).toHaveText('%RLA')
+  await expect(dialog).toContainText('percent rated load amps')
+  await expect(dialog).toContainText('compressor load')
+  await page.keyboard.press('Escape')
+
+  await page.locator('.nav [data-nav="explorer"]').click()
+  const gain = page.locator('#cw-gain').getByRole('button', { name: 'Show the meaning of Wet-bulb' })
+  await expect(gain).toBeVisible()
+  await gain.click()
+  await expect(dialog.locator('#info-title')).toHaveText('Wet-bulb')
 })
 
 test('quiz choices and inputs are not glossary links', async ({ page }) => {

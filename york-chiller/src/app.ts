@@ -758,7 +758,8 @@ export class App {
       gly.classList.toggle('bad', s.oatF <= 48 && s.glycolDpPsi < 8)
     }
     set('chw-gain', `${s.chwGain.toFixed(1)} psi per 10% of stem`)
-    set('cw-gain', `${s.cwHeadGain.toFixed(1)} psi of head per 10%. Wet-bulb ${s.wbF}°F`)
+    const cwGain = this.root.querySelector('#cw-gain')
+    if (cwGain) this.relinkText(cwGain, `${s.cwHeadGain.toFixed(1)} psi of head per 10%. Wet-bulb ${s.wbF}°F`)
     set('gly-gain', `${s.glycolGain.toFixed(1)} psi per 10%. Dry cooler fans ${s.dryFanPct}%`)
     const note = this.root.querySelector('#pipe-note')
     if (note) {

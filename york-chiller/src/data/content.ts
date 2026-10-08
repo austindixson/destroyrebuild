@@ -842,6 +842,26 @@ export const GLOSSARY = {
     definition: 'A UPS is an uninterruptible power supply. A UPS carries a critical load through a short outage.',
     why: 'A UPS event can look like a compressor fault and can add a bearing landing.',
   },
+  'wet-bulb': {
+    term: 'Wet-bulb',
+    aliases: ['wet-bulb', 'wet bulb'],
+    definition:
+      'Wet-bulb is the temperature that air reaches when water evaporation cools the air to saturation. The heat rejection limit of a cooling tower follows the wet-bulb.',
+    why: 'On a peak day, this trainer shows wet-bulb with the cooling tower and free cooling, and heat rejection is the first limit.',
+  },
+  lchlt: {
+    term: 'LCHLT',
+    aliases: ['LCHLT'],
+    definition:
+      'LCHLT means leaving chilled liquid temperature. The LCHLT setpoint is the primary control target of the chiller.',
+    why: 'In this trainer the setpoint starts at 55°F, and OptiView holds that setpoint.',
+  },
+  rla: {
+    term: '%RLA',
+    aliases: ['% RLA', '%RLA', 'RLA'],
+    definition: '%RLA means percent rated load amps. %RLA shows the compressor load on this chiller.',
+    why: 'A low %RLA with a hot hall usually means a pump, a valve, or a CRAH fault, and %RLA does not show hall health.',
+  },
 } as const satisfies Record<string, GlossaryEntry>
 
 export type GlossaryId = keyof typeof GLOSSARY
