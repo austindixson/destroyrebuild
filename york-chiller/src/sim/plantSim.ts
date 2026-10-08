@@ -486,8 +486,8 @@ export class PlantSim {
     this.applyIncident(draft)
     this.applyCapacity(draft, dt)
     this.applyFlowAlarm(draft)
-    this.applyFightAlarm(draft)
     this.applyCapacityAlarm(draft)
+    this.applyFightAlarm(draft)
     return this.assembleSnapshot(draft)
   }
 
@@ -863,21 +863,36 @@ function sumRunningMw(units: ChillerUnitState[]): number {
 }
 
 function fightAlarmText(input: FightInput): string | null {
-  if (input.lchltPinned && lchltOutsideBand(input.lchltSet, input.oatF)) {
-    const center = lchltBand(input.oatF).center
-    return `The LCHLT setpoint fights the outdoor target. The trainer target is ${center.toFixed(0)}°F.`
-  }
-  const valves = weatherValveTargets(input.oatF)
-  if (input.chwPinned && Math.abs(input.chwValvePct - valves.chw) > TRAINER.valveFightPct) {
-    return `The CHW valve fights the outdoor target. The trainer target is ${valves.chw}%.`
-  }
-  if (input.cwPinned && input.oatF >= TRAINER.hotOatF && input.cwValvePct < 60) {
-    return 'The CW valve fights the outdoor target. The cooling tower needs flow in hot weather.'
-  }
-  if (input.glycolPinned && input.oatF >= TRAINER.hotOatF && input.glycolValvePct > 50 && input.freeCoolPct < 8) {
-    return 'The glycol valve fights the outdoor target. Hot air cannot give free cooling.'
-  }
-  return null
+  const lchlt = lchltFightText(input)
+  if (lchlt) return lchlt
+  const chw = chwFightText(input)
+  if (chw) return chw
+  const cw = cwFightText(input)
+  if (cw) return cw
+  return glycolFightText(input)
+}
+
+function lchltFightText(input: FightInput): string | null {
+  if (!input.lchltPinned || !lchltOutsideBand(input.lchltSet, input.oatF)) return null
+  const center = lchltBand(input.oatF).center
+  return `The LCHLT setpoint fights the outdoor target. The trainer target is ${center.toFixed(0)}°F.`
+}
+
+function chwFightText(input: FightInput): string | null {
+  const target = weatherValveTargets(input.oatF).chw
+  if (!input.chwPinned || Math.abs(input.chwValvePct - target) <= TRAINER.valveFightPct) return null
+  return `The CHW valve fights the outdoor target. The trainer target is ${target}%.`
+}
+
+function cwFightText(input: FightInput): string | null {
+  if (!input.cwPinned || input.oatF < TRAINER.hotOatF || input.cwValvePct >= 60) return null
+  return 'The CW valve fights the outdoor target. The cooling tower needs flow in hot weather.'
+}
+
+function glycolFightText(input: FightInput): string | null {
+  if (!input.glycolPinned || input.oatF < TRAINER.hotOatF) return null
+  if (input.glycolValvePct <= 50 || input.freeCoolPct >= 8) return null
+  return 'The glycol valve fights the outdoor target. Hot air cannot give free cooling.'
 }
 
 function lchltOutsideBand(setpoint: number, oatF: number): boolean {

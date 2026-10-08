@@ -1081,7 +1081,7 @@ export class App {
             <label style="font-size:.85rem;color:#86efac" ${infoAttr('slider-lchlt')}>LCHLT setpoint
               <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" style="width:100%;margin-top:6px"/>
             </label>
-            <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.controller.running ? 'disabled' : ''}>Start</button>
+            <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.ch01StartHeld() ? 'disabled' : ''}>Start</button>
             <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.controller.running ? 'disabled' : ''}>Soft stop</button>
             <button class="btn rose" type="button" data-opti="safety" ${infoAttr('opti-safety')}>Safety stop</button>
             <button class="btn" type="button" data-opti="start-ch02" ${infoAttr('opti-ch02')} ${this.controller.unitRunning('CH-02') ? 'disabled' : ''}>Start CH-02</button>
@@ -1163,7 +1163,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     const soft = this.root.querySelector<HTMLButtonElement>('[data-opti="soft"]')
     const start2 = this.root.querySelector<HTMLButtonElement>('[data-opti="start-ch02"]')
     const soft2 = this.root.querySelector<HTMLButtonElement>('[data-opti="soft-ch02"]')
-    if (start) start.disabled = this.controller.running
+    if (start) start.disabled = this.ch01StartHeld()
     if (soft) soft.disabled = !this.controller.running
     if (start2) start2.disabled = this.controller.unitRunning('CH-02')
     if (soft2) soft2.disabled = !this.controller.unitRunning('CH-02')
@@ -1526,7 +1526,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       <div class="unit-row" data-unit="${id}">
         <strong>${id}</strong>
         <span data-unit-state>${running ? 'In operation' : 'Standby'}</span>
-        <button class="btn" type="button" data-ch-start="${id}" ${running ? 'disabled' : ''}>Start</button>
+        <button class="btn" type="button" data-ch-start="${id}" ${running || this.ch01StartHeld(id) ? 'disabled' : ''}>Start</button>
         <button class="btn amber" type="button" data-ch-soft="${id}" ${running ? '' : 'disabled'}>Soft stop</button>
         <button class="btn rose" type="button" data-ch-safety="${id}">Safety stop</button>
       </div>`
@@ -1612,7 +1612,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     if (state) state.textContent = running ? 'In operation' : 'Standby'
     const start = row.querySelector<HTMLButtonElement>('[data-ch-start]')
     const soft = row.querySelector<HTMLButtonElement>('[data-ch-soft]')
-    if (start) start.disabled = running
+    if (start) start.disabled = running || this.ch01StartHeld(id)
     if (soft) soft.disabled = !running
   }
 
@@ -1635,6 +1635,13 @@ COND ══╝     CHW → CRAH → HALL</div>
   private setControlText(root: Element, id: string, text: string) {
     const el = root.querySelector(`#${id}`)
     if (el) el.textContent = text
+  }
+
+  /** Landing and failover keep CH-01 stopped. The Start button stays disabled. */
+  private ch01StartHeld(unitId = 'CH-01'): boolean {
+    if (unitId !== 'CH-01') return this.controller.unitRunning(unitId)
+    const incident = this.controller.incident
+    return this.controller.running || incident === 'landing' || incident === 'failover'
   }
 
   private commandStart(unitId: string) {

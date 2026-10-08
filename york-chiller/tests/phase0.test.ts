@@ -253,6 +253,47 @@ test('outdoor air moves unpinned targets, and a conflicting LCHLT raises an alar
   assert.equal(controller.snapshot.alarm, null)
 })
 
+test('outdoor bands change at 48/49 and 91/92, and a pinned valve stays put', () => {
+  const edges = new PlantController({ seed: 0 })
+  edges.setOutdoorDryBulb(48)
+  assert.equal(edges.snapshot.lchltTargetF, 60)
+  assert.equal(edges.snapshot.lchltSet, 60)
+  edges.setOutdoorDryBulb(49)
+  assert.equal(edges.snapshot.lchltTargetF, 55)
+  assert.equal(edges.snapshot.lchltSet, 55)
+  edges.setOutdoorDryBulb(91)
+  assert.equal(edges.snapshot.lchltTargetF, 55)
+  assert.equal(edges.snapshot.lchltSet, 55)
+  edges.setOutdoorDryBulb(92)
+  assert.equal(edges.snapshot.lchltTargetF, 50)
+  assert.equal(edges.snapshot.lchltSet, 50)
+
+  const pinned = new PlantController({ seed: 0 })
+  pinned.setValve('chw', 80)
+  pinned.setValve('cw', 78)
+  pinned.setValve('gly', 40)
+  pinned.setOutdoorDryBulb(40)
+  assert.equal(pinned.snapshot.chwValvePct, 80)
+  assert.equal(pinned.snapshot.cwValvePct, 70)
+  assert.equal(pinned.snapshot.glycolValvePct, 40)
+  assert.match(pinned.snapshot.alarm ?? '', /CHW valve fights/)
+})
+
+test('a pinned CW valve on a hot day raises a trainer alarm', () => {
+  const controller = new PlantController({ seed: 0 })
+  controller.setOutdoorDryBulb(100)
+  controller.setValve('cw', 50)
+  assert.equal(controller.snapshot.cwValvePct, 50)
+  assert.match(controller.snapshot.alarm ?? '', /CW valve fights/)
+})
+
+test('a capacity alarm stays visible when the LCHLT setpoint also fights', () => {
+  const controller = new PlantController({ seed: 0 })
+  controller.setItLoad({ targetMw: 8 })
+  controller.setLchltSetpoint(64)
+  assert.match(controller.snapshot.alarm ?? '', /running chiller capacity/)
+})
+
 test('a pinned open glycol valve on a hot day raises a trainer alarm', () => {
   const controller = new PlantController({ seed: 0 })
   controller.setOutdoorDryBulb(100)
