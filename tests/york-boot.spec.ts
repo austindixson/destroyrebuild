@@ -50,9 +50,9 @@ test('boot overlay shows download percent, then the full plant model', async ({ 
 })
 
 test('a trickle download falls back to the simple plant model', async ({ page }) => {
-  test.setTimeout(30_000)
+  test.setTimeout(40_000)
   await page.addInitScript(() => {
-    ;(window as Window & { __YORK_MODEL_TIMEOUT_MS?: number }).__YORK_MODEL_TIMEOUT_MS = 1500
+    ;(window as Window & { __YORK_MODEL_TIMEOUT_MS?: number }).__YORK_MODEL_TIMEOUT_MS = 6000
   })
   await page.setViewportSize({ width: 390, height: 844 })
   let releaseDownload = () => {}
@@ -75,6 +75,9 @@ test('a trickle download falls back to the simple plant model', async ({ page })
     uploadThroughput: 2000,
   })
   releaseDownload()
+  await expect(page.locator('#canvas-boot')).toHaveText('The plant model file is at 0 percent.', {
+    timeout: 6_000,
+  })
   await expect(page.locator('#canvas-status')).toHaveText(SIMPLE_MODEL, { timeout: 12_000 })
   await expect(page.locator('#canvas-boot')).toHaveCount(0)
   await expect(page.locator('.plant-tag')).toHaveCount(0)
@@ -148,10 +151,11 @@ test('a disposed scene does not mount the plant model', async ({ page }) => {
 })
 
 test('a stale scene import timeout does not hide the next visit', async ({ page }) => {
-  test.setTimeout(30_000)
-  await page.addInitScript(() => {
-    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = 1500
-  })
+  test.setTimeout(60_000)
+  const visitOneMs = 12_000
+  await page.addInitScript((ms) => {
+    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = ms
+  }, visitOneMs)
   let releaseChunk = () => {}
   const gate = new Promise<void>((resolve) => {
     releaseChunk = resolve
@@ -162,20 +166,62 @@ test('a stale scene import timeout does not hide the next visit', async ({ page 
   })
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/york-chiller/')
+  const started = Date.now()
   await page.locator('.nav [data-nav="explorer"]').click()
   await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
   await page.locator('.nav [data-nav="home"]').click()
+  await expect(page.locator('#canvas-boot')).toHaveCount(0)
   await page.evaluate(() => {
-    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = 30_000
+    ;(window as Window & { __YORK_SCENE_IMPORT_TIMEOUT_MS?: number }).__YORK_SCENE_IMPORT_TIMEOUT_MS = 60_000
   })
   await page.locator('.nav [data-nav="explorer"]').click()
   await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
-  await page.waitForTimeout(2000)
+  const returnedAt = Date.now() - started
+  expect(returnedAt).toBeLessThan(visitOneMs - 1_500)
+  const waitMs = visitOneMs + 1_500 - (Date.now() - started)
+  expect(waitMs).toBeGreaterThan(0)
+  await page.waitForTimeout(waitMs)
+  await expect(page.locator('#canvas-boot')).toHaveText('The plant model starts.')
+  await expect(page.locator('#chiller-canvas')).toBeVisible()
+  await expect(page.locator('#canvas-status')).not.toHaveText('The 3D view failed.')
   releaseChunk()
   await expect(page.locator('.plant-tag')).toHaveCount(8, { timeout: 20_000 })
   await expect(page.locator('#chiller-canvas')).toBeVisible()
   await expect(page.locator('#canvas-status')).toHaveText(/Low-detail 3D|Turn the model/)
   await expect(page.locator('#canvas-status')).not.toHaveText('The 3D view failed.')
+  await expect(page.locator('#canvas-boot')).toHaveCount(0)
+})
+
+test('the plant model falls back at the 180 second cap while percent still moves', async ({ page }) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/york-chiller/')
+  const client = await page.context().newCDPSession(page)
+  await client.send('Network.enable')
+  await client.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 5,
+    downloadThroughput: 32_000,
+    uploadThroughput: 32_000,
+  })
+  await page.locator('.nav [data-nav="explorer"]').click()
+  const boot = page.locator('#canvas-boot')
+  const status = page.locator('#canvas-status')
+  await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
+  const seenZero = Date.now()
+  await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 20_000 })
+  await expect(status).not.toHaveText(SIMPLE_MODEL)
+  const holdMs = 150_000 - (Date.now() - seenZero)
+  expect(holdMs).toBeGreaterThan(120_000)
+  await page.waitForTimeout(holdMs)
+  await expect(boot).toHaveText(/The plant model file is at \d+ percent\./)
+  await expect(status).not.toHaveText(SIMPLE_MODEL)
+  await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 60_000 })
+  const elapsed = Date.now() - seenZero
+  expect(elapsed).toBeGreaterThan(165_000)
+  expect(elapsed).toBeLessThan(220_000)
+  await expect(page.locator('.plant-tag')).toHaveCount(0)
+  await expect(boot).toHaveCount(0)
 })
 
 test('boot overlay fails when the scene chunk stalls', async ({ page }) => {
