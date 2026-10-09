@@ -38,11 +38,15 @@ function toolLines(): string {
 const FOLLOW_VOICE = 'Use active voice. Do not put is, are, was, were, or been before a past participle. Keep each sentence to 25 words. Keep a command to 20 words. Use % FLA for chiller motor current only. A valve uses % open. A fan uses % speed.'
 
 export const N_PLUS_ONE_LINE = [
-  '[trainer:glossary:n-plus-1] N+1: nPlusOneSpareUnits is the count of chillers that can run, minus 1.',
-  'A chiller can run when it is running, or when its mode is lead, lag, or standby.',
-  'That count is a number of units. It is not megawatts. It is not a holds verdict.',
-  'N+1 holds when the available chillers minus the largest one still cover the load.',
-  'The answer must say "N+1 holds" or "N+1 does not hold" and show its work.',
+  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',
+  'Count every available chiller: running units plus standby units that can start.',
+  'Subtract the largest unit.',
+  'N+1 holds when that remainder still covers itLoadMw.',
+  'State the verdict as "N+1 holds." or "N+1 does not hold."',
+  'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1.',
+  '17 times 5 MW is 85 MW.',
+  '85 MW covers 80 MW.',
+  'nPlusOneSpareUnits is a count, not MW.',
 ].join(' ')
 
 function passage(chunk: Chunk): string {

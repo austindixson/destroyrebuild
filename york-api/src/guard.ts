@@ -2,8 +2,8 @@ import { LIVE_LABEL } from './copy.ts'
 
 const MARKER = /\[(trainer:[a-z0-9:_-]+)\]/gi
 const UNIT_ID = /\bCH-\d+\b/gi
-/** A whole number, including 95MW, -7, and each side of 118-140. Unit ids are removed first. */
-const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
+/** A whole number, including 95MW, -7, −7.5, and each side of 118-140. Unit ids are removed first. */
+const NUMBER_TOKEN = /(?<![\d.])[-\u2212]?\d+(?:\.\d+)?/g
 
 export function yorkFlaWording(text: string): string {
   return text.replaceAll('%RLA', '% FLA').replaceAll('%TSLA', '% FLA')
@@ -79,10 +79,11 @@ function scheduleSpans(): RegExp[] {
     /\bAfter\s+\d+(?:\.\d+)?\s+hours?\b/gi,
     /\bAt\s+hour\s+\d+(?:\.\d+)?\b/gi,
     /\bWithin\s+\d+(?:\.\d+)?\s+hours?\b/gi,
+    /\bHours?\s+\d+(?:\.\d+)?\b/gi,
   ]
 }
 
-/** Hour labels, ranges, "every N h", "after N hours", "within N hours", "t=N", and "next N hours" are schedule labels. */
+/** Hour labels, ranges, "every N h", "after N hours", "within N hours", "t=N", "Hour N", and "next N hours" are schedule labels. */
 function withoutSchedule(text: string): string {
   let out = text
   for (const pattern of scheduleSpans()) out = out.replace(pattern, ' ')
@@ -141,14 +142,12 @@ const UNIT_CANON: Record<string, string> = {
   '%': '%',
   A: 'A',
 }
-/** Clause and parenthesis boundaries. A decimal point stays inside a number. */
-const CLAUSE_SPLIT = /\.(?!\d)|[()!?;,]/
 /**
- * A leftover equals is an equation when an arithmetic operator sits between
- * numbers before it, inside the same parenthesis or clause. A key=value pair
- * and t=N are not equations.
+ * An equals sign is an equation only when its left side is
+ * number, optional unit, operator, number, optional unit.
+ * "set = 55 F", "(target = 55 F)", "t=N", and "rla=34" are not equations.
  */
-const ARITH_EQ = /\d(?:\.\d+)?\s*[+\u2212*\u00d7/\u00f7-]\s*[-\u2212]?\d(?:\.\d+)?[^=]*=\s*[-\u2212]?\d/
+const LEFT_EQ = /(?:^|[^\d.])[-\u2212]?\d+(?:\.\d+)?(?:\s*(?:\u00b0F|psig|psi|kW|MW|gpm|tons|%|F|A)(?![A-Za-z]))?\s*[+\u2212*\u00d7/\u00f7-]\s*[-\u2212]?\d+(?:\.\d+)?(?:\s*(?:\u00b0F|psig|psi|kW|MW|gpm|tons|%|F|A)(?![A-Za-z]))?\s*=/
 
 type Op = '+' | '-' | '*' | '/'
 type Expr = { kind: 'num'; token: string; unit: string } | { kind: 'bin'; op: Op; left: Expr; right: Expr }
@@ -324,7 +323,7 @@ function blankEquations(text: string): string {
 }
 
 function leftoverEquals(text: string): boolean {
-  return blankEquations(text).split(CLAUSE_SPLIT).some((part) => ARITH_EQ.test(part))
+  return LEFT_EQ.test(withoutSchedule(blankEquations(text)))
 }
 
 function subtractUnit(left: string, right: string): string | null {
@@ -452,26 +451,40 @@ function coversToken(token: string, result: string, value: number): boolean {
   return shownToken === shown(value, places)
 }
 
-/** A computed number stays only when this sentence shows that equation. */
-function equationAllows(text: string, token: string, known: Set<string>): boolean {
+type Solved = { result: string; value: number }
+
+function canonSet(known: Set<string>): Set<string> {
+  const out = new Set<string>()
+  for (const token of known) out.add(canonNum(token))
+  return out
+}
+
+/** Later steps may use a result proven by an earlier equation in the same sentence. */
+function solveEquations(text: string, known: Set<string>): Solved[] | null {
+  const running = canonSet(known)
+  const solved: Solved[] = []
   for (const equation of equationsIn(text)) {
-    const value = workIsRight(equation, known)
-    if (value === null) continue
-    if (coversToken(token, equation.result, value)) return true
+    const value = workIsRight(equation, running)
+    if (value === null) return null
+    running.add(canonNum(equation.result))
+    solved.push({ result: equation.result, value })
+  }
+  if (leftoverEquals(text)) return null
+  return solved
+}
+
+function numberProven(token: string, known: Set<string>, solved: Solved[]): boolean {
+  if (known.has(token) || known.has(canonNum(token))) return true
+  for (const row of solved) {
+    if (coversToken(token, row.result, row.value)) return true
   }
   return false
 }
 
-function badEquation(text: string, known: Set<string>): boolean {
-  for (const equation of equationsIn(text)) {
-    if (workIsRight(equation, known) === null) return true
-  }
-  return leftoverEquals(text)
-}
-
 function numbersKnown(text: string, known: Set<string>): boolean {
-  if (badEquation(text, known)) return false
-  return checkedNumbers(text).every((num) => known.has(num) || equationAllows(text, num, known))
+  const solved = solveEquations(text, known)
+  if (!solved) return false
+  return checkedNumbers(text).every((num) => numberProven(num, known, solved))
 }
 
 function isListMarker(text: string): boolean {

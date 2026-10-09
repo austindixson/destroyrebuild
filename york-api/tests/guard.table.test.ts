@@ -39,6 +39,12 @@ const rows = [
   ['z16-gauge-diff', '52 psig - 17 psig = 35 psi', '52 psig - 17 psig = 35 psi Live numbers are trainer-model values.'],
   ['z16-gauge-as-psig', '52 psig - 17 psig = 35 psig', ''],
   ['z16-missing-result-unit', '5 MW - 4.2 MW = 0.8', ''],
+  ['b12-set', 'set = 55 F', 'set = 55 F Live numbers are trainer-model values.'],
+  ['b12-target', '(target = 55 F)', '(target = 55 F) Live numbers are trainer-model values.'],
+  ['b12-hour-t', 'Hour 2 (t=8)', 'Hour 2 (t=8) Live numbers are trainer-model values.'],
+  ['b12-unicode-result', '(4.2 - 5 = \u22120.8)', '(4.2 - 5 = \u22120.8) Live numbers are trainer-model values.'],
+  ['b12-chain', '(5 + 5 = 10) (10 - 5 = 5)', '(5 + 5 = 10) (10 - 5 = 5) Live numbers are trainer-model values.'],
+  ['b12-chain-mid', '(5 + 4.2 = 9.2) (9.2 - 5 = 4.2)', '(5 + 4.2 = 9.2) (9.2 - 5 = 4.2) Live numbers are trainer-model values.'],
   ['d16-shift-start', 'Eight-hour checklist\nShift start\n1. Open the valve.', 'Eight-hour checklist\nShift start\n1. Open the valve. Live numbers are trainer-model values.'],
   ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Eight-hour checklist\nMid shift\n2. Log it Live numbers are trainer-model values.'],
   ['d21-caps-stack', 'CHECKLIST\nSHIFT START\n1. Open the valve.', 'CHECKLIST\nSHIFT START\n1. Open the valve. Live numbers are trainer-model values.'],
@@ -101,6 +107,7 @@ const ruledSnapshot = {
     other: 8,
     head: 17,
     gap: 9.5,
+    low: 12.5,
   },
 }
 
@@ -122,7 +129,9 @@ const ruled = [
   ['z16-add-bare-result', '5 MW + 3 MW = 8', ''],
   ['z16-mixed-mul', '500 tons * 2 psi = 1000 psi', ''],
   ['z16-one-sided-add', '5 MW + 4.2 = 9.2 MW', ''],
-  ['z16-leftover-op', 'The gap is 5 + 4.2 foo = 9.2.', ''],
+  ['z16-leftover-op', 'The gap is 5 + 4.2 foo = 9.2.', `The gap is 5 + 4.2 foo = 9.2.${LIVE}`],
+  ['z16-bare-left', 'The total is 5 + 4.2 = foo.', ''],
+  ['z16-unicode-75', '(5 - 12.5 = \u22127.5)', `(5 - 12.5 = \u22127.5)${LIVE}`],
   ['z16-wrong-psi', '(17 psi - 9.5 psi = 9.5 psi)', ''],
 ] as const
 

@@ -31,15 +31,27 @@ interface ChatClock {
 }
 
 const chatClocks = new Map<string, ChatClock>()
+const SESSION_LIMIT = 64
 
-function clockId(row: Record<string, unknown>): string {
-  const session = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
-  if (session.length > 0) return session
-  const request = typeof row.requestId === 'string' ? row.requestId.trim() : ''
-  if (request.length > 0) return request
-  const made = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+function boundedId(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().slice(0, SESSION_LIMIT)
+}
+
+function clockId(ip: string, row: Record<string, unknown>): string {
+  const session = boundedId(row.sessionId)
+  if (session.length > 0) {
+    row.sessionId = session
+    return `${ip}\n${session}`
+  }
+  const request = boundedId(row.requestId)
+  if (request.length > 0) {
+    row.requestId = request
+    return `${ip}\n${request}`
+  }
+  const made = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`.slice(0, SESSION_LIMIT)
   row.sessionId = made
-  return made
+  return `${ip}\n${made}`
 }
 
 function asRow(raw: unknown): Record<string, unknown> | null {
@@ -47,12 +59,12 @@ function asRow(raw: unknown): Record<string, unknown> | null {
   return raw as Record<string, unknown>
 }
 
-/** Elapsed time and timed-out tiers for this session id. The question text is not the key. */
+/** Elapsed time and timed-out tiers for this client IP and session id. The question text is not the key. */
 export function serverChatClock(ip: string, raw: unknown, now: number): { elapsedMs: number; timedOut: string[] } {
   const row = asRow(raw)
   if (!row) return { elapsedMs: 0, timedOut: [] }
   const round = typeof row.round === 'number' && row.round > 0 ? Math.floor(row.round) : 0
-  const key = clockId(row)
+  const key = clockId(ip, row)
   const existing = round > 0 ? chatClocks.get(key) : undefined
   const clock = existing ?? { startedAt: now, timedOut: [] }
   if (!existing) chatClocks.set(key, clock)
@@ -66,7 +78,7 @@ export function serverChatClock(ip: string, raw: unknown, now: number): { elapse
 export function rememberTimeouts(ip: string, raw: unknown, timedOut: string[]): void {
   const row = asRow(raw)
   if (!row) return
-  const clock = chatClocks.get(clockId(row))
+  const clock = chatClocks.get(clockId(ip, row))
   if (!clock) return
   clock.timedOut = timedOut
 }
