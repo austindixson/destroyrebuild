@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { ComponentId } from '../data/content'
 
@@ -160,6 +161,8 @@ export class ChillerScene {
   private labelValues = new Map<PlantTag, HTMLElement>()
   private labelAnchors = new Map<PlantTag, CSS2DObject>()
   private occlusionAt = 0
+  /** Stays set until fadeOccludedLabels actually tests, not merely until it is asked. */
+  private occlusionPending = false
   private labelsNeedDraw = true
   private viewW = -1
   private viewH = -1
@@ -174,6 +177,20 @@ export class ChillerScene {
   private readonly pipeParts = new Map<THREE.Material, THREE.BufferGeometry[]>()
   private fleetMesh: THREE.InstancedMesh | null = null
   private fleetKey = ''
+  private fleetRun = ''
+  private fleetTagRoot: THREE.Group | null = null
+  private readonly tagHome = new Map<PlantTag, { parent: THREE.Object3D; position: THREE.Vector3 }>()
+  private fog!: THREE.FogExp2
+  private fogBase = 0.035
+  /** Horizontal span of the lead plant. Larger fleets thin the fog against this. */
+  private plantSpan = 0
+  private groundFit = false
+  private floor!: THREE.Mesh
+  private floorRadius = 14
+  private grid: THREE.GridHelper | null = null
+  private backWall: THREE.Mesh | null = null
+  private headerPipe: THREE.Mesh | null = null
+  private ghost: THREE.Mesh | null = null
   private readonly fleetMatrix = new THREE.Matrix4()
   private readonly fleetPos = new THREE.Vector3()
   private readonly fleetQuat = new THREE.Quaternion()
@@ -238,7 +255,8 @@ export class ChillerScene {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = !lowPower
-    this.renderer.shadowMap.type = THREE.BasicShadowMap
+    // r186 removed PCFSoftShadowMap. PCFShadowMap is the soft filter, at 1024 on desktop.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
 
     this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 80)
     this.camera.position.set(0.4, 5.2, 13)
@@ -261,7 +279,9 @@ export class ChillerScene {
       this.interacting = false
     })
 
-    this.scene.fog = new THREE.FogExp2(0x071018, lowPower ? 0.045 : 0.035)
+    this.fogBase = lowPower ? 0.045 : 0.035
+    this.fog = new THREE.FogExp2(0x071018, this.fogBase)
+    this.scene.fog = this.fog
     this.scene.add(this.root)
     this.buildEnvironment()
     this.ready = this.loadModel()
@@ -276,8 +296,9 @@ export class ChillerScene {
     this.publishStatsHook()
   }
 
-  /** Opt-in handle so a real-app sample can read renderer.info. No effect otherwise. */
+  /** Dev-only handle so a real-app sample can read renderer.info. No effect otherwise. */
   private publishStatsHook() {
+    if (!import.meta.env.DEV) return
     if (!new URLSearchParams(window.location.search).has('plantStats')) return
     const win = window as Window & { __YORK_SCENE?: ChillerScene }
     win.__YORK_SCENE = this
@@ -354,7 +375,7 @@ export class ChillerScene {
     key.position.set(6, 10, 4)
     if (!this.lowPower) {
       key.castShadow = true
-      key.shadow.mapSize.set(512, 512)
+      key.shadow.mapSize.set(1024, 1024)
       key.shadow.bias = -0.0004
       key.shadow.camera.near = 1
       key.shadow.camera.far = 30
@@ -366,32 +387,33 @@ export class ChillerScene {
     this.scene.add(key)
     this.scene.add(new THREE.DirectionalLight(0x3ecfcf, 0.35).translateX(-5).translateY(3).translateZ(-4))
 
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(this.lowPower ? 10 : 14, this.segs(48, 24)),
+    this.floorRadius = this.lowPower ? 10 : 14
+    this.floor = new THREE.Mesh(
+      new THREE.CircleGeometry(this.floorRadius, this.segs(48, 24)),
       this.steel(0x121c28, 0.45, 0.55),
     )
-    floor.rotation.x = -Math.PI / 2
-    floor.receiveShadow = !this.lowPower
-    this.scene.add(floor)
+    this.floor.rotation.x = -Math.PI / 2
+    this.floor.receiveShadow = !this.lowPower
+    this.scene.add(this.floor)
 
     if (!this.lowPower) {
-      const grid = new THREE.GridHelper(18, 28, 0x24384c, 0x152433)
-      grid.position.y = 0.01
-      this.scene.add(grid)
+      this.grid = new THREE.GridHelper(18, 28, 0x24384c, 0x152433)
+      this.grid.position.y = 0.01
+      this.scene.add(this.grid)
     }
 
     const wallMat = this.steel(0x1a2736, 0.15, 0.9)
-    const back = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 0.15), wallMat)
-    back.position.set(0, 2.25, -5.8)
-    this.scene.add(back)
+    this.backWall = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 0.15), wallMat)
+    this.backWall.position.set(0, 2.25, -5.8)
+    this.scene.add(this.backWall)
 
-    const chw = new THREE.Mesh(
+    this.headerPipe = new THREE.Mesh(
       new THREE.CylinderGeometry(0.14, 0.14, 12, this.segs(16, 8)),
       this.steel(0x2a9d8f, 0.65, 0.35),
     )
-    chw.rotation.z = Math.PI / 2
-    chw.position.set(0, 3.1, -5.4)
-    this.scene.add(chw)
+    this.headerPipe.rotation.z = Math.PI / 2
+    this.headerPipe.position.set(0, 3.1, -5.4)
+    this.scene.add(this.headerPipe)
 
     if (!this.lowPower) {
       const ghostMat = new THREE.MeshStandardMaterial({
@@ -401,9 +423,9 @@ export class ChillerScene {
         metalness: 0.2,
         roughness: 0.7,
       })
-      const ghost = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.6, 2.2), ghostMat)
-      ghost.position.set(0, 1.1, -3.8)
-      this.scene.add(ghost)
+      this.ghost = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.6, 2.2), ghostMat)
+      this.ghost.position.set(0, 1.1, -3.8)
+      this.scene.add(this.ghost)
     }
 
     const stripe = new THREE.Mesh(
@@ -437,6 +459,7 @@ export class ChillerScene {
   private loadModel() {
     const url = `${import.meta.env.BASE_URL}models/ymc2.glb`
     const gltfLoader = new GLTFLoader()
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder)
     const fileLoader = new THREE.FileLoader(gltfLoader.manager)
     fileLoader.setResponseType('arraybuffer')
     this.modelLoader = fileLoader
@@ -626,6 +649,73 @@ export class ChillerScene {
     this.camera.updateProjectionMatrix()
     this.controls.maxDistance = dist * 2.5
     this.controls.update()
+    this.fitAtmosphere(box)
+  }
+
+  /** Thin the fog and grow the pad once the bank is wider than the lead plant. */
+  private fitAtmosphere(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3())
+    const span = Math.max(size.x, size.z)
+    if (this.plantSpan === 0) this.plantSpan = span
+    const basis = Math.max(this.plantSpan, 1)
+    this.fog.density = this.fogBase * (basis / Math.max(span, basis))
+    if (span <= basis * 1.05) {
+      this.resetGround()
+      return
+    }
+    this.fitGround(span, box.getCenter(new THREE.Vector3()), box)
+  }
+
+  private fitGround(span: number, center: THREE.Vector3, box: THREE.Box3) {
+    this.groundFit = true
+    const cover = Math.max(span + 8, 18)
+    this.floor.scale.setScalar(cover / (this.floorRadius * 2))
+    this.floor.position.set(center.x, 0, center.z)
+    this.replaceGrid(cover, center)
+    this.placeBackdrop(box, center, cover)
+  }
+
+  private replaceGrid(cover: number, center: THREE.Vector3) {
+    if (!this.grid) return
+    this.scene.remove(this.grid)
+    disposeGrid(this.grid)
+    const div = Math.min(64, Math.max(28, Math.round(cover / 0.9)))
+    const grid = new THREE.GridHelper(cover, div, 0x24384c, 0x152433)
+    grid.position.set(center.x, 0.01, center.z)
+    this.scene.add(grid)
+    this.grid = grid
+  }
+
+  private placeBackdrop(box: THREE.Box3, center: THREE.Vector3, cover: number) {
+    const wall = this.backWall
+    if (!wall) return
+    const backZ = Math.min(-5.8, box.min.z - 1.4)
+    wall.position.set(center.x, wall.position.y, backZ)
+    wall.scale.x = Math.max(1, cover / 16)
+    const pipe = this.headerPipe
+    if (pipe) {
+      pipe.position.set(center.x, pipe.position.y, backZ + 0.4)
+      pipe.scale.y = Math.max(1, cover / 12)
+    }
+    if (this.ghost) this.ghost.position.set(center.x, this.ghost.position.y, backZ + 2.2)
+  }
+
+  private resetGround() {
+    if (!this.groundFit) return
+    this.groundFit = false
+    this.floor.scale.setScalar(1)
+    this.floor.position.set(0, 0, 0)
+    this.replaceGrid(18, new THREE.Vector3())
+    if (this.backWall) {
+      this.backWall.position.set(0, this.backWall.position.y, -5.8)
+      this.backWall.scale.x = 1
+    }
+    const pipe = this.headerPipe
+    if (pipe) {
+      pipe.position.set(0, pipe.position.y, -5.4)
+      pipe.scale.y = 1
+    }
+    if (this.ghost) this.ghost.position.set(0, this.ghost.position.y, -3.8)
   }
 
   setValve(kind: LoopKind, pct: number) {
@@ -666,24 +756,90 @@ export class ChillerScene {
       this.clearFleet(true)
       return
     }
-    const key = fleetRunKey(units)
-    if (key === this.fleetKey) return
+    if (fleetCountKey(units.length) !== this.fleetKey) {
+      this.rebuildFleet(units)
+      return
+    }
+    this.paintFleetRunning(units)
+  }
+
+  /** New bank size reframes the hall. A start or stop only recolors the instances. */
+  private rebuildFleet(units: { running: boolean }[]) {
     this.clearFleet(false)
     if (!this.spawnFleet(units.slice(1))) return
-    this.fleetKey = key
+    this.fleetKey = fleetCountKey(units.length)
+    this.fleetRun = runBits(units.slice(1))
+    this.spreadFleetTags()
     this.framePlant()
     this.labelsNeedDraw = true
+    this.occlusionPending = true
     this.needsRender = true
   }
 
+  private paintFleetRunning(units: { running: boolean }[]) {
+    const mesh = this.fleetMesh
+    if (!mesh) return
+    const bits = runBits(units.slice(1))
+    if (bits === this.fleetRun) return
+    this.fleetRun = bits
+    const extras = units.slice(1)
+    for (let i = 0; i < extras.length; i++) {
+      const shade = extras[i].running ? 1 : 0.72
+      this.fleetColor.setRGB(shade, shade, shade)
+      mesh.setColorAt(i, this.fleetColor)
+    }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    this.needsRender = true
+  }
+
+  /** Park the eight readings across the bank so they do not stack on the lead unit. */
+  private spreadFleetTags() {
+    if (this.fleetTagRoot || !this.fleetMesh) return
+    const box = new THREE.Box3().setFromObject(this.fleetMesh)
+    if (this.model) box.union(new THREE.Box3().setFromObject(this.model))
+    const tags = [...this.labelAnchors.keys()]
+    if (tags.length === 0) return
+    const holder = new THREE.Group()
+    this.root.add(holder)
+    this.fleetTagRoot = holder
+    const width = Math.max(box.max.x - box.min.x, 1)
+    const y = box.max.y + 0.45
+    const z = box.max.z + 1.1
+    for (let i = 0; i < tags.length; i++) {
+      const object = this.labelAnchors.get(tags[i])
+      const parent = object?.parent
+      if (!object || !parent) continue
+      this.tagHome.set(tags[i], { parent, position: object.position.clone() })
+      holder.attach(object)
+      object.position.set(box.min.x + ((i + 0.5) / tags.length) * width, y, z)
+    }
+  }
+
+  private restoreFleetTags() {
+    const holder = this.fleetTagRoot
+    if (!holder) return
+    for (const [tag, home] of this.tagHome) {
+      const object = this.labelAnchors.get(tag)
+      if (!object) continue
+      home.parent.attach(object)
+      object.position.copy(home.position)
+    }
+    this.tagHome.clear()
+    this.root.remove(holder)
+    this.fleetTagRoot = null
+  }
+
   private clearFleet(reframe: boolean) {
+    this.restoreFleetTags()
     if (!this.fleetMesh) return
     this.root.remove(this.fleetMesh)
     this.fleetMesh.dispose()
     this.fleetMesh = null
     this.fleetKey = ''
+    this.fleetRun = ''
     if (reframe) this.framePlant()
     this.labelsNeedDraw = true
+    this.occlusionPending = true
     this.needsRender = true
   }
 
@@ -1582,12 +1738,15 @@ export class ChillerScene {
     this.fitTagsInView()
   }
 
-  /** Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag. */
-  private fadeOccludedLabels(now: number) {
-    if (now - this.occlusionAt < 0.25) return
+  /**
+   * Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag.
+   * Returns false when the throttle skips the test, so the caller keeps the request.
+   */
+  private fadeOccludedLabels(now: number): boolean {
+    if (now - this.occlusionAt < 0.25) return false
     this.occlusionAt = now
     const model = this.model
-    if (!model) return
+    if (!model) return true
     const origin = this.camera.position
     const savedFar = this.raycaster.far
     for (const object of this.labelAnchors.values()) {
@@ -1602,6 +1761,7 @@ export class ChillerScene {
       object.element.classList.toggle('is-occluded', blocked)
     }
     this.raycaster.far = savedFar
+    return true
   }
 
   private viewDirty() {
@@ -1635,15 +1795,23 @@ export class ChillerScene {
     if (this.viewDirty()) {
       this.needsRender = true
       this.labelsNeedDraw = true
+      this.occlusionPending = true
     }
     if (this.needsRender) {
       this.renderer.render(this.scene, this.camera)
       if (this.lowPower && !this.interacting) this.needsRender = false
     }
-    if (!this.labelsNeedDraw) return
-    this.labelsNeedDraw = false
-    this.syncLabelLayer()
-    this.fadeOccludedLabels(t)
+    this.drawLabels(t)
+  }
+
+  private drawLabels(t: number) {
+    if (this.labelsNeedDraw) {
+      this.labelsNeedDraw = false
+      this.syncLabelLayer()
+      this.occlusionPending = true
+    }
+    if (!this.occlusionPending) return
+    if (this.fadeOccludedLabels(t)) this.occlusionPending = false
   }
 
   private tick = () => {
@@ -1696,10 +1864,20 @@ function fleetColumns(count: number) {
   return 4
 }
 
-function fleetRunKey(units: { running: boolean }[]) {
-  let key = String(units.length)
-  for (const unit of units) key += unit.running ? '1' : '0'
-  return key
+function fleetCountKey(count: number) {
+  return String(count)
+}
+
+function runBits(units: { running: boolean }[]) {
+  let bits = ''
+  for (const unit of units) bits += unit.running ? '1' : '0'
+  return bits
+}
+
+function disposeGrid(grid: THREE.GridHelper) {
+  grid.geometry.dispose()
+  const mats = Array.isArray(grid.material) ? grid.material : [grid.material]
+  for (const mat of mats) mat.dispose()
 }
 
 function singleMaterial(mesh: THREE.Mesh) {

@@ -201,29 +201,27 @@ test('the plant model falls back at the cap hook while percent still moves', asy
   await page.addInitScript((ms) => {
     ;(window as Window & { __YORK_MODEL_CAP_MS?: number }).__YORK_MODEL_CAP_MS = ms
   }, capMs)
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/york-chiller/')
-  const client = await page.context().newCDPSession(page)
-  await client.send('Network.enable')
-  await client.send('Network.emulateNetworkConditions', {
-    offline: false,
-    latency: 5,
-    downloadThroughput: 32_000,
-    uploadThroughput: 32_000,
-  })
-  await page.locator('.nav [data-nav="explorer"]').click()
-  const boot = page.locator('#canvas-boot')
-  const status = page.locator('#canvas-status')
-  await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
-  const seenZero = performance.now()
-  await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 15_000 })
-  await expect(status).not.toHaveText(SIMPLE_MODEL)
-  await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 30_000 })
-  const elapsed = performance.now() - seenZero
-  expect(elapsed).toBeGreaterThan(12_000)
-  expect(elapsed).toBeLessThan(36_000)
-  await expect(page.locator('.plant-tag')).toHaveCount(0)
-  await expect(boot).toHaveCount(0)
+  const drip = await dripModel(path.resolve('dist/york-chiller/models/ymc2.glb'), 6_500)
+  try {
+    await page.route('**/models/ymc2.glb', (route) => route.continue({ url: drip.url }))
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/york-chiller/')
+    await page.locator('.nav [data-nav="explorer"]').click()
+    const boot = page.locator('#canvas-boot')
+    const status = page.locator('#canvas-status')
+    await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
+    const seenZero = performance.now()
+    await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 15_000 })
+    await expect(status).not.toHaveText(SIMPLE_MODEL)
+    await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 30_000 })
+    const elapsed = performance.now() - seenZero
+    expect(elapsed).toBeGreaterThan(12_000)
+    expect(elapsed).toBeLessThan(36_000)
+    await expect(page.locator('.plant-tag')).toHaveCount(0)
+    await expect(boot).toHaveCount(0)
+  } finally {
+    drip.close()
+  }
 })
 
 test('the plant model falls back at the 180 second cap while percent still moves @slow', async ({ page }) => {
