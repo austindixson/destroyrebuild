@@ -1,5 +1,4 @@
-import { cascade, type Adapter } from './cascade.ts'
-import { remainingMs } from './deadline.ts'
+import { cascade, roundBudgetMs, type Adapter } from './cascade.ts'
 import {
   CLAUDE_MODEL,
   CODEX_MODEL,
@@ -24,12 +23,36 @@ export const CLAUDE_BUDGET_MS = 15_000
 export const CURSOR_BUDGET_MS = 50_000
 export const CODEX_BUDGET_MS = 10_000
 
-/** Round 0 uses the tier budget. A later round uses the time left on the request deadline. */
-export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined): number {
-  if (!round || round < 1) return tierMs
-  const left = remainingMs(signal)
-  if (!Number.isFinite(left)) return tierMs
-  return Math.max(0, Math.floor(left))
+export { roundBudgetMs }
+
+const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
+
+export function readTier(value: string): CliTier | null {
+  for (const tier of CLI_TIERS) {
+    if (tier === value) return tier
+  }
+  return null
+}
+
+/** A follow-up may start at a known tier. It cannot select a tier the only-tier header forbids. */
+export function continueTier(value: unknown, only: CliTier | null): CliTier | undefined {
+  if (typeof value !== 'string') return undefined
+  const tier = readTier(value)
+  if (!tier) return undefined
+  if (only && tier !== only) return undefined
+  return tier
+}
+
+export function priorTimeouts(value: unknown): CliTier[] {
+  if (!Array.isArray(value)) return []
+  const out: CliTier[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const tier = readTier(item)
+    if (!tier || out.includes(tier)) continue
+    out.push(tier)
+  }
+  return out
 }
 
 /** Codex off is 70/15/50. Codex on takes 10 s from grok: 60/15/50/10. Both fit in 135 s. */
@@ -89,7 +112,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.grok,
       limit: tierConcurrency(env, 'grok'),
       enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.grok, req.round), (limited) => completeGrok(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.grok, req.round, req.reserveMs), (limited) => completeGrok(req, limited, run, env)),
     },
     {
       id: 'claude',
@@ -97,7 +120,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.claude,
       limit: tierConcurrency(env, 'claude'),
       enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.claude, req.round), (limited) => completeClaude(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.claude, req.round, req.reserveMs), (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
@@ -105,7 +128,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.cursor,
       limit: tierConcurrency(env, 'cursor'),
       enabled: () => selected('cursor') && cliOn(env, 'YORK_CURSOR_CLI'),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.cursor, req.round), (limited) => completeCursor(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.cursor, req.round, req.reserveMs), (limited) => completeCursor(req, limited, run, env)),
     },
     {
       id: 'codex',
@@ -113,7 +136,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.codex,
       limit: tierConcurrency(env, 'codex'),
       enabled: () => selected('codex') && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.codex, req.round), (limited) => completeCodex(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.codex, req.round, req.reserveMs), (limited) => completeCodex(req, limited, run, env)),
     },
   ]
 }

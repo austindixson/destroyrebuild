@@ -1,10 +1,11 @@
+import { continueTier, priorTimeouts, type CliTier } from './adapters.ts'
 import { createBudget, type Budget } from './budget.ts'
 import { budgetKey } from './ip.ts'
 import type { Inflight } from './inflight.ts'
 import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAILABLE } from './copy.ts'
 import { containsSecretMaterial, publicSecrets, redactReason } from './leak.ts'
 import { finishAnswer } from './finish.ts'
-import { buildPrompt } from './prompt.ts'
+import { buildPrompt, N_PLUS_ONE_LINE } from './prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from './turn.ts'
 import type { ChatRequest, ChatResponse, ChatSource, Chunk, HistoryItem, LlmAnswer, LlmRequest, ToolResultIn } from './types.ts'
 
@@ -16,6 +17,8 @@ export interface ChatDeps {
   complete: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
   signal: AbortSignal
   inflight?: Inflight
+  /** Only-tier header. A follow-up tier that disagrees with this value is dropped. */
+  only?: CliTier | null
 }
 
 function stringList(value: unknown): string[] {
@@ -117,6 +120,8 @@ export function readRequest(body: unknown): ChatRequest | null {
     snapshot: row.snapshot as Record<string, unknown>,
     round,
     toolResults: readTools(row.toolResults),
+    tier: continueTier(row.tier, null),
+    timedOut: priorTimeouts(row.timedOut),
   }
 }
 
@@ -128,15 +133,20 @@ async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps
   const planned = planTurn(llm.text, req.snapshot.blocksWrites === true, req.toolResults, req.round)
   const notice = nearCap ? DAILY_NOTICE : undefined
   if (planned.kind === 'unusable') throw new Error('unusable')
-  if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1, notice }
-  if (planned.kind === 'confirm') return { status: 'confirm', confirm: planned.confirm, round: req.round + 1, notice }
+  if (planned.kind === 'tools') {
+    return { status: 'tools', calls: planned.calls, round: req.round + 1, notice, tier: llm.provider, timedOut: llm.timedOut ?? [] }
+  }
+  if (planned.kind === 'confirm') {
+    return { status: 'confirm', confirm: planned.confirm, round: req.round + 1, notice, tier: llm.provider, timedOut: llm.timedOut ?? [] }
+  }
   if (req.snapshot.blocksWrites === true && !planned.answer) {
     return answerBody(CLOCK_BLOCK, llm.model, [], notice)
   }
+  const passages = req.round < 1 ? N_PLUS_ONE_LINE : ''
   const finished = await finishAnswer(planned.answer, planned.cites, chunks, req.snapshot, async (prompt) => {
     const next = await deps.complete(prompt, deps.signal)
     return next.text
-  }, req.toolResults)
+  }, req.toolResults, passages)
   return answerBody(finished.answer, llm.model, finished.sources, notice)
 }
 
@@ -147,6 +157,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (process.env.YORK_LOG_CLIENT === '1') console.log(`york-api chat key=${budgetKey(deps.ip)} round=${req.round}`)
   const slot = deps.budget.allow(deps.ip, req.round, deps.now())
   if (!slot.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
+  req.tier = continueTier(req.tier, deps.only ?? null)
   if (req.round > MAX_TOOL_ROUND) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }
   const chunks = deps.search(req.question, req.snapshot.blocksWrites === true)
   const gate = holdInflight(deps.inflight)

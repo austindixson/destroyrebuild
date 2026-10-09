@@ -6,6 +6,13 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8R
+
+- A follow-up round starts with the tier that answered the previous round. The tool response returns that tier. The trainer sends it back. The server accepts a known tier only, and that field cannot override the only-tier header.
+- A follow-up tier runs for the shorter of its budget and the time left after the next tier's budget. A tier that timed out earlier in the question is skipped.
+- Raw model text is logged only when `YORK_DEBUG_RAW=1`. The Mac installer does not set that flag.
+- Round 0 counts the N+1 fleet numbers in the prompt as traced. The glossary chunk does not contain 17, 5, or 85.
+
 ### 2026-10-09 — YORK-8Q
 
 - The last enabled tier runs when at least 40 s remain. The 135 s cap and the process-group kill stay. Grok plus claude plus that floor is 125 s.
@@ -98,6 +105,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - Codex runs only when `YORK_CODEX=1`.
 - The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
 - Round 0 gives grok 70 s, claude 15 s, and cursor 50 s. The last tier still runs when at least 40 s remain. Every round shares the time left on one 135 s window.
+- A follow-up round starts with the tier that answered. That round keeps time for the next tier. `YORK_DEBUG_RAW=1` logs the raw model text.
 - The server stops the request at 135 s.
 - The trainer stops at 145 s. Caddy waits 155 s.
 - Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.

@@ -59,7 +59,7 @@ function restoreDecline(cleaned: string, raw: string, open: boolean): string {
 }
 
 function logRaw(raw: string): void {
-  if (process.env.YORK_LOG_CLIENT !== '1') return
+  if (process.env.YORK_DEBUG_RAW !== '1') return
   console.debug(`york-api finish raw=${redactReason(raw)}`)
 }
 
@@ -77,6 +77,7 @@ export function polishAnswer(
   chunks: Chunk[],
   snapshot: unknown,
   results: ToolResultIn[] = [],
+  extraCorpus = '',
 ): { answer: string; sources: ChatSource[] } {
   const allowed = new Set(chunks.map((chunk) => chunk.id))
   const knownCites = citeIds.map((id) => matchedCite(id, allowed)).filter(Boolean)
@@ -84,7 +85,7 @@ export function polishAnswer(
   const cites = stripped.cites.length > 0 ? stripped.cites : knownCites
   const traced = dropUntracedNumbers(
     stripped.text,
-    corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results)),
+    `${corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results))}\n${extraCorpus}`,
   )
   const clear = restoreDecline(
     labelLiveNumbers(dropSteSentences(dropUnmatchedQuotes(traced))),
@@ -102,17 +103,18 @@ export async function finishAnswer(
   snapshot: unknown,
   rewrite: (req: LlmRequest) => Promise<string>,
   results: ToolResultIn[] = [],
+  extraCorpus = '',
 ): Promise<{ answer: string; sources: ChatSource[] }> {
   if (!raw.trim()) return { answer: NO_ANSWER, sources: [] }
   logRaw(raw)
-  const first = polishAnswer(raw, citeIds, chunks, snapshot, results)
+  const first = polishAnswer(raw, citeIds, chunks, snapshot, results, extraCorpus)
   if (first.answer) return first
   try {
     const secondText = await rewrite({
       system: 'Rewrite the answer in short active sentences. Do not use contractions. Keep trainer-model on live numbers. Reply with the answer text only.',
       user: raw,
     })
-    const second = polishAnswer(secondText, citeIds, chunks, snapshot, results)
+    const second = polishAnswer(secondText, citeIds, chunks, snapshot, results, extraCorpus)
     if (second.answer) return second
     return { answer: NO_ANSWER, sources: [] }
   } catch {

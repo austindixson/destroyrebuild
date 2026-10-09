@@ -54,24 +54,78 @@ function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
 /** A last tier starts on the time left when at least this much remains. */
 export const LAST_TIER_FLOOR_MS = 40_000
 
+/** Round 0 uses the tier budget. A follow-up uses the shorter of that budget and the time left after the next tier. */
+export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, reserveMs = 0): number {
+  if (!round || round < 1) return tierMs
+  const left = remainingMs(signal)
+  if (!Number.isFinite(left)) return tierMs
+  const room = Math.max(0, Math.floor(left) - Math.max(0, Math.floor(reserveMs)))
+  return Math.min(tierMs, room)
+}
+
 /** The last enabled tier runs on the time left when that remainder is at least 40 s. */
 function lastTierRuns(later: Adapter[], left: number): boolean {
   if (later.some((item) => item.enabled())) return false
   return left >= LAST_TIER_FLOOR_MS
 }
 
-function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, round: number | undefined): boolean {
-  if ((round ?? 0) >= 1) return false
+function rotateTo(adapters: Adapter[], id: string): Adapter[] {
+  const index = adapters.findIndex((item) => item.id === id)
+  if (index <= 0) return adapters
+  return [...adapters.slice(index), ...adapters.slice(0, index)]
+}
+
+function orderFor(adapters: Adapter[], req: LlmRequest): Adapter[] {
+  if ((req.round ?? 0) >= 1 && req.tier) return rotateTo(adapters, req.tier)
+  return claudeFirst(adapters, req)
+}
+
+function nextReserve(later: Adapter[], skip: readonly string[]): number {
+  for (const item of later) {
+    if (!item.enabled() || !item.budgetMs) continue
+    if (skip.includes(item.id)) continue
+    return item.budgetMs
+  }
+  return 0
+}
+
+function priorTimeout(id: string, round: number | undefined, skip: readonly string[]): boolean {
+  if ((round ?? 0) < 1) return false
+  return skip.includes(id)
+}
+
+function followOver(
+  adapter: Adapter,
+  later: Adapter[],
+  signal: AbortSignal,
+  round: number | undefined,
+  skip: readonly string[],
+): boolean {
   const budget = adapter.budgetMs
   if (!budget) return false
+  if (roundBudgetMs(signal, budget, round, nextReserve(later, skip)) > 0) return false
+  console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${remainingMs(signal)}`)
+  return true
+}
+
+function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, req: LlmRequest, skip: readonly string[]): boolean {
+  const budget = adapter.budgetMs
+  if (!budget) return false
+  if ((req.round ?? 0) >= 1) return followOver(adapter, later, signal, req.round, skip)
   const left = remainingMs(signal)
   if (lastTierRuns(later, left)) return false
-  const skip = adapter.id === 'claude'
+  const short = adapter.id === 'claude'
     ? skipClaude(later, left, budget)
     : left < budget || leavesCursorShort(adapter, later, left)
-  if (!skip) return false
+  if (!short) return false
   console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
   return true
+}
+
+function noteTimeout(message: string, id: string, timedOut: string[]): void {
+  if (!/^timeout budget=\d+$/.test(message)) return
+  if (timedOut.includes(id)) return
+  timedOut.push(id)
 }
 
 function canReask(adapter: Adapter, signal: AbortSignal): boolean {
@@ -82,9 +136,8 @@ function canReask(adapter: Adapter, signal: AbortSignal): boolean {
 
 function jsonRetry(req: LlmRequest): LlmRequest {
   return {
-    system: req.system,
+    ...req,
     user: `${req.user}\n\nThe last reply was prose. Reply with one JSON object and no other text.`,
-    round: req.round,
   }
 }
 
@@ -109,22 +162,30 @@ async function takeReply(adapter: Adapter, req: LlmRequest, signal: AbortSignal)
 }
 
 export async function cascade(adapters: Adapter[], req: LlmRequest, signal: AbortSignal): Promise<LlmAnswer> {
-  const order = claudeFirst(adapters, req)
+  const order = orderFor(adapters, req)
+  const timedOut = [...(req.timedOut ?? [])]
   let lastError = 'no provider'
   for (let index = 0; index < order.length; index += 1) {
     const adapter = order[index]
     if (!adapter) continue
     if (signal.aborted) throw new Error('aborted')
     if (!adapter.enabled()) continue
-    if (overBudget(adapter, order.slice(index + 1), signal, req.round)) continue
+    if (priorTimeout(adapter.id, req.round, timedOut)) {
+      console.log(`york-api cli ${adapter.id} skipped reason=timeout`)
+      continue
+    }
+    const later = order.slice(index + 1)
+    if (overBudget(adapter, later, signal, req, timedOut)) continue
     const hold = claim(adapter)
     if (!hold) continue
+    const launch = { ...req, reserveMs: nextReserve(later, timedOut) }
     try {
-      const text = await takeReply(adapter, req, signal)
-      return { text, provider: adapter.id, model: adapter.model }
+      const text = await takeReply(adapter, launch, signal)
+      return { text, provider: adapter.id, model: adapter.model, timedOut }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'error'
       lastError = message
+      noteTimeout(message, adapter.id, timedOut)
       console.log(`york-api cli ${adapter.id} failed reason=${redactReason(message)}`)
     } finally {
       if (hold === 'held') releaseHold(adapter.id)

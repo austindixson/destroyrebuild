@@ -24,7 +24,7 @@ test('getActionLog rows reach the next server body', async () => {
     post: async (body) => {
       bodies.push(body as Record<string, unknown>)
       step += 1
-      if (step === 1) return { status: 'tools', calls: [{ name: 'plant.getActionLog', args: {} }], round: 1 }
+      if (step === 1) return { status: 'tools', calls: [{ name: 'plant.getActionLog', args: {} }], round: 1, tier: 'claude', timedOut: ['grok'] }
       return { status: 'answer', answer: 'The log has one valve move.', sources: [] }
     },
   })
@@ -34,4 +34,6 @@ test('getActionLog rows reach the next server body', async () => {
   assert.match(results[0]?.message ?? '', /setValve/)
   assert.equal(results[0]?.rows?.some((row) => row.action === 'setValve' && row.actor === 'user'), true)
   assert.equal(results[0]?.snapshot, undefined)
+  assert.equal(second?.tier, 'claude')
+  assert.deepEqual(second?.timedOut, ['grok'])
 })

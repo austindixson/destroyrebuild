@@ -28,8 +28,8 @@ export interface HistoryItem {
 
 export type ChatResponse =
   | { status: 'answer'; answer: string; sources: ChatSource[]; provider?: string; model?: string; notice?: string }
-  | { status: 'tools'; calls: ToolCall[]; round: number }
-  | { status: 'confirm'; confirm: ToolCall; round: number }
+  | { status: 'tools'; calls: ToolCall[]; round: number; tier?: string; timedOut?: string[] }
+  | { status: 'confirm'; confirm: ToolCall; round: number; tier?: string; timedOut?: string[] }
   | { status: 'unavailable'; answer: string }
   | { status: 'error'; answer: string }
 
@@ -98,6 +98,14 @@ async function postChat(body: unknown, signal: AbortSignal): Promise<ChatRespons
   return { status: 'unavailable', answer: CHAT_UNAVAILABLE }
 }
 
+function echoedRun(response: ChatResponse): Record<string, unknown> {
+  if (response.status !== 'tools' && response.status !== 'confirm') return {}
+  const out: Record<string, unknown> = {}
+  if (typeof response.tier === 'string') out.tier = response.tier
+  if (Array.isArray(response.timedOut)) out.timedOut = response.timedOut
+  return out
+}
+
 function answerFrom(response: ChatResponse): { answer: string; sources: ChatSource[] } | null {
   if (response.status === 'answer') return { answer: response.answer, sources: response.sources ?? [] }
   if (response.status === 'unavailable' || response.status === 'error') {
@@ -124,11 +132,11 @@ async function oneRound(
     const yes = await input.onConfirm(card)
     if (!yes) return { done: { answer: CHAT_CANCELLED, sources: [] }, body }
     const result = runOne(response.confirm, input.host)
-    return { done: null, body: { ...body, round: response.round, toolResults: [result] } }
+    return { done: null, body: { ...body, round: response.round, toolResults: [result], ...echoedRun(response) } }
   }
   if (response.status === 'tools') {
     const toolResults = await applyCalls(response.calls, input.host, input.onConfirm, input.onUndoOffer)
-    return { done: null, body: { ...body, round: response.round, toolResults } }
+    return { done: null, body: { ...body, round: response.round, toolResults, ...echoedRun(response) } }
   }
   return { done: { answer: CHAT_UNAVAILABLE, sources: [] }, body }
 }

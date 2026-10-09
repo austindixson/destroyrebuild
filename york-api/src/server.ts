@@ -5,7 +5,7 @@ import { handleChat, defaultBudget } from './chat.ts'
 import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
 import { defaultInflight, type Inflight } from './inflight.ts'
-import { completeWithCascade, type CliTier } from './adapters.ts'
+import { completeWithCascade, readTier, type CliTier } from './adapters.ts'
 import { stampDeadline } from './deadline.ts'
 import { headerText, proxySecretConfigured, proxySecretOk, trustedClientIp } from './ip.ts'
 import { searchChunks } from './rag.ts'
@@ -23,15 +23,6 @@ export function chatWindowMs(raw: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return REQUEST_MS
   const elapsed = Math.min(Math.floor(value), REQUEST_MS)
   return REQUEST_MS - elapsed
-}
-
-const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
-
-export function readTier(value: string): CliTier | null {
-  for (const tier of CLI_TIERS) {
-    if (tier === value) return tier
-  }
-  return null
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
@@ -140,6 +131,7 @@ async function onChat(
       search: options.search ?? ((query, blocksWrites) => searchChunks(chunks, query, 4, blocksWrites === true)),
       complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal, process.env, only)),
       signal: abort.signal,
+      only,
     })
     send(res, result.http, result.body)
   } catch {

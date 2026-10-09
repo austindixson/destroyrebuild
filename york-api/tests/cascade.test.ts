@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildAdapters } from '../src/adapters.ts'
+import { buildAdapters, continueTier, priorTimeouts } from '../src/adapters.ts'
 import { LAST_TIER_FLOOR_MS, cascade, type Adapter } from '../src/cascade.ts'
 import { stampDeadline } from '../src/deadline.ts'
 import { resetHolds, tryHold } from '../src/slots.ts'
@@ -393,15 +393,160 @@ test('an open case calls claude before grok', async () => {
   assert.deepEqual(calls, ['claude'])
 })
 
-test('a follow-up round keeps the time left and does not apply the tier budget again', async () => {
+test('run 13 starts the follow-up on claude and skips grok after its timeout', async () => {
+  const calls: string[] = []
+  const reserves: number[] = []
+  const round0 = new AbortController()
+  stampDeadline(round0.signal, Date.now() + 135_000)
+  const make = (run: (id: string, req: LlmRequest) => Promise<string>) => [
+    adapter('grok', GROK_MODEL, (req) => run('grok', req), true, GROK_BUDGET_MS),
+    adapter('claude', 'claude-haiku-5-5', (req) => run('claude', req), true, CLAUDE_BUDGET_MS),
+    adapter('cursor', 'auto', (req) => run('cursor', req), true, CURSOR_BUDGET_MS),
+  ]
+  const first = await cascade(
+    make(async (id) => {
+      calls.push(id)
+      if (id === 'grok') throw new Error('timeout budget=70000')
+      return '{"answer":"","tools":[{"name":"plant.getAlarms","args":{}}]}'
+    }),
+    { system: 'sys', user: 'user', round: 0 },
+    round0.signal,
+  )
+  assert.equal(first.provider, 'claude')
+  assert.deepEqual(first.timedOut, ['grok'])
+  assert.deepEqual(calls, ['grok', 'claude'])
+  calls.length = 0
+  const round1 = new AbortController()
+  stampDeadline(round1.signal, Date.now() + 60_000)
+  const second = await cascade(
+    make(async (id, req) => {
+      calls.push(id)
+      reserves.push(req.reserveMs ?? -1)
+      return '{"answer":"The hall is stable.","cites":[]}'
+    }),
+    { system: 'sys', user: 'user', round: 1, tier: first.provider, timedOut: first.timedOut },
+    round1.signal,
+  )
+  assert.equal(second.provider, 'claude')
+  assert.deepEqual(calls, ['claude'])
+  assert.equal(reserves[0], CURSOR_BUDGET_MS)
+  const capped = new AbortController()
+  stampDeadline(capped.signal, Date.now() + 60_000)
+  const room = roundBudgetMs(capped.signal, CLAUDE_BUDGET_MS, 1, CURSOR_BUDGET_MS)
+  assert.ok(room <= 10_000)
+  assert.ok(room > 9_000)
+})
+
+test('a follow-up tier must be known and cannot override the only-tier header', () => {
+  assert.equal(continueTier('claude', null), 'claude')
+  assert.equal(continueTier('shell', null), undefined)
+  assert.equal(continueTier('grok', 'claude'), undefined)
+  assert.equal(continueTier('claude', 'claude'), 'claude')
+  assert.deepEqual(priorTimeouts(['grok', 'nope', 'grok']), ['grok'])
+})
+
+test('round 0 ignores a client tier and a follow-up still falls through', async () => {
+  const calls: string[] = []
+  const open = new AbortController()
+  stampDeadline(open.signal, Date.now() + 135_000)
+  const first = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls.push('grok')
+        return 'The hall is stable.'
+      }, true, GROK_BUDGET_MS),
+      adapter('claude', 'claude-haiku-5-5', async () => {
+        calls.push('claude')
+        return 'The hall is stable.'
+      }, true, CLAUDE_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 0, tier: 'claude' },
+    open.signal,
+  )
+  assert.equal(first.provider, 'grok')
+  assert.deepEqual(calls, ['grok'])
+  calls.length = 0
+  const follow = new AbortController()
+  stampDeadline(follow.signal, Date.now() + 135_000)
+  const second = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls.push('grok')
+        return 'The hall is stable.'
+      }, true, GROK_BUDGET_MS),
+      adapter('cursor', 'auto', async () => {
+        calls.push('cursor')
+        throw new Error('empty')
+      }, true, CURSOR_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 1, tier: 'cursor' },
+    follow.signal,
+  )
+  assert.equal(second.provider, 'grok')
+  assert.deepEqual(calls, ['cursor', 'grok'])
+})
+
+test('a follow-up cap leaves the next tier its budget', async () => {
+  const seen: { id: string; reserve: number }[] = []
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 60_000)
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async (req) => {
+        seen.push({ id: 'grok', reserve: req.reserveMs ?? -1 })
+        throw new Error('timeout budget=45000')
+      }, true, GROK_BUDGET_MS),
+      adapter('claude', 'claude-haiku-5-5', async (req) => {
+        seen.push({ id: 'claude', reserve: req.reserveMs ?? -1 })
+        return 'The hall is stable.'
+      }, true, CLAUDE_BUDGET_MS),
+      adapter('cursor', 'auto', async () => 'The hall is stable.', true, CURSOR_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 1 },
+    controller.signal,
+  )
+  assert.equal(result.provider, 'claude')
+  assert.deepEqual(result.timedOut, ['grok'])
+  assert.equal(seen[0]?.reserve, CLAUDE_BUDGET_MS)
+  assert.equal(seen[1]?.reserve, CURSOR_BUDGET_MS)
+  const tight = new AbortController()
+  stampDeadline(tight.signal, Date.now() + 12_000)
+  const calls: string[] = []
+  const rescued = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls.push('grok')
+        return 'The hall is stable.'
+      }, true, GROK_BUDGET_MS),
+      adapter('claude', 'claude-haiku-5-5', async () => {
+        calls.push('claude')
+        return 'The hall is stable.'
+      }, true, CLAUDE_BUDGET_MS),
+      adapter('cursor', 'auto', async () => {
+        calls.push('cursor')
+        return 'The hall is stable.'
+      }, true, CURSOR_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 1 },
+    tight.signal,
+  )
+  assert.equal(rescued.provider, 'cursor')
+  assert.deepEqual(calls, ['cursor'])
+})
+
+test('a follow-up cap is the time left when no later tier needs a reserve', async () => {
   const open = new AbortController()
   assert.equal(roundBudgetMs(open.signal, 65_000, 0), 65_000)
+  assert.equal(roundBudgetMs(open.signal, 65_000, 0, 15_000), 65_000)
   assert.equal(roundBudgetMs(open.signal, 65_000, undefined), 65_000)
   const follow = new AbortController()
   stampDeadline(follow.signal, Date.now() + 30_000)
   const left = roundBudgetMs(follow.signal, 65_000, 1)
   assert.ok(left <= 30_000)
   assert.ok(left > 25_000)
+  const held = roundBudgetMs(follow.signal, 65_000, 1, 15_000)
+  assert.ok(held <= 15_000)
+  assert.ok(held > 10_000)
   const calls: string[] = []
   const result = await cascade(
     [

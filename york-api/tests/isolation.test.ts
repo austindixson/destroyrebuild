@@ -411,6 +411,7 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   const install = readFileSync(fileURLToPath(new URL('../scripts/install-mac.sh', import.meta.url)), 'utf8')
   assert.match(install, /umask 077/)
   assert.match(install, /chmod 600/)
+  assert.equal(install.includes('YORK_DEBUG_RAW'), false)
   const docker = readFileSync(fileURLToPath(new URL('../Dockerfile', import.meta.url)), 'utf8')
   assert.match(docker, /no tarball checksum/)
   assert.equal(docker.includes('curl'), false)

@@ -5,7 +5,7 @@ import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
 import { parseModelPlan } from '../src/parse.ts'
-import { buildPrompt } from '../src/prompt.ts'
+import { buildPrompt, N_PLUS_ONE_LINE } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { finishAnswer, polishAnswer } from '../src/finish.ts'
@@ -51,6 +51,52 @@ test('a read batch returns every read tool and no confirm', async () => {
   assert.equal(result.body.status, 'tools')
   if (result.body.status !== 'tools') return
   assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getSnapshot', 'plant.getAlarms'])
+  assert.equal(result.body.tier, 'grok')
+  assert.deepEqual(result.body.timedOut, [])
+})
+
+test('a follow-up starts at the tier that answered and drops an unknown timeout', async () => {
+  let seen: LlmRequest | undefined
+  const first = await handleChat(
+    { question: 'Read the alarms', snapshot: { plant: { hallSupplyF: 72 } }, round: 0 },
+    deps(async () => ({
+      ...llm(JSON.stringify({ answer: '', cites: [], tools: [{ name: 'plant.getAlarms', args: {} }] }), 'claude'),
+      timedOut: ['grok'],
+    })),
+  )
+  assert.equal(first.body.status, 'tools')
+  if (first.body.status !== 'tools') return
+  assert.equal(first.body.tier, 'claude')
+  assert.deepEqual(first.body.timedOut, ['grok'])
+  const second = await handleChat(
+    {
+      question: 'Read the alarms',
+      snapshot: { plant: { hallSupplyF: 72 } },
+      round: 1,
+      tier: first.body.tier,
+      timedOut: ['grok', 'shell'],
+      toolResults: [{ name: 'plant.getAlarms', ok: true, message: 'No alarms.' }],
+    },
+    deps(async (prompt) => {
+      seen = prompt
+      return llm('{"answer":"The hall is stable.","cites":[]}', 'claude')
+    }),
+  )
+  assert.equal(seen?.tier, 'claude')
+  assert.deepEqual(seen?.timedOut, ['grok'])
+  assert.equal(second.body.status, 'answer')
+  const blocked = await handleChat(
+    {
+      question: 'Read the alarms',
+      snapshot: {},
+      round: 1,
+      tier: 'grok',
+      toolResults: [],
+    },
+    { ...deps(async (prompt) => { seen = prompt; return llm('{"answer":"The hall is stable.","cites":[]}') }), only: 'claude' },
+  )
+  assert.equal(blocked.body.status, 'answer')
+  assert.equal(seen?.tier, undefined)
 })
 
 test('a stop is a confirm and not a direct write', async () => {
@@ -466,25 +512,43 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
   assert.equal(called, true)
   assert.match(finished.answer, /I cannot give the answer while the case is open\./)
   assert.equal(finished.answer.includes('cooling tower'), false)
-  const prev = process.env.YORK_LOG_CLIENT
+  const prevClient = process.env.YORK_LOG_CLIENT
+  const prevRaw = process.env.YORK_DEBUG_RAW
   process.env.YORK_LOG_CLIENT = '1'
+  delete process.env.YORK_DEBUG_RAW
   const notes: string[] = []
   const debug = console.debug
   console.debug = (msg?: unknown) => {
     notes.push(String(msg))
   }
   try {
+    await finishAnswer(STRAY_ROOT, [], [], { blocksWrites: true }, async () => decline)
+    assert.deepEqual(notes, [])
+    process.env.YORK_DEBUG_RAW = '1'
     await finishAnswer(`sk-ant-abcdefghij ${STRAY_ROOT}`, [], [], { blocksWrites: true }, async () => decline)
   } finally {
     console.debug = debug
-    if (prev === undefined) delete process.env.YORK_LOG_CLIENT
-    else process.env.YORK_LOG_CLIENT = prev
+    if (prevClient === undefined) delete process.env.YORK_LOG_CLIENT
+    else process.env.YORK_LOG_CLIENT = prevClient
+    if (prevRaw === undefined) delete process.env.YORK_DEBUG_RAW
+    else process.env.YORK_DEBUG_RAW = prevRaw
   }
   const logged = notes.join('\n')
   assert.match(logged, /york-api finish raw=/)
   assert.match(logged, /cooling tower/)
   assert.equal(logged.includes('sk-ant-'), false)
   assert.match(logged, /\[redacted\]/)
+})
+
+test('the N+1 fleet sentence keeps prompt numbers the glossary chunk omits', () => {
+  const gloss = 'N+1 means one extra unit of capacity beyond the load. The spare is every running chiller plus every standby chiller that can start, minus the largest unit.'
+  const fleet = '17 times 5 MW is 85 MW.'
+  assert.equal(dropUntracedNumbers(fleet, gloss), '')
+  assert.match(dropUntracedNumbers(fleet, N_PLUS_ONE_LINE), /17 times 5 MW is 85 MW/)
+  const kept = polishAnswer(fleet, [], [], {}, [], N_PLUS_ONE_LINE)
+  assert.match(kept.answer, /17 times 5 MW is 85 MW/)
+  const dropped = polishAnswer(fleet, [], [], {})
+  assert.equal(dropped.answer.includes('85'), false)
 })
 
 test('unit ids are not live numbers and corpus checks use number tokens', () => {

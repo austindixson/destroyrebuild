@@ -1,5 +1,5 @@
 import { gateFor, TOOL_GATES } from './gates.ts'
-import type { ChatRequest, Chunk } from './types.ts'
+import type { ChatRequest, Chunk, LlmRequest } from './types.ts'
 
 const SYSTEM = [
   'You are the coach for the York YMC2 trainer.',
@@ -31,13 +31,15 @@ function toolLines(): string {
     .join('\n')
 }
 
-const N_PLUS_ONE_LINE = [
+export const N_PLUS_ONE_LINE = [
   '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',
   'Count every available chiller: running units plus standby units that can start.',
   'Subtract the largest unit.',
   'N+1 holds when that remainder still covers itLoadMw.',
   'State the verdict as "N+1 holds." or "N+1 does not hold."',
-  'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1, because 17 times 5 MW is 85 MW and 85 MW covers 80 MW.',
+  'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1.',
+  '17 times 5 MW is 85 MW.',
+  '85 MW covers 80 MW.',
 ].join(' ')
 
 const DELTA_KEYS = [
@@ -122,9 +124,16 @@ function firstUser(req: ChatRequest, chunks: Chunk[]): string {
     .join('\n\n')
 }
 
-export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string; round: number; openCase: boolean } {
+export function buildPrompt(req: ChatRequest, chunks: Chunk[]): LlmRequest {
   const openCase = req.snapshot.blocksWrites === true
   const open = openCase ? ` ${OPEN_CASE}` : ''
   const user = req.round >= 1 ? followUpUser(req) : firstUser(req, chunks)
-  return { system: `${SYSTEM}${open}`, user, round: req.round, openCase }
+  return {
+    system: `${SYSTEM}${open}`,
+    user,
+    round: req.round,
+    openCase,
+    tier: req.tier,
+    timedOut: req.timedOut,
+  }
 }
