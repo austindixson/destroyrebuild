@@ -6,6 +6,7 @@ const SYSTEM = [
   'State only a value that the snapshot, the tool results, or the passages show.',
   'Passage symptoms are examples, not live readings. State a live value only from the snapshot or the tool results.',
   'Do not add a plant fact that those sources omit.',
+  'Do not invent a new target or a setpoint. State only a target that the data shows.',
   'Call every live number a trainer-model value.',
   'Name a live value in plain words, such as "IT load 4.2 MW". Do not write a raw field name such as itLoadMw.',
   'Name the loop with every pressure. Chilled-water differential pressure, condenser-water differential pressure, and condenser pressure are different readings.',

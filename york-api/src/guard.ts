@@ -72,12 +72,17 @@ function scheduleSpans(): RegExp[] {
     /\bHours?\s+\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?/gi,
     /\b\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*h\b/gi,
     /\bevery\s+\d+(?:\.\d+)?\s+hours?\b/gi,
+    /\bevery\s+\d+(?:\.\d+)?\s+h\b/gi,
     /\bt\s*=\s*\d+(?:\.\d+)?\b/gi,
     /\bnext\s+\d+(?:\.\d+)?\s+hours?\b/gi,
+    /\bHours?\s+\d+(?:\.\d+)?\s*:/gi,
+    /\bAfter\s+\d+(?:\.\d+)?\s+hours?\b/gi,
+    /\bAt\s+hour\s+\d+(?:\.\d+)?\b/gi,
+    /\bWithin\s+\d+(?:\.\d+)?\s+hours?\b/gi,
   ]
 }
 
-/** Hour ranges, "every N hours", "t=N", and "next N hours" are schedule labels. */
+/** Hour labels, ranges, "every N h", "after N hours", "within N hours", "t=N", and "next N hours" are schedule labels. */
 function withoutSchedule(text: string): string {
   let out = text
   for (const pattern of scheduleSpans()) out = out.replace(pattern, ' ')
@@ -109,18 +114,67 @@ function joinedSteps(parts: Piece[]): Piece[] {
   return out
 }
 
-function numbersKnown(text: string, known: Set<string>): boolean {
-  return checkedNumbers(text).every((num) => known.has(num))
+function decimalPlaces(token: string): number {
+  const dot = token.indexOf('.')
+  return dot < 0 ? 0 : token.length - dot - 1
+}
+
+function shown(value: number, places: number): string {
+  const factor = 10 ** places
+  return (Math.round(value * factor) / factor).toFixed(places)
+}
+
+function matchesPair(token: string, left: number, right: number): boolean {
+  const places = decimalPlaces(token)
+  const sum = shown(left + right, places)
+  const down = shown(left - right, places)
+  const up = shown(right - left, places)
+  return token === sum || token === down || token === up
+}
+
+/** A sum or difference of two traced numbers, at the precision the answer shows. */
+function isDerived(token: string, values: number[]): boolean {
+  for (let i = 0; i < values.length; i += 1) {
+    for (let j = i + 1; j < values.length; j += 1) {
+      const left = values[i]
+      const right = values[j]
+      if (left === undefined || right === undefined) continue
+      if (matchesPair(token, left, right)) return true
+    }
+  }
+  return false
+}
+
+function tracedValues(known: Set<string>): number[] {
+  const out: number[] = []
+  for (const token of known) {
+    const value = Number(token)
+    if (Number.isFinite(value)) out.push(value)
+  }
+  return out
+}
+
+function numbersKnown(text: string, known: Set<string>, values: number[]): boolean {
+  return checkedNumbers(text).every((num) => known.has(num) || isDerived(num, values))
 }
 
 function isListMarker(text: string): boolean {
   return STEP_MARKER.test(text) || BULLET.test(text)
 }
 
+const HEADING_LIMIT = 6
+const CLAUSE = /\b(?:is|are|was|were|been)\b/i
+
+/** A heading is short, has no digits, and has no colon followed by a value. */
 function isHeading(text: string): boolean {
-  if (isListMarker(text)) return false
-  if (text.startsWith('Reason:')) return false
-  return !/[.!?]$/.test(text)
+  if (isListMarker(text) || text.startsWith('Reason:') || /[.!?]$/.test(text)) return false
+  if (/\d/.test(text) || /:\s*\S/.test(text)) return false
+  if (wordCount(text) > HEADING_LIMIT || CLAUSE.test(text) || followsStep(text)) return false
+  return true
+}
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((word) => word.length > 0).length
 }
 
 const FOLLOW_ON = new Set([
@@ -161,17 +215,44 @@ function skipDroppedStep(steps: Piece[], index: number): number {
 }
 
 function sectionHasBody(parts: Piece[], index: number): boolean {
-  const head = parts[index]
-  if (!head || /\n\s*\n/.test(head.sep)) return false
   for (let j = index + 1; j < parts.length; j += 1) {
-    const prev = parts[j - 1]
     const piece = parts[j]
-    if (!prev || !piece) return false
-    if (/\n\s*\n/.test(prev.sep)) return false
-    if (isHeading(piece.text)) return false
-    return true
+    if (piece && !isHeading(piece.text)) return true
   }
   return false
+}
+
+function lineLabel(text: string): string {
+  if (text.startsWith('Reason:')) return ''
+  const match = /^([^:\n]{1,80}?):\s+\S/.exec(text)
+  const label = match?.[1]?.trim() ?? ''
+  return label ? `${label}:` : ''
+}
+
+function atLineStart(steps: Piece[], index: number): boolean {
+  const prev = steps[index - 1]
+  return !prev || prev.sep.includes('\n')
+}
+
+function nextKeptOnLine(steps: Piece[], index: number, keep: (text: string) => boolean): Piece | undefined {
+  for (let j = index + 1; j < steps.length; j += 1) {
+    const prev = steps[j - 1]
+    const piece = steps[j]
+    if (!prev || !piece || prev.sep.includes('\n')) return undefined
+    if (keep(piece.text)) return piece
+  }
+  return undefined
+}
+
+/** A dropped first sentence on a plain line keeps its label on the next kept sentence. */
+function graftLineLabel(steps: Piece[], index: number, keep: (text: string) => boolean): void {
+  if (!atLineStart(steps, index)) return
+  const origin = steps[index]
+  const label = origin ? lineLabel(origin.text) : ''
+  if (!label) return
+  const target = nextKeptOnLine(steps, index, keep)
+  if (!target || target.text.startsWith(`${label} `)) return
+  target.text = `${label} ${target.text}`
 }
 
 /** A heading with no step or bullet left under it is an empty label. */
@@ -208,6 +289,7 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean): Piece[] 
       i += 1
       continue
     }
+    if (!isListMarker(sentence.text)) graftLineLabel(steps, i, keep)
     const resume = skipDroppedStep(steps, i)
     carryBreak(kept, steps, resume)
     i = resume
@@ -255,7 +337,8 @@ export function joinSentencePieces(parts: Piece[]): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known))
+  const values = tracedValues(known)
+  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known, values))
 }
 
 export function labelLiveNumbers(text: string): string {

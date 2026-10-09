@@ -363,8 +363,11 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /% speed/)
   assert.match(round1.user, /chiller motor current only/)
   assert.match(round1.user, /% open/)
-  assert.equal(promptBytes(round1), 2150)
-  assert.equal(promptBytes(round0), 3375)
+  assert.match(round0.system, /Do not invent a new target or a setpoint/)
+  assert.match(round0.system, /State only a target that the data shows/)
+  assert.match(round1.system, /State only a target that the data shows/)
+  assert.equal(promptBytes(round1), 2233)
+  assert.equal(promptBytes(round0), 3458)
   assert.equal(round1.user.length, 569)
   assert.equal(round0.user.length, 2020)
 })
@@ -629,6 +632,7 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
     await finishAnswer(`sk-ant-abcdefghij\n${STRAY_ROOT}`, [], [], { blocksWrites: true }, async () => decline)
     assert.deepEqual(notes, [])
     await finishAnswer(STRAY_ROOT, [], [], { blocksWrites: true }, async () => decline)
+    await finishAnswer('The hall is warm.\nOpen the valve.', [], [], {}, async () => 'The hall is warm.')
   } finally {
     console.debug = debug
     if (prevClient === undefined) delete process.env.YORK_LOG_CLIENT
@@ -639,8 +643,10 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
   const logged = notes.join('\n')
   assert.match(logged, /york-api finish raw=/)
   assert.match(logged, /cooling tower/)
+  assert.match(logged, /The hall is warm\.\\nOpen the valve\./)
   assert.equal(logged.includes('sk-ant-'), false)
-  assert.equal(loggableRaw(`The hall is warm.\nsk-ant-abcdefghij\nOpen the valve.`), 'The hall is warm.\nOpen the valve.')
+  assert.equal(loggableRaw(`The hall is warm.\nsk-ant-abcdefghij\nOpen the valve.`), '')
+  assert.equal(loggableRaw('The hall is warm.\nOpen the valve.'), 'The hall is warm.\\nOpen the valve.')
 })
 
 test('the N+1 example numbers are not traced on a first-round answer', () => {
@@ -750,6 +756,50 @@ test('a newline after a period stays, and a paragraph after the list stays', () 
   assert.equal(afterList.answer.includes('9'), false)
 })
 
+test('a loop label stays on the next kept sentence', () => {
+  const loops = 'Loops.\nChilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig, return 52 psig.'
+  assert.equal(
+    dropUntracedNumbers(loops, '40 42.5 52'),
+    'Loops.\nChilled-water loop: Supply 42.5 psig, return 52 psig.',
+  )
+  assert.equal(dropUntracedNumbers('Loops.\nChilled-water loop: valve at 99. Supply is 98.', ''), 'Loops.')
+})
+
+test('a sum or difference of two traced numbers stays, and a later bad sentence drops alone', () => {
+  assert.equal(dropUntracedNumbers('The gap is 7.5 psi.', '17 9.5'), 'The gap is 7.5 psi.')
+  assert.equal(dropUntracedNumbers('The total is 26.5.', '17 9.5'), 'The total is 26.5.')
+  assert.equal(dropUntracedNumbers('The gap is 7.5 psi.', '17'), '')
+  assert.equal(
+    dropUntracedNumbers('1. Open the valve. The count is 99. Reason: the hall is warm.', ''),
+    '1. Open the valve. Reason: the hall is warm.',
+  )
+  assert.equal(dropUntracedNumbers('1. The count is 99. Reason: the hall is warm. 2. Stay.', ''), '2. Stay.')
+})
+
+test('stacked headings and a heading above a blank line stay', () => {
+  const stacked = 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(stacked, ''), stacked)
+  assert.equal(
+    dropUntracedNumbers('Eight-hour checklist\nShift start\n1. Open the valve.', ''),
+    'Eight-hour checklist\nShift start\n1. Open the valve.',
+  )
+  assert.equal(
+    dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
+    'Eight-hour checklist\n\n1. Open the valve.',
+  )
+})
+
+test('schedule words do not empty an answer', () => {
+  const labels = 'Hour 4: check the log. After 6 hours. Every 4 h. Hours 0-2. At hour 8. Within 2 hours.'
+  assert.equal(dropUntracedNumbers(labels, ''), labels)
+})
+
+test('a fact line with no final period stays', () => {
+  const plant = 'Plant: outdoor air 75 F, free cooling 0%'
+  assert.equal(dropUntracedNumbers(plant, '75 0'), plant)
+  assert.equal(dropUntracedNumbers(plant, ''), '')
+})
+
 test('schedule labels stay and a hall reading is still checked', () => {
   const hours = [
     '1. Hour 0 to 2. Open the log.',
@@ -770,7 +820,7 @@ test('a heading and a bullet drop together, and a lone next-line command follows
   )
   assert.equal(
     dropUntracedNumbers('HEADING\n- The count is 9.\nThe spare follows.\n\nThe hall is warm.', ''),
-    'The hall is warm.',
+    'HEADING\n\nThe hall is warm.',
   )
   assert.equal(
     dropUntracedNumbers('1. A.\n2. The count is 9.\nStart it later.\n3. C.', ''),

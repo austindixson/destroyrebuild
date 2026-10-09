@@ -1,6 +1,6 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
 import { dropKeptPieces, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, joinSentencePieces, labelLiveNumbers, sentencePieces, stripMarkers, yorkFlaWording } from './guard.ts'
-import { containsSecretMaterial, redactReason } from './leak.ts'
+import { containsSecretMaterial, redactLog } from './leak.ts'
 import { OPEN_DECLINE, withNPlusOne } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
@@ -54,19 +54,17 @@ function restoreDecline(cleaned: string, raw: string, open: boolean): string {
   return [...kept, cleaned].filter((part) => part.length > 0).join(' ')
 }
 
-/** Lines that hold a secret stay out of the debug log. */
+/** Leak check first. A clean log keeps the full raw text, with newlines escaped. */
 export function loggableRaw(raw: string): string {
-  return raw
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0 && !containsSecretMaterial(line))
-    .join('\n')
+  if (containsSecretMaterial(raw)) return ''
+  return raw.replaceAll('\r\n', '\\n').replaceAll('\n', '\\n').replaceAll('\r', '\\n')
 }
 
 function logRaw(raw: string): void {
   if (process.env.YORK_DEBUG_RAW !== '1') return
   const safe = loggableRaw(raw)
   if (!safe) return
-  console.debug(`york-api finish raw=${redactReason(safe)}`)
+  console.debug(`york-api finish raw=${redactLog(safe)}`)
 }
 
 type EmptyCode = 'ste-drop' | 'label-only' | 'quote-drop' | 'number-drop' | 'leak' | 'parse'

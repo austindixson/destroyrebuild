@@ -6,6 +6,17 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z4
+
+- A plain label line keeps its label on the next kept sentence of that line. "Chilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig, return 52 psig." keeps "Chilled-water loop" with the supply sentence. A line whose sentences are all dropped loses the label too.
+- A number that equals the sum or the difference of two traced numbers stays, rounded to the digits the answer shows. 17 and 9.5 allow 7.5 and 26.5. The prompt tells the model to state only a target that the data shows.
+- An untraced number drops the sentence that holds it. The rest of the step stays, unless that sentence is the step's first sentence.
+- Stacked headings keep the top heading. "Eight-hour checklist" stays above "Hour 0 to 1" and above "Shift start".
+- Hour 4, After 6 hours, Every 4 h, Hours 0-2, At hour 8, and Within 2 hours are schedule labels. An answer that uses only those labels stays.
+- A heading with a blank line and then content stays. A heading with nothing left under it is still dropped.
+- A fact line with no final period is content when it has a digit or a colon followed by a value. "Plant: outdoor air 75 F, free cooling 0%" stays when 75 and 0 are traced.
+- The raw debug log keeps the full text, with newlines escaped, and only when YORK_DEBUG_RAW is 1. The leak check still runs first. A raw text that contains a secret is withheld.
+
 ### 2026-10-09 — YORK-8Z3
 
 - A schedule label is not a plant reading. Hour 2 to 4, Hours 4-8, 4-8 h, every 2 hours, t=8, and next 2 hours stay on an hour-by-hour list. Hall supply is 80 F is still dropped when 80 is not a live reading.

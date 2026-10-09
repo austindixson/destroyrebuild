@@ -49,16 +49,23 @@ const TOKEN_G = new RegExp(TOKEN.source, 'g')
 const AWS_KEY_G = new RegExp(AWS_KEY.source, 'g')
 const JWT_G = new RegExp(JWT.source, 'g')
 
-/** First stderr line for an operator log. Tokens are removed. The prompt is not included. */
-export function redactReason(text: string): string {
-  const line = text.split(/\r?\n/).find((row) => row.trim().length > 0) ?? ''
-  return line
-    .trim()
-    .slice(0, 180)
+function redactTokens(text: string): string {
+  return text
     .replace(TOKEN_G, '[redacted]')
     .replace(AWS_KEY_G, '[redacted]')
     .replace(JWT_G, '[redacted]')
     .replace(PRIVATE_KEY, '[redacted]')
+}
+
+/** First stderr line for an operator log. Tokens are removed. The prompt is not included. */
+export function redactReason(text: string): string {
+  const line = text.split(/\r?\n/).find((row) => row.trim().length > 0) ?? ''
+  return redactTokens(line.trim().slice(0, 180))
+}
+
+/** Full debug text. Tokens are removed. The text is not cut. */
+export function redactLog(text: string): string {
+  return redactTokens(text)
 }
 
 /** Proxy secret and canary, when they are long enough to be unambiguous. */
