@@ -1,7 +1,7 @@
 import { LIVE_LABEL } from './copy.ts'
 
 const MARKER = /\[(trainer:[a-z0-9:_-]+)\]/gi
-const NUMBER = /\d+(?:\.\d+)?/g
+const NUMBER_TOKEN = /(?<![A-Za-z0-9-])\d+(?:\.\d+)?(?![A-Za-z0-9])/g
 
 export function yorkFlaWording(text: string): string {
   return text.replaceAll('%RLA', '% FLA').replaceAll('%TSLA', '% FLA')
@@ -24,16 +24,18 @@ function sentences(text: string): string[] {
     .filter(Boolean)
 }
 
+function numberTokens(text: string): string[] {
+  return text.match(NUMBER_TOKEN) ?? []
+}
+
 export function dropUntracedNumbers(text: string, corpus: string): string {
-  const kept = sentences(text).filter((sentence) => {
-    const nums = sentence.match(NUMBER) ?? []
-    return nums.every((num) => corpus.includes(num))
-  })
+  const known = new Set(numberTokens(corpus))
+  const kept = sentences(text).filter((sentence) => numberTokens(sentence).every((num) => known.has(num)))
   return kept.join(' ')
 }
 
 export function labelLiveNumbers(text: string): string {
-  if (!/\d/.test(text)) return text
+  if (numberTokens(text).length === 0) return text
   if (text.includes('trainer-model')) return text
   return `${text} ${LIVE_LABEL}`
 }

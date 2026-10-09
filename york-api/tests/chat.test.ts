@@ -8,6 +8,7 @@ import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
+import { dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -233,7 +234,14 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /Passage symptoms are examples, not live readings/)
   assert.match(prompt.system, /State a live value only from the snapshot or the tool results/)
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
-  assert.match(prompt.user, /one chiller capacity in MW is at least the IT load/)
+  assert.match(prompt.user, /any one chiller out of service/)
+  assert.match(prompt.user, /capacityMw/)
+  assert.match(prompt.user, /itLoadMw/)
+  const openCase = buildPrompt(
+    { question: 'q', previousQuestions: [], history: [], snapshot: { blocksWrites: true }, round: 0, toolResults: [] },
+    [],
+  )
+  assert.match(openCase.system, /Do not give the trouble answer while this case is open/)
   assert.equal(prompt.system.includes('"tools":[]'), false)
   const follow = buildPrompt(
     {
@@ -377,4 +385,25 @@ test('a read that already has a result is not requested again', async () => {
   assert.equal(result.body.status, 'tools')
   if (result.body.status !== 'tools') return
   assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getAlarms'])
+})
+
+test('an open case drops trouble and quiz passages', () => {
+  const rows: Chunk[] = [
+    { id: 'trainer:trouble:low-flow', title: 'Low flow', href: '/x', text: 'Typical symptoms: Hot hall. Open the bypass valve.' },
+    { id: 'trainer:info:trouble-low-flow', title: 'Low flow card', href: '/x', text: 'Open the bypass valve.' },
+    { id: 'trainer:quiz:flow', title: 'Flow quiz', href: '/x', text: 'Open the bypass valve.' },
+    { id: 'trainer:glossary:fla', title: 'FLA', href: '/x', text: 'Percent of full load amps on the motor.' },
+  ]
+  const hidden = searchChunks(rows, 'bypass valve full load amps', 4, true)
+  assert.deepEqual(hidden.map((item) => item.id), ['trainer:glossary:fla'])
+  const shown = searchChunks(rows, 'bypass valve', 4, false)
+  assert.equal(shown.some((item) => item.id.startsWith('trainer:trouble:')), true)
+})
+
+test('unit ids are not live numbers and corpus checks use number tokens', () => {
+  assert.equal(labelLiveNumbers('CH-01 is online.'), 'CH-01 is online.')
+  assert.equal(labelLiveNumbers('The hall is 72°F.'), `The hall is 72°F. ${LIVE_LABEL}`)
+  assert.equal(dropUntracedNumbers('CH-01 is online.', ''), 'CH-01 is online.')
+  assert.equal(dropUntracedNumbers('The count is 2.', '2 rows'), 'The count is 2.')
+  assert.equal(dropUntracedNumbers('The count is 2.', '12 rows'), '')
 })

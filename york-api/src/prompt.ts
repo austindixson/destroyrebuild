@@ -20,6 +20,8 @@ const SYSTEM = [
   'Do not request a plant change while blocksWrites is true.',
 ].join(' ')
 
+const OPEN_CASE = 'Do not give the trouble answer while this case is open.'
+
 function toolLines(): string {
   return Object.keys(TOOL_GATES)
     .map((name) => `${name} ${gateFor(name)}`)
@@ -27,7 +29,7 @@ function toolLines(): string {
 }
 
 const N_PLUS_ONE_LINE =
-  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load. The plant has N+1 when one chiller capacity in MW is at least the IT load in MW.'
+  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load. The plant carries the IT load with any one chiller out of service. Compare capacityMw with itLoadMw on the snapshot. N+1 holds when the other running chillers still cover itLoadMw.'
 
 const DELTA_KEYS = [
   't',
@@ -112,6 +114,7 @@ function firstUser(req: ChatRequest, chunks: Chunk[]): string {
 }
 
 export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string; round: number } {
+  const open = req.snapshot.blocksWrites === true ? ` ${OPEN_CASE}` : ''
   const user = req.round >= 1 ? followUpUser(req) : firstUser(req, chunks)
-  return { system: SYSTEM, user, round: req.round }
+  return { system: `${SYSTEM}${open}`, user, round: req.round }
 }

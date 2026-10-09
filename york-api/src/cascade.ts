@@ -13,12 +13,27 @@ export interface Adapter {
   complete(req: LlmRequest, signal: AbortSignal): Promise<string>
 }
 
-function overBudget(adapter: Adapter, signal: AbortSignal, round: number | undefined): boolean {
+function cursorBudget(later: Adapter[]): number {
+  for (const item of later) {
+    if (item.id === 'cursor' && item.budgetMs) return item.budgetMs
+  }
+  return 0
+}
+
+function leavesCursorShort(adapter: Adapter, later: Adapter[], left: number): boolean {
+  const budget = adapter.budgetMs
+  const rescue = cursorBudget(later)
+  if (!budget || !rescue || adapter.id === 'cursor') return false
+  if (left < rescue) return false
+  return left < budget + rescue
+}
+
+function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, round: number | undefined): boolean {
   if ((round ?? 0) >= 1) return false
   const budget = adapter.budgetMs
   if (!budget) return false
   const left = remainingMs(signal)
-  if (left >= budget) return false
+  if (left >= budget && !leavesCursorShort(adapter, later, left)) return false
   console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
   return true
 }
@@ -59,10 +74,12 @@ async function takeReply(adapter: Adapter, req: LlmRequest, signal: AbortSignal)
 
 export async function cascade(adapters: Adapter[], req: LlmRequest, signal: AbortSignal): Promise<LlmAnswer> {
   let lastError = 'no provider'
-  for (const adapter of adapters) {
+  for (let index = 0; index < adapters.length; index += 1) {
+    const adapter = adapters[index]
+    if (!adapter) continue
     if (signal.aborted) throw new Error('aborted')
     if (!adapter.enabled()) continue
-    if (overBudget(adapter, signal, req.round)) continue
+    if (overBudget(adapter, adapters.slice(index + 1), signal, req.round)) continue
     const hold = claim(adapter)
     if (!hold) continue
     try {

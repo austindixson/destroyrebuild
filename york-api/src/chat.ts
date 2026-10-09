@@ -12,7 +12,7 @@ export interface ChatDeps {
   ip: string
   now: () => number
   budget: Budget
-  search: (query: string) => Chunk[]
+  search: (query: string, blocksWrites?: boolean) => Chunk[]
   complete: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
   signal: AbortSignal
   inflight?: Inflight
@@ -36,22 +36,47 @@ function readHistory(value: unknown): HistoryItem[] {
   return rows.slice(-6)
 }
 
-function compactRow(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const src = value as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  if (typeof src.t === 'number') out.t = src.t
-  if (typeof src.actor === 'string') out.actor = src.actor
-  if (typeof src.action === 'string') out.action = src.action
-  if (typeof src.text === 'string') out.text = src.text
-  if (src.args && typeof src.args === 'object' && !Array.isArray(src.args)) {
-    const args: Record<string, string | number | boolean> = {}
-    for (const [key, item] of Object.entries(src.args as Record<string, unknown>)) {
-      if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') args[key] = item
-    }
-    if (Object.keys(args).length > 0) out.args = args
+const ROW_KIND: Record<string, 'number' | 'string'> = {
+  t: 'number',
+  actor: 'string',
+  action: 'string',
+  text: 'string',
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isScalar(value: unknown): value is string | number | boolean {
+  const kind = typeof value
+  return kind === 'string' || kind === 'number' || kind === 'boolean'
+}
+
+function scalarArgs(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!isRecord(value)) return undefined
+  const args: Record<string, string | number | boolean> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (isScalar(item)) args[key] = item
   }
-  return Object.keys(out).length > 0 ? out : null
+  if (Object.keys(args).length === 0) return undefined
+  return args
+}
+
+function copyRowFields(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, kind] of Object.entries(ROW_KIND)) {
+    if (typeof value[key] === kind) out[key] = value[key]
+  }
+  return out
+}
+
+function compactRow(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+  const out = copyRowFields(value)
+  const args = scalarArgs(value.args)
+  if (args) out.args = args
+  if (Object.keys(out).length === 0) return null
+  return out
 }
 
 function readToolRows(value: unknown): Record<string, unknown>[] | undefined {
@@ -123,7 +148,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   const slot = deps.budget.allow(deps.ip, req.round, deps.now())
   if (!slot.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   if (req.round > MAX_TOOL_ROUND) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }
-  const chunks = deps.search(req.question)
+  const chunks = deps.search(req.question, req.snapshot.blocksWrites === true)
   const gate = holdInflight(deps.inflight)
   if (!gate.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   try {

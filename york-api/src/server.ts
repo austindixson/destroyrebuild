@@ -16,6 +16,15 @@ const chunks = index as Chunk[]
 const MAX_BODY = 200_000
 export const REQUEST_MS = 135_000
 
+/** Time left on the one 135 s window. Later rounds send elapsedMs from the trainer clock. */
+export function chatWindowMs(raw: unknown): number {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REQUEST_MS
+  const value = (raw as Record<string, unknown>).elapsedMs
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return REQUEST_MS
+  const elapsed = Math.min(Math.floor(value), REQUEST_MS)
+  return REQUEST_MS - elapsed
+}
+
 const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
 
 export function readTier(value: string): CliTier | null {
@@ -65,7 +74,7 @@ export interface YorkServerOptions {
   complete?: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
   budget?: Budget
   inflight?: Inflight
-  search?: (query: string) => Chunk[]
+  search?: (query: string, blocksWrites?: boolean) => Chunk[]
   proxySecret?: string
 }
 
@@ -93,10 +102,10 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(parts).toString('utf8'))
 }
 
-function requestSignal(res: ServerResponse): { signal: AbortSignal; stop(): void } {
+function requestSignal(res: ServerResponse, windowMs: number): { signal: AbortSignal; stop(): void } {
   const controller = new AbortController()
-  stampDeadline(controller.signal, Date.now() + REQUEST_MS)
-  const timer = setTimeout(() => controller.abort(), REQUEST_MS)
+  stampDeadline(controller.signal, Date.now() + windowMs)
+  const timer = setTimeout(() => controller.abort(), windowMs)
   const onGone = () => {
     if (!res.writableFinished) controller.abort()
   }
@@ -119,15 +128,16 @@ async function onChat(
   ip: string,
   only: CliTier | null,
 ): Promise<void> {
-  const abort = requestSignal(res)
+  let abort: { signal: AbortSignal; stop(): void } | undefined
   try {
     const raw = await readJson(req)
+    abort = requestSignal(res, chatWindowMs(raw))
     const result = await handleChat(raw, {
       ip,
       now: () => Date.now(),
       budget,
       inflight,
-      search: options.search ?? ((query) => searchChunks(chunks, query)),
+      search: options.search ?? ((query, blocksWrites) => searchChunks(chunks, query, 4, blocksWrites === true)),
       complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal, process.env, only)),
       signal: abort.signal,
     })
@@ -135,7 +145,7 @@ async function onChat(
   } catch {
     send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })
   } finally {
-    abort.stop()
+    abort?.stop()
   }
 }
 

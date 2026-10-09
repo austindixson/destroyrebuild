@@ -139,6 +139,7 @@ export async function askTrainer(input: AskInput): Promise<{ answer: string; sou
   input.signal.addEventListener('abort', onParentAbort)
   const slowTimer = setTimeout(() => input.onStatus(CHAT_SLOW), SLOW_MS)
   const abortTimer = setTimeout(() => kill.abort(), ABORT_MS)
+  const started = Date.now()
   let body: Record<string, unknown> = {
     question: input.question,
     previousQuestions: input.previousQuestions,
@@ -146,10 +147,12 @@ export async function askTrainer(input: AskInput): Promise<{ answer: string; sou
     snapshot: input.snapshot,
     round: 0,
     writesUsed: 0,
+    elapsedMs: 0,
   }
   try {
     for (let round = 0; round < MAX_ROUNDS; round += 1) {
       if (kill.signal.aborted) return { answer: CHAT_ABORT, sources: [] }
+      body = { ...body, elapsedMs: Date.now() - started }
       const step = await oneRound(body, input, kill.signal)
       if (step.done) return step.done
       body = step.body

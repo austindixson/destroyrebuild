@@ -182,6 +182,42 @@ test('cascade skips a tier when the time left is below its budget', async () => 
   assert.equal(joined.includes('grok failed'), false)
 })
 
+test('round 0 skips a tier that would leave cursor short', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 55_000)
+  const calls: string[] = []
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const result = await cascade(
+      [
+        adapter('grok', GROK_MODEL, async () => {
+          calls.push('grok')
+          return 'no'
+        }, true, 75_000),
+        adapter('claude', 'claude-haiku-5-5', async () => {
+          calls.push('claude')
+          return 'no'
+        }, true, 10_000),
+        adapter('cursor', 'auto', async () => {
+          calls.push('cursor')
+          return 'The hall is stable.'
+        }, true, 50_000),
+      ],
+      req,
+      controller.signal,
+    )
+    assert.equal(result.provider, 'cursor')
+    assert.deepEqual(calls, ['cursor'])
+  } finally {
+    console.log = log
+  }
+  assert.match(lines.join('\n'), /york-api cli claude skipped reason=budget remaining=/)
+})
+
 test('a follow-up round keeps the time left and does not apply the tier budget again', async () => {
   const open = new AbortController()
   assert.equal(roundBudgetMs(open.signal, 65_000, 0), 65_000)

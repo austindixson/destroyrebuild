@@ -6,6 +6,29 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8N
+
+- The N+1 glossary uses two sentences. The plant carries the IT load with any one chiller out of service.
+- The prompt compares capacityMw with itLoadMw.
+- `compactRow` copies fields from a key map. `scalarArgs` keeps only scalar tool args.
+- Grok passes `--disallowed-tools` for file, shell, write, subagent, scheduler, workflow, image, and video tools.
+- Grok passes `--deny` `Read(<temp GROK_HOME>/**)`. The sandbox profile denies that same path.
+- An open case drops `trainer:trouble:*`, `trainer:info:trouble-*`, and `trainer:quiz:*`. The prompt says not to give the trouble answer.
+- Every round shares one 135 s deadline. The trainer sends `elapsedMs`.
+- Round 0 skips a tier when that start would leave cursor under its budget.
+- A unit id such as CH-01 is not a live number. Number checks use whole tokens.
+
+### 2026-10-09 — Security notes for this pull request
+
+- Commit `69b7581` removes the outer `sandbox-exec` wrapper.
+- Caddy strips `X-York-Only`. The override also needs `YORK_ALLOW_TIER_OVERRIDE=1`.
+- The client address comes from `X-Real-IP`. A missing, doubled, or non-IP value is rejected.
+- The server requires a proxy secret of at least 16 characters.
+- Leak patterns are wider. An answer with a secret shape returns "unavailable".
+- The child environment strips the proxy secret, the canary, `PWD`, `OLDPWD`, and `INIT_CWD`.
+- Each tier has its own confinement flags.
+- The server kills the process group, caps CLI output at 256 KB, and counts every round.
+
 ### 2026-10-09 — YORK-8M
 
 - The server drops a long STE sentence before it adds the trainer-model label. A label-only answer starts the rewrite.
@@ -42,7 +65,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - The service does not use a provider API key.
 - Codex runs only when `YORK_CODEX=1`.
 - The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
-- Round 0 gives grok 75 s, claude 10 s, and cursor 50 s. A follow-up round uses the time left on the 135 s request.
+- Round 0 gives grok 75 s, claude 10 s, and cursor 50 s. Every round shares the time left on one 135 s window.
 - The server stops the request at 135 s.
 - The trainer stops at 145 s. Caddy waits 155 s.
 - Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.

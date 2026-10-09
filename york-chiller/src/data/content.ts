@@ -761,8 +761,8 @@ export const GLOSSARY = {
     term: 'N+1',
     aliases: ['N+1'],
     definition:
-      'N+1 means one extra unit of capacity beyond the load. The plant has N+1 when one chiller capacity in MW is at least the IT load in MW.',
-    why: 'Read capacityMw and itLoadMw on the snapshot. The spare chiller is the extra unit. The spare unit counts only when it is online before you remove a machine.',
+      'N+1 means one extra unit of capacity beyond the load. The plant carries the IT load with any one chiller out of service.',
+    why: 'Keep one spare chiller online before you stop a machine. The other running units cover the full IT load.',
   },
   optiview: {
     term: 'OptiView',

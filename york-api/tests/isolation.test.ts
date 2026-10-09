@@ -17,12 +17,14 @@ import {
   completeClaude,
   prepareClaudeLaunch,
   prepareCursorLaunch,
+  GROK_DISALLOWED_TOOLS,
+  grokHomeReadDeny,
   prepareGrokLaunch,
   providerChildEnv,
   replyText,
   timeoutReason,
 } from '../src/providers.ts'
-import { REQUEST_MS, yorkOnlyFrom } from '../src/server.ts'
+import { REQUEST_MS, chatWindowMs, yorkOnlyFrom } from '../src/server.ts'
 import { applySandboxProbe, execTreeUnderHome, launchCommand, macSandboxProfile, probeSandbox, profileDeniesHome } from '../src/sandbox.ts'
 import type { LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -145,7 +147,13 @@ test('fast guard: grok uses a prompt file, an isolated home, and compat scanners
     assert.match(sandbox, /read_write/)
     assert.match(sandbox, new RegExp(tempReal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     const deny = sandbox.split('read_write')[0] ?? ''
-    assert.equal(deny.includes(tempReal), false)
+    assert.equal(deny.includes(`"${tempReal}"`), false)
+    const grokHome = launch.env.GROK_HOME ?? ''
+    assert.match(deny, new RegExp(`${grokHome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/\\*\\*`))
+    const denyAt = launch.args.indexOf('--deny')
+    assert.equal(launch.args[denyAt + 1], grokHomeReadDeny(grokHome))
+    const blockedAt = launch.args.indexOf('--disallowed-tools')
+    assert.equal(launch.args[blockedAt + 1], GROK_DISALLOWED_TOOLS)
     assert.equal(deny.includes('"/tmp"'), false)
     assert.match(deny, /"\/Users"/)
     assert.match(sandbox, /\.ssh/)
@@ -382,6 +390,11 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.ok(shared.grok + shared.claude + shared.cursor + shared.codex <= REQUEST_MS)
   const loop = readFileSync(fileURLToPath(new URL('../../york-chiller/src/chat/loop.ts', import.meta.url)), 'utf8')
   assert.match(loop, /ABORT_MS = 145_000/)
+  assert.match(loop, /elapsedMs/)
+  assert.equal(chatWindowMs({ elapsedMs: 0 }), REQUEST_MS)
+  assert.equal(chatWindowMs({ elapsedMs: 80_000 }), 55_000)
+  assert.equal(chatWindowMs({ elapsedMs: 200_000 }), 0)
+  assert.ok(REQUEST_MS < 145_000)
   const caddy = readFileSync(fileURLToPath(new URL('../../Caddyfile', import.meta.url)), 'utf8')
   assert.match(caddy, /\{http\.request\.header\.X-Real-IP\}/)
   assert.equal(caddy.includes('header_up -X-Real-IP'), false)
