@@ -47,11 +47,9 @@ export interface LlmRequest {
   round?: number
   /** An open trouble case. The cascade calls claude before grok. */
   openCase?: boolean
-  /** Follow-up start tier. The cascade still falls through to the other tiers. */
+  /** Tier that answered the previous round. A follow-up logs it and still starts on claude. */
   tier?: string
   timedOut?: string[]
-  /** Time the next follow-up tier needs. Round 0 ignores it. */
-  reserveMs?: number
 }
 
 export interface LlmAnswer {

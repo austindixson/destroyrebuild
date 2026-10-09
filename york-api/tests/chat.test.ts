@@ -350,9 +350,14 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.equal(round1.user.includes('Passages:'), false)
   assert.match(round1.user, /Snapshot delta:/)
   assert.match(round1.user, /Tool results:/)
-  assert.equal(promptBytes(round1), 1547)
+  assert.match(round1.user, /Use active voice/)
+  assert.match(round1.user, /25 words/)
+  assert.match(round1.system, /Use active voice/)
+  assert.match(round1.system, /20 words/)
+  assert.equal(round0.user.includes('Use active voice'), false)
+  assert.equal(promptBytes(round1), 1834)
   assert.equal(promptBytes(round0), 3127)
-  assert.equal(round1.user.length, 422)
+  assert.equal(round1.user.length, 566)
   assert.equal(round0.user.length, 2002)
 })
 
@@ -585,6 +590,25 @@ test('the N+1 fleet sentence keeps prompt numbers the glossary chunk omits', () 
   assert.match(kept.answer, /17 times 5 MW is 85 MW/)
   const dropped = polishAnswer(fleet, [], [], {})
   assert.equal(dropped.answer.includes('85'), false)
+})
+
+test('a rewrite drops an added sentence and keeps the restated fact', async () => {
+  let rewriteSystem = ''
+  const result = await finishAnswer(
+    '2 actions are recorded in the action log.',
+    [],
+    [],
+    {},
+    async (prompt) => {
+      rewriteSystem = prompt.system
+      return 'The action log shows 2 actions. The trainer model keeps working from live numbers.'
+    },
+    [{ name: 'plant.getActionLog', ok: true, message: '2 rows.' }],
+  )
+  assert.match(rewriteSystem, /^Rewrite /)
+  assert.match(rewriteSystem, /Do not add a sentence/)
+  assert.match(result.answer, /2 actions/)
+  assert.equal(result.answer.includes('keeps working'), false)
 })
 
 test('an emptied answer logs a reason code and not the model text', async () => {

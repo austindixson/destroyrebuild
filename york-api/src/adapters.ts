@@ -34,7 +34,7 @@ export function readTier(value: string): CliTier | null {
   return null
 }
 
-/** A follow-up may start at a known tier. It cannot select a tier the only-tier header forbids. */
+/** A follow-up may name the tier that answered. It cannot override the only-tier header. */
 export function continueTier(value: unknown, only: CliTier | null): CliTier | undefined {
   if (typeof value !== 'string') return undefined
   const tier = readTier(value)
@@ -112,7 +112,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.grok,
       limit: tierConcurrency(env, 'grok'),
       enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.grok, req.round, req.reserveMs), (limited) => completeGrok(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.grok, req.round, 'grok'), (limited) => completeGrok(req, limited, run, env)),
     },
     {
       id: 'claude',
@@ -120,7 +120,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.claude,
       limit: tierConcurrency(env, 'claude'),
       enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.claude, req.round, req.reserveMs), (limited) => completeClaude(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.claude, req.round, 'claude'), (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
@@ -128,7 +128,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.cursor,
       limit: tierConcurrency(env, 'cursor'),
       enabled: () => selected('cursor') && cliOn(env, 'YORK_CURSOR_CLI'),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.cursor, req.round, req.reserveMs), (limited) => completeCursor(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.cursor, req.round, 'cursor'), (limited) => completeCursor(req, limited, run, env)),
     },
     {
       id: 'codex',
@@ -136,7 +136,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       budgetMs: budget.codex,
       limit: tierConcurrency(env, 'codex'),
       enabled: () => selected('codex') && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.codex, req.round, req.reserveMs), (limited) => completeCodex(req, limited, run, env)),
+      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.codex, req.round, 'codex'), (limited) => completeCodex(req, limited, run, env)),
     },
   ]
 }

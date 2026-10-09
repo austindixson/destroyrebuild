@@ -54,16 +54,24 @@ function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
 /** A last tier starts on the time left when at least this much remains. */
 export const LAST_TIER_FLOOR_MS = 40_000
 
-/** Half of the 135 s window. A follow-up past this point starts on claude. */
-export const HALF_WINDOW_MS = 67_500
+/** Follow-up cap for claude. Round 0 still uses the 15 s tier budget. */
+export const FOLLOW_CLAUDE_MS = 30_000
 
-/** Round 0 uses the tier budget. A follow-up uses the shorter of that budget and the time left after the next tier. */
-export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, reserveMs = 0): number {
+const FOLLOW_SLACK_MS = 1_000
+
+/** Round 0 uses the tier budget. A follow-up gives claude at most 30 s, and every other tier its full budget or nothing. */
+export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, tierId = ''): number {
   if (!round || round < 1) return tierMs
+  if (tierId === 'claude') return followClaudeMs(signal)
   const left = remainingMs(signal)
-  if (!Number.isFinite(left)) return tierMs
-  const room = Math.max(0, Math.floor(left) - Math.max(0, Math.floor(reserveMs)))
-  return Math.min(tierMs, room)
+  if (!Number.isFinite(left) || left >= tierMs) return tierMs
+  return 0
+}
+
+function followClaudeMs(signal: AbortSignal): number {
+  const left = remainingMs(signal)
+  if (!Number.isFinite(left)) return FOLLOW_CLAUDE_MS
+  return Math.min(FOLLOW_CLAUDE_MS, Math.max(0, Math.floor(left) - FOLLOW_SLACK_MS))
 }
 
 /** The last enabled tier runs on the time left when that remainder is at least 40 s. */
@@ -72,42 +80,21 @@ function lastTierRuns(later: Adapter[], left: number): boolean {
   return left >= LAST_TIER_FLOOR_MS
 }
 
-function rotateTo(adapters: Adapter[], id: string): Adapter[] {
-  const index = adapters.findIndex((item) => item.id === id)
-  if (index <= 0) return adapters
-  return [...adapters.slice(index), ...adapters.slice(0, index)]
+function followRank(id: string): number {
+  if (id === 'claude') return 0
+  if (id === 'grok') return 1
+  if (id === 'cursor') return 2
+  return 3
 }
 
-function pastHalf(signal: AbortSignal): boolean {
-  const left = remainingMs(signal)
-  return Number.isFinite(left) && left < HALF_WINDOW_MS
+function followOrder(adapters: Adapter[]): Adapter[] {
+  return [...adapters].sort((a, b) => followRank(a.id) - followRank(b.id))
 }
 
-function orderFor(adapters: Adapter[], req: LlmRequest, signal: AbortSignal): Adapter[] {
-  if ((req.round ?? 0) >= 1 && pastHalf(signal)) return rotateTo(adapters, 'claude')
-  if ((req.round ?? 0) >= 1 && req.tier) return rotateTo(adapters, req.tier)
-  return claudeFirst(adapters, req)
-}
-
-function nextReserve(later: Adapter[], skip: readonly string[]): number {
-  for (const item of later) {
-    if (!item.enabled() || !item.budgetMs) continue
-    if (skip.includes(item.id)) continue
-    return item.budgetMs
-  }
-  return 0
-}
-
-/** Hold the next budget only when this tier and the next tier both still fit. */
-function holdBack(budget: number, later: Adapter[], skip: readonly string[], left: number): number {
-  const next = nextReserve(later, skip)
-  if (!next) return 0
-  if (!Number.isFinite(left) || left >= budget + next) return next
-  return 0
-}
-
-function lastFollowTier(later: Adapter[], skip: readonly string[]): boolean {
-  return nextReserve(later, skip) === 0
+function orderFor(adapters: Adapter[], req: LlmRequest): Adapter[] {
+  if ((req.round ?? 0) < 1) return claudeFirst(adapters, req)
+  if (req.tier) console.log(`york-api follow tier=${req.tier}`)
+  return followOrder(adapters)
 }
 
 function priorTimeout(id: string, round: number | undefined, skip: readonly string[]): boolean {
@@ -115,30 +102,18 @@ function priorTimeout(id: string, round: number | undefined, skip: readonly stri
   return skip.includes(id)
 }
 
-function followOver(
-  adapter: Adapter,
-  later: Adapter[],
-  signal: AbortSignal,
-  round: number | undefined,
-  skip: readonly string[],
-): boolean {
+function followOver(adapter: Adapter, signal: AbortSignal, round: number | undefined): boolean {
   const budget = adapter.budgetMs
   if (!budget) return false
-  const left = remainingMs(signal)
-  const reserve = holdBack(budget, later, skip, left)
-  if (lastFollowTier(later, skip) && Number.isFinite(left) && left < LAST_TIER_FLOOR_MS) {
-    console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
-    return true
-  }
-  if (roundBudgetMs(signal, budget, round, reserve) > 0) return false
-  console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
+  if (roundBudgetMs(signal, budget, round, adapter.id) > 0) return false
+  console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${remainingMs(signal)}`)
   return true
 }
 
-function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, req: LlmRequest, skip: readonly string[]): boolean {
+function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, req: LlmRequest): boolean {
   const budget = adapter.budgetMs
   if (!budget) return false
-  if ((req.round ?? 0) >= 1) return followOver(adapter, later, signal, req.round, skip)
+  if ((req.round ?? 0) >= 1) return followOver(adapter, signal, req.round)
   const left = remainingMs(signal)
   if (lastTierRuns(later, left)) return false
   const short = adapter.id === 'claude'
@@ -189,7 +164,7 @@ async function takeReply(adapter: Adapter, req: LlmRequest, signal: AbortSignal)
 }
 
 export async function cascade(adapters: Adapter[], req: LlmRequest, signal: AbortSignal): Promise<LlmAnswer> {
-  const order = orderFor(adapters, req, signal)
+  const order = orderFor(adapters, req)
   const timedOut = [...(req.timedOut ?? [])]
   let lastError = 'no provider'
   for (let index = 0; index < order.length; index += 1) {
@@ -202,12 +177,11 @@ export async function cascade(adapters: Adapter[], req: LlmRequest, signal: Abor
       continue
     }
     const later = order.slice(index + 1)
-    if (overBudget(adapter, later, signal, req, timedOut)) continue
+    if (overBudget(adapter, later, signal, req)) continue
     const hold = claim(adapter)
     if (!hold) continue
-    const launch = { ...req, reserveMs: holdBack(adapter.budgetMs ?? 0, later, timedOut, remainingMs(signal)) }
     try {
-      const text = await takeReply(adapter, launch, signal)
+      const text = await takeReply(adapter, req, signal)
       return { text, provider: adapter.id, model: adapter.model, timedOut }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'error'

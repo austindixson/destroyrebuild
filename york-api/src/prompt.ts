@@ -31,6 +31,8 @@ function toolLines(): string {
     .join('\n')
 }
 
+const FOLLOW_VOICE = 'Use active voice. Do not put is, are, was, were, or been before a past participle. Keep each sentence to 25 words. Keep a command to 20 words.'
+
 export const N_PLUS_ONE_LINE = [
   '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',
   'Count every available chiller: running units plus standby units that can start.',
@@ -101,7 +103,7 @@ function toolResultLines(req: ChatRequest, limit: number): string {
 
 function followUpUser(req: ChatRequest): string {
   const results = toolResultLines(req, 1600)
-  return [`Question: ${req.question}`, `Snapshot delta:\n${plantDelta(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
+  return [FOLLOW_VOICE, `Question: ${req.question}`, `Snapshot delta:\n${plantDelta(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
 }
 
 function firstUser(req: ChatRequest, chunks: Chunk[]): string {
@@ -127,9 +129,10 @@ function firstUser(req: ChatRequest, chunks: Chunk[]): string {
 export function buildPrompt(req: ChatRequest, chunks: Chunk[]): LlmRequest {
   const openCase = req.snapshot.blocksWrites === true
   const open = openCase ? ` ${OPEN_CASE}` : ''
+  const voice = req.round >= 1 ? ` ${FOLLOW_VOICE}` : ''
   const user = req.round >= 1 ? followUpUser(req) : firstUser(req, chunks)
   return {
-    system: `${SYSTEM}${open}`,
+    system: `${SYSTEM}${open}${voice}`,
     user,
     round: req.round,
     openCase,

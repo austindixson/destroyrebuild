@@ -69,6 +69,35 @@ function logEmpty(reason: EmptyCode): void {
   console.log(`york-api finish empty reason=${reason}`)
 }
 
+const FACT_STOP = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'been', 'has', 'have', 'had', 'not', 'but', 'its'])
+
+function keepFactWord(word: string): boolean {
+  return word.length > 2 && !FACT_STOP.has(word)
+}
+
+function factWords(text: string): string[] {
+  const facts = sentenceList(text).filter((sentence) => sentence !== LIVE_LABEL).join(' ')
+  return (facts.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(keepFactWord)
+}
+
+function sharesFacts(sentence: string, source: Set<string>): boolean {
+  const words = factWords(sentence)
+  if (words.length === 0) return false
+  let hits = 0
+  for (const word of words) if (source.has(word)) hits += 1
+  return hits * 2 >= words.length
+}
+
+/** A rewrite may restate the answer. A sentence added beside a restatement is dropped. */
+function restatedOnly(original: string, rewritten: string): string {
+  const source = new Set(factWords(original))
+  const sentences = sentenceList(rewritten)
+  if (source.size === 0 || sentences.length === 0) return rewritten
+  const kept = sentences.filter((sentence) => sharesFacts(sentence, source))
+  if (kept.length === 0 || kept.length === sentences.length) return rewritten
+  return kept.join(' ')
+}
+
 function wipedReason(stripped: string, traced: string, quoted: string, ste: string, raw: string): EmptyCode {
   if (containsSecretMaterial(raw)) return 'leak'
   if (sentenceList(stripped).length === 0) return 'parse'
@@ -134,7 +163,7 @@ export async function finishAnswer(
   logEmpty(first.empty ?? 'parse')
   try {
     const secondText = await rewrite({
-      system: 'Rewrite the answer in short active sentences. Do not use contractions. Keep trainer-model on live numbers. Reply with the answer text only.',
+      system: 'Rewrite the same facts in active sentences of 25 words or fewer. Keep a command to 20 words. Do not use contractions. Do not add a sentence. Reply with the answer text only.',
       user: raw,
     })
     if (!secondText.trim()) {
@@ -145,7 +174,12 @@ export async function finishAnswer(
       logEmpty('leak')
       return { answer: NO_ANSWER, sources: [] }
     }
-    const second = polishAnswer(secondText, citeIds, chunks, snapshot, results, extraCorpus)
+    const kept = restatedOnly(raw, secondText)
+    if (!kept.trim()) {
+      logEmpty('parse')
+      return { answer: NO_ANSWER, sources: [] }
+    }
+    const second = polishAnswer(kept, citeIds, chunks, snapshot, results, extraCorpus)
     if (second.answer) return second
     logEmpty(second.empty ?? 'parse')
     return { answer: NO_ANSWER, sources: [] }
