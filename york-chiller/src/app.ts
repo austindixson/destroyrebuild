@@ -122,6 +122,29 @@ function splitValveAlert(text: string): { head: string; body: string } {
   return { head: text.slice(0, cut + 1), body: text.slice(cut + 2) }
 }
 
+function focusedGlossary(scope: Element): string | undefined {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || !active.classList.contains('jargon') || !scope.contains(active)) return
+  return active.dataset.glossary
+}
+
+function writeValveAlert(copy: HTMLElement, text: string) {
+  const head = copy.querySelector('#valve-alert-head')
+  const body = copy.querySelector('#valve-alert-body')
+  if (!head || !body) return
+  if (!text) {
+    head.textContent = ''
+    body.textContent = ''
+    return
+  }
+  const glossary = focusedGlossary(copy)
+  const parts = splitValveAlert(text)
+  head.textContent = parts.head
+  body.textContent = parts.body
+  linkGlossary(copy)
+  if (glossary) copy.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
+}
+
 export class App {
   private root: HTMLElement
   private view: ViewId = 'home'
@@ -1917,31 +1940,14 @@ COND ══╝     CHW → CRAH → HALL</div>
   private paintValveAlert() {
     const panel = this.root.querySelector<HTMLElement>('#valve-alert')
     const copy = panel?.querySelector<HTMLElement>('#valve-alert-text')
-    const head = panel?.querySelector('#valve-alert-head')
-    const body = panel?.querySelector('#valve-alert-body')
-    if (!panel || !copy || !head || !body) return
+    if (!panel || !copy) return
     const show = valveAlertShow(this.valveAlert)
     const visible = !panel.hidden
     const current = visible ? (copy.textContent ?? '').replace(/\s+/g, ' ').trim() : ''
     const next = show?.text ?? ''
     if (current === next && visible === Boolean(show)) return
-    if (!show) {
-      panel.hidden = true
-      head.textContent = ''
-      body.textContent = ''
-      return
-    }
-    const parts = splitValveAlert(show.text)
-    const active = document.activeElement
-    const glossary =
-      active instanceof HTMLElement && active.classList.contains('jargon') && copy.contains(active)
-        ? active.dataset.glossary
-        : undefined
-    panel.hidden = false
-    head.textContent = parts.head
-    body.textContent = parts.body
-    linkGlossary(copy)
-    if (glossary) copy.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
+    panel.hidden = !show
+    writeValveAlert(copy, next)
   }
 
   private applyTroubleIncident() {

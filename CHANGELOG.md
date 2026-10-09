@@ -11,3 +11,8 @@ Newest entries are first. Add a new heading. Do not change old entries.
 - The valve alert heading uses alert ink. The explanation uses body ink.
 - The head KPI test waits until the color is amber or rose.
 - Sim tests write each bundle in a private temporary directory.
+- The sim test script deletes that directory after the run. It also deletes the directory after a failure.
+- The valve alert paint function stays small. One helper writes the text. One helper keeps the glossary focus.
+- Shift frequency labels use grey label ink. They do not use amber.
+- A new test checks that status color stays in front of value color on the KPIs, the pipe delta P, and the chaos line.
+- A new test checks that the active loop step uses title ink on the solid disc.
