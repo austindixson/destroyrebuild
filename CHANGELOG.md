@@ -2,7 +2,7 @@
 
 Newest entries are first. Add a new heading. Do not change old entries.
 
-## 2026-10-09 — YORK-12
+## 2026-10-09 — PR #25 — YORK-12
 
 - The plant package drops from 119,514 triangles and 13.6 MB to 9,473 triangles and 1.3 MB.
 - A desktop sample of the live trainer, before this change, drew 132,140 triangles in 171 calls. The frame time was about 340 ms (about 2.9 FPS) at pixel ratio 2 with shadows on.
