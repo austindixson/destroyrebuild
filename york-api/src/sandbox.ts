@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 /**
- * Outer macOS seatbelt for one york CLI call.
- * deny default, then allow system libraries and a short mach-lookup list.
+ * Deny-default seatbelt text. CLI launches do not apply it.
+ * Run 3 on ghost128 at a5b48bf showed grok cannot start inside sandbox-exec
+ * (forbidden-sandbox-reinit) and cursor stalled after the outer profile.
+ * These helpers stay so unit tests can still read the profile text.
+ *
+ * The text is deny default, then allow system libraries and a short mach-lookup list.
  * The real home is denied. The CLI binary, its helper chain, and auth files
  * are allowed after that deny, so last-match still runs a binary that lives
  * under the home. A version directory under the home (cursor-agent, Claude,

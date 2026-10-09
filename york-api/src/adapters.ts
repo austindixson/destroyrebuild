@@ -1,5 +1,4 @@
 import { cascade, type Adapter } from './cascade.ts'
-import { sandboxReady } from './sandbox.ts'
 import {
   CLAUDE_MODEL,
   CODEX_MODEL,
@@ -14,16 +13,17 @@ import {
   grokArgs,
   grokLaunchArgsOk,
   nodeRunner,
+  timeoutReason,
   type ProcessRunner,
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 40_000
+export const GROK_BUDGET_MS = 45_000
 export const CLAUDE_BUDGET_MS = 15_000
 export const CURSOR_BUDGET_MS = 50_000
 export const CODEX_BUDGET_MS = 10_000
 
-/** Codex off is 40/15/50. Codex on shares the 110 s deadline as 35/10/50/10. */
+/** Codex off is 45/15/50, the 110 s server deadline. Codex on is 35/10/50/10. */
 export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
     return { grok: 35_000, claude: 10_000, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
@@ -35,14 +35,14 @@ export type CliTier = 'grok' | 'claude' | 'cursor' | 'codex'
 
 function within<T>(parent: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ms)
-  const onParent = () => controller.abort()
+  const timer = setTimeout(() => controller.abort(timeoutReason(ms)), ms)
+  const onParent = () => controller.abort(parent.reason)
   const done = () => {
     clearTimeout(timer)
     parent.removeEventListener('abort', onParent)
   }
   controller.signal.addEventListener('abort', done, { once: true })
-  if (parent.aborted) controller.abort()
+  if (parent.aborted) controller.abort(parent.reason)
   else parent.addEventListener('abort', onParent, { once: true })
   return run(controller.signal).finally(done)
 }
@@ -58,25 +58,25 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
     {
       id: 'grok',
       model: GROK_MODEL,
-      enabled: () => selected('grok') && sandboxReady(env) && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
+      enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
       complete: (req, signal) => within(signal, budget.grok, (limited) => completeGrok(req, limited, run, env)),
     },
     {
       id: 'claude',
       model: CLAUDE_MODEL,
-      enabled: () => selected('claude') && sandboxReady(env) && cliOn(env, 'YORK_CLAUDE_CLI'),
+      enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
       complete: (req, signal) => within(signal, budget.claude, (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
       model: CURSOR_MODEL,
-      enabled: () => selected('cursor') && sandboxReady(env) && cliOn(env, 'YORK_CURSOR_CLI'),
+      enabled: () => selected('cursor') && cliOn(env, 'YORK_CURSOR_CLI'),
       complete: (req, signal) => within(signal, budget.cursor, (limited) => completeCursor(req, limited, run, env)),
     },
     {
       id: 'codex',
       model: CODEX_MODEL,
-      enabled: () => selected('codex') && sandboxReady(env) && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
+      enabled: () => selected('codex') && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
       complete: (req, signal) => within(signal, budget.codex, (limited) => completeCodex(req, limited, run, env)),
     },
   ]

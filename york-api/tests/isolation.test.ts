@@ -20,6 +20,7 @@ import {
   prepareGrokLaunch,
   providerChildEnv,
   replyText,
+  timeoutReason,
 } from '../src/providers.ts'
 import { REQUEST_MS, yorkOnlyFrom } from '../src/server.ts'
 import { applySandboxProbe, execTreeUnderHome, launchCommand, macSandboxProfile, probeSandbox, profileDeniesHome } from '../src/sandbox.ts'
@@ -42,7 +43,7 @@ function deps(complete: ChatDeps['complete']): ChatDeps {
   }
 }
 
-test('fast guard: the seatbelt denies home and darwin wraps sandbox-exec', () => {
+test('fast guard: the unused deny-default profile text still denies home', () => {
   const profile = macSandboxProfile({
     realHome: '/Users/ghost128',
     tempDir: '/private/var/folders/xx/york',
@@ -107,8 +108,14 @@ test('fast guard: grok uses a prompt file, an isolated home, and compat scanners
       YORK_CANARY: 'york-canary-marker',
       GROK_CLAUDE_HOOKS_ENABLED: '1',
     }, 'darwin')
-    assert.equal(launch.cmd, 'sandbox-exec')
+    assert.equal(launch.cmd, process.execPath)
+    assert.notEqual(launch.cmd, 'sandbox-exec')
     assert.equal(launch.input, '')
+    assert.equal(launch.env.TMPDIR, join(dir, 'tmp'))
+    assert.equal(existsSync(launch.env.TMPDIR ?? ''), true)
+    assert.ok(launch.args.includes('--sandbox'))
+    assert.ok(launch.args.includes('york'))
+    assert.ok(launch.args.includes('dontAsk'))
     assert.equal(launch.env.YORK_PROXY_SECRET, undefined)
     assert.equal(launch.env.YORK_CANARY, undefined)
     assert.equal(launch.env.GROK_CLAUDE_HOOKS_ENABLED, '0')
@@ -131,8 +138,12 @@ test('fast guard: grok uses a prompt file, an isolated home, and compat scanners
     const tempReal = realpathSync(dir)
     assert.match(sandbox, /read_write/)
     assert.match(sandbox, new RegExp(tempReal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-    assert.equal((sandbox.split('read_write')[0] ?? '').includes(tempReal), false)
+    const deny = sandbox.split('read_write')[0] ?? ''
+    assert.equal(deny.includes(tempReal), false)
+    assert.equal(deny.includes('"/tmp"'), false)
+    assert.match(deny, /"\/Users"/)
     assert.match(sandbox, /\.ssh/)
+    assert.match(sandbox, /\.zshrc/)
     assert.equal(launch.env.HOME, join(dir, 'home'))
     assert.notEqual(launch.env.HOME, home)
     const auth = lstatSync(join(launch.env.GROK_HOME ?? '', 'auth.json'))
@@ -158,6 +169,8 @@ test('fast guard: grok hooks dir stays empty and linux does not call sandbox-exe
   try {
     const launch = await prepareGrokLaunch(dir, req, { PATH: process.env.PATH, HOME: home }, 'linux')
     assert.equal(launch.cmd, 'grok')
+    assert.notEqual(launch.cmd, 'sandbox-exec')
+    assert.equal(launch.env.TMPDIR, join(dir, 'tmp'))
     const hookFile = join(launch.env.GROK_HOME ?? '', 'hooks', 'cmux-session.json')
     assert.throws(() => readFileSync(hookFile))
     const listed = await readFile(join(launch.env.GROK_HOME ?? '', 'sandbox.toml'), 'utf8')
@@ -176,12 +189,21 @@ test('fast guard: cursor config dir is the temp .cursor and user hooks are not c
   writeFileSync(join(home, '.cursor', 'hooks.json'), '{"version":1,"hooks":{"sessionStart":[{"command":"echo fired"}]}}')
   writeFileSync(join(home, '.cursor', 'auth.json'), '{"session":"ok"}\n')
   try {
-    const launch = await prepareCursorLaunch(dir, req, { PATH: process.env.PATH, HOME: home, CURSOR_BIN: process.execPath }, 'linux')
+    const launch = await prepareCursorLaunch(dir, req, {
+      PATH: process.env.PATH,
+      HOME: home,
+      CURSOR_BIN: process.execPath,
+      CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    }, 'linux')
+    assert.equal(launch.cmd, process.execPath)
+    assert.notEqual(launch.cmd, 'sandbox-exec')
     assert.equal(launch.cwd, dir)
     assert.equal(launch.env.HOME?.startsWith(`${dir}/`), true)
     assert.equal(launch.env.CURSOR_CONFIG_DIR?.startsWith(`${dir}/`), true)
     assert.equal(launch.env.HOME, join(dir, 'home'))
     assert.equal(launch.env.CURSOR_CONFIG_DIR, join(dir, 'home', '.cursor'))
+    assert.equal(launch.env.CLAUDE_CONFIG_DIR, undefined)
+    assert.equal(launch.env.TMPDIR, join(dir, 'tmp'))
     const cli = JSON.parse(readFileSync(join(dir, 'home', '.cursor', 'cli-config.json'), 'utf8')) as { permissions?: { deny?: string[] } }
     assert.equal(cli.permissions?.deny?.includes('Read(/Users/**)'), true)
     assert.equal(cli.permissions?.deny?.includes('Read(~/**)'), true)
@@ -309,7 +331,7 @@ test('fast guard: agent that resolves to grok stays off', async () => {
     }
     assert.equal(env.YORK_CURSOR_CLI, 'unavailable')
     assert.equal(lines.some((line) => line.includes('reason=agent-is-grok')), true)
-    assert.equal(env.YORK_SANDBOX, 'unavailable')
+    assert.equal(env.YORK_SANDBOX, undefined)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -339,7 +361,7 @@ test('fast guard: sandbox probe fails closed and does not write a home canary of
 
 test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.equal(REQUEST_MS, 110_000)
-  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS < REQUEST_MS)
+  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= REQUEST_MS)
   const shared = tierBudgetMs({ YORK_CODEX: '1' })
   assert.ok(shared.grok + shared.claude + shared.cursor + shared.codex <= REQUEST_MS)
   const loop = readFileSync(fileURLToPath(new URL('../../york-chiller/src/chat/loop.ts', import.meta.url)), 'utf8')
@@ -362,9 +384,9 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
       return { code: 0, stdout: 'ok', stderr: '' }
     },
   }
-  const closed = buildAdapters({}, runner, 'cursor')
+  const closed = buildAdapters({ YORK_CURSOR_CLI: 'unavailable' }, runner, 'cursor')
   assert.equal(closed.find((item) => item.id === 'cursor')?.enabled(), false)
-  const forced = buildAdapters({ YORK_SANDBOX: 'ready' }, runner, 'cursor')
+  const forced = buildAdapters({}, runner, 'cursor')
   assert.equal(forced.find((item) => item.id === 'cursor')?.enabled(), true)
   assert.equal(forced.find((item) => item.id === 'grok')?.enabled(), false)
   const capsAt = install.indexOf('YORK_TEST_CAPS:-')
@@ -408,50 +430,60 @@ test('fast guard: the version directory, env, and bash are allowed after the hom
   assert.equal(/\(allow mach-lookup\)/.test(profile), false)
 })
 
-test('fast guard: claude copies the account file and cursor stays inside the temp dir', async () => {
+test('fast guard: claude and cursor link the login keychain and drop CLAUDE_CONFIG_DIR', async () => {
   const home = await mkdtemp(join(tmpdir(), 'york-home-'))
   const dir = await mkdtemp(join(tmpdir(), 'york-claude-'))
-  const versions = join(home, '.local/share/claude/versions')
-  mkdirSync(versions, { recursive: true })
-  const bin = join(versions, '2.1.293')
-  writeFileSync(bin, '#!/bin/sh\n')
+  const keychain = join(home, 'Library', 'Keychains', 'login.keychain-db')
+  mkdirSync(join(home, 'Library', 'Keychains'), { recursive: true })
+  writeFileSync(keychain, 'keychain-bytes')
   writeFileSync(join(home, '.claude.json'), '{"oauth":"keep"}\n')
-  const versionDir = join(home, '.local/share/cursor-agent/versions/2026.10.01-e373342')
-  mkdirSync(versionDir, { recursive: true })
-  const agent = join(versionDir, 'cursor-agent')
-  writeFileSync(agent, '#!/usr/bin/env bash\n')
+  const agent = process.execPath
   try {
-    const claude = await prepareClaudeLaunch(dir, req, { PATH: process.env.PATH, HOME: home, CLAUDE_BIN: bin }, 'darwin')
+    const claude = await prepareClaudeLaunch(dir, req, {
+      PATH: process.env.PATH,
+      HOME: home,
+      CLAUDE_BIN: process.execPath,
+      CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    }, 'darwin')
     const copied = join(dir, 'home', '.claude.json')
     assert.equal(readFileSync(copied, 'utf8'), '{"oauth":"keep"}\n')
     const mode = lstatSync(copied)
     assert.equal(mode.isSymbolicLink(), false)
     assert.equal(mode.mode & 0o777, 0o600)
+    assert.equal(claude.cmd, process.execPath)
+    assert.notEqual(claude.cmd, 'sandbox-exec')
     assert.equal(claude.env.HOME, join(dir, 'home'))
-    const claudeProfile = readFileSync(join(dir, '.york.sb'), 'utf8')
-    const homeReal = realpathSync(home)
-    const denyAt = claudeProfile.indexOf(`(deny file-read* (subpath "${homeReal}"))`)
-    const keyAt = claudeProfile.indexOf(`(subpath "${homeReal}/Library/Keychains")`)
-    const treeAt = claudeProfile.indexOf(`(subpath "${realpathSync(versions)}")`)
-    assert.ok(denyAt > 0)
-    assert.ok(keyAt > denyAt)
-    assert.ok(treeAt > denyAt)
+    assert.equal(claude.env.CLAUDE_CONFIG_DIR, undefined)
+    assert.equal(claude.env.TMPDIR, join(dir, 'tmp'))
+    assert.equal(existsSync(claude.env.TMPDIR ?? ''), true)
+    assert.ok(claude.args.includes('--tools'))
+    assert.equal(claude.args[claude.args.indexOf('--tools') + 1], '')
+    const link = join(dir, 'home', 'Library', 'Keychains', 'login.keychain-db')
+    assert.equal(lstatSync(link).isSymbolicLink(), true)
+    assert.equal(realpathSync(link), realpathSync(keychain))
+    assert.equal(existsSync(join(dir, '.york.sb')), false)
     const cursorDir = await mkdtemp(join(tmpdir(), 'york-cursor-'))
     try {
-      const cursor = await prepareCursorLaunch(cursorDir, req, { PATH: process.env.PATH, HOME: home, CURSOR_BIN: agent }, 'darwin')
+      const cursor = await prepareCursorLaunch(cursorDir, req, {
+        PATH: process.env.PATH,
+        HOME: home,
+        CURSOR_BIN: agent,
+        CLAUDE_CONFIG_DIR: join(home, '.claude'),
+      }, 'darwin')
+      assert.equal(cursor.cmd, agent)
+      assert.notEqual(cursor.cmd, 'sandbox-exec')
       assert.equal(cursor.cwd, cursorDir)
-      assert.equal(cursor.env.HOME?.startsWith(`${cursorDir}/`), true)
-      assert.equal(cursor.env.CURSOR_CONFIG_DIR?.startsWith(`${cursorDir}/`), true)
-      const cursorProfile = readFileSync(join(cursorDir, '.york.sb'), 'utf8')
-      const cursorDeny = cursorProfile.indexOf(`(deny file-read* (subpath "${homeReal}"))`)
-      const cursorTree = cursorProfile.indexOf(`(subpath "${realpathSync(versionDir)}")`)
-      assert.ok(cursorTree > cursorDeny)
-      assert.equal(cursorProfile.includes('Library/Keychains'), false)
-      for (const interpreter of ['/usr/bin/env', '/bin/bash']) {
-        if (!existsSync(interpreter)) continue
-        const resolved = realpathSync(interpreter).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        assert.match(cursorProfile, new RegExp(resolved))
-      }
+      assert.equal(cursor.env.HOME, join(cursorDir, 'home'))
+      assert.equal(cursor.env.CURSOR_CONFIG_DIR, join(cursorDir, 'home', '.cursor'))
+      assert.equal(cursor.env.CLAUDE_CONFIG_DIR, undefined)
+      assert.equal(cursor.env.TMPDIR, join(cursorDir, 'tmp'))
+      const cursorLink = join(cursorDir, 'home', 'Library', 'Keychains', 'login.keychain-db')
+      assert.equal(lstatSync(cursorLink).isSymbolicLink(), true)
+      assert.equal(realpathSync(cursorLink), realpathSync(keychain))
+      assert.equal(existsSync(join(cursorDir, '.york.sb')), false)
+      assert.ok(cursor.args.includes('--sandbox'))
+      assert.ok(cursor.args.includes('enabled'))
+      assert.equal(cursor.args.includes('--force'), false)
     } finally {
       await rm(cursorDir, { recursive: true, force: true })
     }
@@ -466,13 +498,15 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(cliStarted({ code: 1, stdout: '', stderr: 'Operation not permitted' }), false)
   assert.equal(cliStarted({ code: 1, stdout: 'hall', stderr: 'Error: Permission denied' }), true)
   assert.equal(cliStarted({ code: 1, stdout: '', stderr: 'Error: Permission denied' }), true)
-  const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false)
+  const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false, 45_000)
   assert.equal(missed.ok, false)
   assert.match(missed.reason, /exit=71/)
   assert.match(missed.reason, /execvp/)
-  assert.deepEqual(smokeVerdict(0, 'hall', '', false), { ok: true, reason: 'answered' })
-  assert.deepEqual(smokeVerdict(1, '', '', true), { ok: true, reason: 'started' })
-  const signedOut = smokeVerdict(1, '', 'Not signed in', false)
+  assert.deepEqual(smokeVerdict(0, 'hall', '', false, 45_000), { ok: true, reason: 'answered' })
+  assert.deepEqual(smokeVerdict(1, '', '', true, 45_000), { ok: false, reason: 'timeout budget=45000' })
+  assert.equal(smokeVerdict(0, '', '', false, 45_000).ok, false)
+  assert.equal(smokeVerdict(0, 'Not logged in', '', false, 15_000).ok, false)
+  const signedOut = smokeVerdict(1, '', 'Not signed in', false, 15_000)
   assert.equal(signedOut.ok, false)
   assert.match(signedOut.reason, /Not signed in/)
   assert.equal(redactReason('boom sk-ant-abcdefghij\nuser text'), 'boom [redacted]')
@@ -515,4 +549,30 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(merged.hooks.sessionStart[0]?.command, 'kev')
   assert.equal(merged.hooks.sessionStart[1]?.command, '/tmp/york-canary-hook.sh')
   assert.equal(merged.hooks.beforeSubmitPrompt[0]?.command, 'kev')
+})
+
+test('fast guard: a budget kill logs timeout budget, not an empty exit', async () => {
+  const parent = new AbortController()
+  parent.abort(timeoutReason(15_000))
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    await assert.rejects(
+      () => completeClaude(req, parent.signal, {
+        async run(_cmd, _args, _input, _env, signal) {
+          assert.equal(signal.aborted, true)
+          return { code: 1, stdout: '', stderr: '' }
+        },
+      }, { PATH: process.env.PATH, HOME: '/tmp' }),
+      /timeout budget=15000/,
+    )
+  } finally {
+    console.log = log
+  }
+  const joined = lines.join('\n')
+  assert.match(joined, /york-api cli launch failed reason=timeout budget=15000/)
+  assert.equal(joined.includes('exit=1 stderr='), false)
 })

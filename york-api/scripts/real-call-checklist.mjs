@@ -26,7 +26,7 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -430,8 +430,11 @@ async function markerLanded(file, marker) {
 }
 
 function homeLaunchShape(tier, launch, home) {
-  if (process.platform === 'darwin' && launch.cmd !== 'sandbox-exec') return 'sandbox-exec'
+  if (launch.cmd === 'sandbox-exec') return 'outer'
   if (launch.env.HOME === home) return 'home'
+  if (tier !== 'grok' && launch.env.CLAUDE_CONFIG_DIR) return 'config-dir'
+  const tmp = `${launch.env.TMPDIR ?? ''}`
+  if (!tmp.startsWith(`${launch.cwd}/`)) return 'tmpdir'
   if (tier !== 'grok') return ''
   if (launch.args.includes('-p') || !launch.args.includes('--prompt-file') || !launch.args.includes('dontAsk')) return 'args'
   if (launch.env.GROK_CLAUDE_HOOKS_ENABLED !== '0' || launch.env.GROK_CURSOR_HOOKS_ENABLED !== '0') return 'compat'
@@ -448,8 +451,10 @@ function judgeHomeProbe(saved, uid, netToken) {
 }
 
 const HOME_SHAPE_FAIL = {
-  'sandbox-exec': (tier) => `step 4 ${tier} did not wrap with sandbox-exec`,
+  outer: (tier) => `step 4 ${tier} still wraps with sandbox-exec`,
   home: (tier) => `step 4 ${tier} HOME is the real home`,
+  'config-dir': (tier) => `step 4 ${tier} sets CLAUDE_CONFIG_DIR`,
+  tmpdir: (tier) => `step 4 ${tier} TMPDIR is not inside the request dir`,
   args: () => 'step 4 grok args are not the york prompt-file launch',
   compat: () => 'step 4 grok compat scanners were not turned off',
 }
@@ -472,6 +477,27 @@ async function grokTomlOk(launch) {
   if (toml.includes('$HOME') || toml.includes('~/')) {
     fail('step 4 grok sandbox.toml still uses $HOME or ~')
   }
+  const home = process.env.HOME || ''
+  const deny = toml.split('read_write')[0] || ''
+  if (home.startsWith('/') && !deny.includes(home)) {
+    fail('step 4 grok sandbox.toml does not deny the real home')
+  }
+  const cwd = `${launch.cwd || ''}`
+  if (cwd.startsWith('/') && deny.includes(`"${cwd}"`)) {
+    fail('step 4 grok sandbox.toml denies the request dir')
+  }
+  if (!toml.includes('read_write')) {
+    fail('step 4 grok sandbox.toml has no read_write for the request dir')
+  }
+}
+
+async function keychainLinked(launch) {
+  try {
+    const info = await lstat(join(launch.env.HOME, 'Library', 'Keychains', 'login.keychain-db'))
+    return info.isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 async function reportHomeWrites(tier, home, writeMarker) {
@@ -492,6 +518,9 @@ async function probeOneHome(dir, tier, workspace, prompt, home, uid, netToken, w
   const launch = prepared.launch
   reportHomeShape(tier, homeLaunchShape(tier, launch, home))
   if (tier === 'grok') await grokTomlOk(launch)
+  if (tier !== 'grok' && !(await keychainLinked(launch))) {
+    fail(`step 4 ${tier} login keychain is not linked into the temp home`)
+  }
   const saved = await spawnLaunch(launch)
   const judged = judgeHomeProbe(saved, uid, netToken)
   await evidence(dir, `04-${tier}-home`, { cmd: launch.cmd, args: launch.args }, judged.text, '')
