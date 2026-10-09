@@ -1,4 +1,4 @@
-import { NO_ANSWER } from './copy.ts'
+import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
 import { dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
@@ -33,6 +33,14 @@ function dropSteSentences(text: string): string {
     .join(' ')
 }
 
+function withoutLabel(text: string): string {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter((sentence) => sentence.length > 0 && sentence !== LIVE_LABEL)
+    .join(' ')
+}
+
 export function polishAnswer(
   raw: string,
   citeIds: string[],
@@ -48,8 +56,8 @@ export function polishAnswer(
     stripped.text,
     corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results)),
   )
-  const clear = dropSteSentences(labelLiveNumbers(traced))
-  if (!clear) return { answer: '', sources: [] }
+  const clear = labelLiveNumbers(dropSteSentences(traced))
+  if (!withoutLabel(clear)) return { answer: '', sources: [] }
   return { answer: clear, sources: sourcesFor(cites, chunks) }
 }
 

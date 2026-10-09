@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8M
+
+- The server drops a long STE sentence before it adds the trainer-model label. A label-only answer starts the rewrite.
+- Trouble passages start with "Typical symptoms:" and end each symptom with a period.
+- The prompt says passage symptoms are examples. State a live value only from the snapshot or the tool results.
+
 ### 2026-10-09 — YORK-8L
 
 - A non-empty tool list returns a tool round. The server ignores the interim answer while the round is below 6.

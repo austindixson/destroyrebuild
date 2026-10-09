@@ -27,6 +27,11 @@ function add(id: string, title: string, text: string): void {
   chunks.push({ id, title, text: clean, href: `/york-chiller/#${id}` })
 }
 
+function symptomLine(symptom: string): string {
+  const text = symptom.trim()
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
 for (const item of COMPONENTS) {
   add(`trainer:component:${item.id}`, item.name, [item.summary, ...item.details, item.operatorTip].join(' '))
 }
@@ -36,7 +41,8 @@ for (const item of STARTUP_STEPS) add(`trainer:start:${item.id}`, item.title, it
 for (const item of SHUTDOWN_STEPS) add(`trainer:stop:${item.id}`, item.title, item.body)
 for (const item of QUIZ) add(`trainer:quiz:${item.id}`, item.topic, `${item.prompt} ${item.explain}`)
 for (const item of TROUBLE_CASES) {
-  add(`trainer:trouble:${item.id}`, item.title, `${item.symptoms.join(' ')} ${item.teach}`)
+  const symptoms = item.symptoms.map(symptomLine).join(' ')
+  add(`trainer:trouble:${item.id}`, item.title, `Typical symptoms: ${symptoms} ${item.teach}`)
 }
 for (const item of MAINT_ITEMS) add(`trainer:maint:${item.id}`, item.when, item.text)
 for (const [id, entry] of Object.entries(GLOSSARY)) {

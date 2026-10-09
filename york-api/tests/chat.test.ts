@@ -7,7 +7,7 @@ import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
 import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
-import { NO_ANSWER } from '../src/copy.ts'
+import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -168,6 +168,40 @@ test('a recorded claude FLA reply stays an answer when one sentence fails STE', 
   assert.equal(plain.body.answer.includes('{"answer"'), false)
 })
 
+const LONG_ACTION =
+  '2 actions are in the action log after the operator set the CHW valve and the weather, and the trainer recorded each change with the actor and the time. Live numbers are trainer-model values.'
+
+test('a long claude action sentence is rewritten instead of the trainer-model label alone', async () => {
+  let calls = 0
+  const result = await handleChat(
+    {
+      question: 'How many actions are in the action log?',
+      snapshot: { plant: { itLoadMw: 4.2 } },
+      round: 1,
+      toolResults: [{
+        name: 'plant.getActionLog',
+        ok: true,
+        message: '2 rows.',
+        rows: [
+          { t: 1, actor: 'user', action: 'setValve', args: { loop: 'chw', pct: 40 } },
+          { t: 2, actor: 'ai', action: 'setWeather', args: { preset: 'hot' } },
+        ],
+      }],
+    },
+    deps(async (prompt) => {
+      calls += 1
+      if (prompt.system.startsWith('Rewrite')) return llm('The action log has 2 actions.')
+      return llm(JSON.stringify({ answer: LONG_ACTION, cites: [], tools: [] }))
+    }),
+  )
+  assert.equal(result.body.status, 'answer')
+  if (result.body.status !== 'answer') return
+  assert.match(result.body.answer, /2 actions/)
+  assert.equal(result.body.answer.includes('operator set the CHW valve'), false)
+  assert.notEqual(result.body.answer.trim(), LIVE_LABEL)
+  assert.ok(calls >= 2)
+})
+
 test('cascade fallthrough still answers', async () => {
   const result = await handleChat(
     { question: 'Read the hall', snapshot: { plant: { hallSupplyF: 70 } }, round: 0 },
@@ -196,6 +230,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /Leave tools empty when the snapshot or the tool results already answer/)
   assert.match(prompt.system, /Include it only when that read is still missing/)
   assert.match(prompt.system, /State only a value that the snapshot, the tool results, or the passages show/)
+  assert.match(prompt.system, /Passage symptoms are examples, not live readings/)
+  assert.match(prompt.system, /State a live value only from the snapshot or the tool results/)
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
   assert.match(prompt.user, /one chiller capacity in MW is at least the IT load/)
   assert.equal(prompt.system.includes('"tools":[]'), false)
@@ -220,6 +256,14 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(follow.user, /"action":"setValve"/)
   assert.equal(follow.user.includes('Passages:'), false)
   assert.equal(follow.user.includes('long passage'), false)
+})
+
+test('trouble symptoms are labeled examples in the index', () => {
+  const trouble = (index as Chunk[]).find((chunk) => chunk.id === 'trainer:trouble:hall-hot-chiller-idle')
+  if (!trouble) throw new Error('missing trouble passage')
+  assert.match(trouble.text, /^Typical symptoms: /)
+  assert.match(trouble.text, /Hot-aisle alarms are active\./)
+  assert.match(trouble.text, /Some CRAH valves are fully open\./)
 })
 
 test('action log rows reach the server and a tool snapshot does not', () => {
