@@ -1,6 +1,40 @@
 # Changelog
 
-Newest entries are first. Add a new heading. Do not change old entries.
+Newest entries are first. Each entry comes from the commits on that pull request.
+
+## 2026-10-09 — PR #22 — FM-REBUILD-YORK-8 — York AI chat
+
+Commits on this branch run from 2026-10-08 through 2026-10-09 (`3a45cf9` to `361294c`). york-api serves the trainer chat from the signed-in CLIs.
+
+### Learner
+
+- The trainer shows a chat panel on the same origin.
+- The panel sends the live screen snapshot with each question.
+- The coach answers from that snapshot and from the trainer passages.
+- Live numbers stay trainer-model values.
+- A stop, a fault, or a reset shows a confirm card before the plant changes.
+- A request for alarms or the action log returns to the browser as a tool round.
+- The coach keeps tools empty when the snapshot already answers the question.
+
+### Operator
+
+- york-api calls the signed-in grok, claude, and cursor CLIs on the Mac.
+- The service does not use a provider API key.
+- Codex runs only when `YORK_CODEX=1`.
+- The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
+- One request gives grok 65 s, claude 20 s, and cursor 50 s.
+- The server stops the request at 135 s.
+- The trainer stops at 145 s. Caddy waits 155 s.
+- Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.
+- The cascade skips a tier that is already at its cap.
+- The call does not wait in a queue.
+- Grok uses its own york sandbox.
+- Claude and Cursor use a temporary home and link the login keychain into that home.
+- Startup marks a tier ready only after a reply that contains `YORKOK`.
+- A budget kill logs `timeout budget=<ms>`. A client abort logs `aborted`.
+- `X-York-Only` applies only on loopback when the proxy secret matches.
+- The live checklist loads the plant snapshot from the trainer code.
+- Merge `a3c813a` brings PR #21 and PR #24 into this branch. Those changes keep their own pull request numbers.
 
 ## 2026-10-08 — PR #23 — FM-REBUILD-YORK-10
 
