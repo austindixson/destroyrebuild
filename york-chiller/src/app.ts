@@ -133,6 +133,32 @@ function lchltHint(s: PlantSnapshot): string {
   return `Trainer target ${s.lchltTargetF.toFixed(0)}°F.`
 }
 
+function splitValveAlert(text: string): { head: string; body: string } {
+  const cut = text.indexOf('. ')
+  if (cut < 0) return { head: text, body: '' }
+  return { head: text.slice(0, cut + 1), body: text.slice(cut + 2) }
+}
+
+function focusedGlossary(scope: Element): string | undefined {
+  const active = document.activeElement
+  return active instanceof HTMLElement && active.classList.contains('jargon') && scope.contains(active)
+    ? active.dataset.glossary
+    : undefined
+}
+
+function writeValveAlert(copy: HTMLElement, text: string) {
+  const head = copy.querySelector('#valve-alert-head')
+  const body = copy.querySelector('#valve-alert-body')
+  if (!head || !body) return
+  const glossary = focusedGlossary(copy)
+  const parts = splitValveAlert(text)
+  head.textContent = parts.head
+  body.textContent = parts.body
+  if (!text) return
+  linkGlossary(copy)
+  if (glossary) copy.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
+}
+
 export class App {
   private root: HTMLElement
   private view: ViewId = 'home'
@@ -318,7 +344,7 @@ export class App {
       <div class="toast" id="toast"></div>
       <div class="confirm-card" id="confirm-card" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-copy">
         <div class="confirm-panel">
-          <p id="confirm-copy"></p>
+          <p id="confirm-copy" class="york-alert"></p>
           <div class="confirm-actions">
             <button class="btn" type="button" id="confirm-yes">Do the stop</button>
             <button class="btn ghost" type="button" id="confirm-no">Cancel</button>
@@ -818,7 +844,7 @@ export class App {
     return `
       <section class="pipe-board" id="pipe-board">
         <div id="valve-alert" class="valve-alert-panel" hidden role="status">
-          <p id="valve-alert-text" class="valve-alert"></p>
+          <p id="valve-alert-text" class="valve-alert"><span id="valve-alert-head" class="valve-alert-head"></span> <span id="valve-alert-body" class="valve-alert-body"></span></p>
           <button type="button" class="btn ghost" id="valve-alert-dismiss">Dismiss</button>
         </div>
         <div class="pipe-head">
@@ -1212,8 +1238,8 @@ export class App {
         <div class="optiview-body">
           <div class="opti-screen" id="opti-screen">${this.optiScreenHtml()}</div>
           <div class="opti-actions">
-            <label style="font-size:.85rem;color:#86efac" ${infoAttr('slider-lchlt')}>LCHLT setpoint
-              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" style="width:100%;margin-top:6px"/>
+            <label class="opti-set-label" ${infoAttr('slider-lchlt')}>LCHLT setpoint
+              <input id="lchlt" type="range" min="42" max="65" step="0.5" value="${this.controller.lchltSet}" />
             </label>
             <button class="btn" type="button" data-opti="start" ${infoAttr('opti-start')} ${this.ch01StartHeld() ? 'disabled' : ''}>Start</button>
             <button class="btn amber" type="button" data-opti="soft" ${infoAttr('opti-soft')} ${!this.controller.running ? 'disabled' : ''}>Soft stop</button>
@@ -1235,7 +1261,7 @@ export class App {
     if (this.optiTab === 'mbc') {
       return `
         <div class="gauge-row">
-          <div class="gauge" ${infoAttr('gauge-mbc')}><div class="label">MBC</div><div class="value" style="font-size:1.1rem;margin-top:8px">${s.ch01.mbc}</div></div>
+          <div class="gauge" ${infoAttr('gauge-mbc')}><div class="label">MBC</div><div class="value">${s.ch01.mbc}</div></div>
           <div class="gauge" ${infoAttr('gauge-landings')}><div class="label">LANDINGS</div><div class="value">${this.controller.incident === 'landing' ? 1 : 0}</div></div>
           <div class="gauge" ${infoAttr('gauge-vibe')}><div class="label">1× VIBE</div><div class="value">${(0.12 + Math.sin(s.t) * 0.02).toFixed(2)}</div></div>
         </div>
@@ -1259,8 +1285,8 @@ TOUCHDOWN bearings: ${s.ch01.mbc === 'LANDED' ? 'ENGAGED' : 'CLEAR'}</div>
         <div class="gauge" ${infoAttr('gauge-rla')}><div class="label">% FLA</div><div class="value" data-ov="rla">${this.controller.running ? s.ch01.rla : 0}%</div></div>
       </div>
       <div class="gauge-row">
-        <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.controller.running ? 36 : 48}<span style="font-size:.75rem"> psig</span></div></div>
-        <div class="gauge" ${infoAttr('gauge-cond')}><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span style="font-size:.75rem"> psig</span></div></div>
+        <div class="gauge" ${infoAttr('gauge-evap')}><div class="label">EVAP</div><div class="value">${this.controller.running ? 36 : 48}<span class="york-unit"> psig</span></div></div>
+        <div class="gauge" ${infoAttr('gauge-cond')}><div class="label">COND</div><div class="value" data-ov="cond">${s.ch01.condPsig}<span class="york-unit"> psig</span></div></div>
         <div class="gauge" ${infoAttr('gauge-hall')}><div class="label">HALL SA</div><div class="value" data-ov="hall">${s.hallSupplyF}°F</div></div>
       </div>
       <p data-ov="lchlt-target">${lchltHint(s)}</p>
@@ -1363,7 +1389,7 @@ COND ══╝     CHW → CRAH → HALL</div>
               const locked = this.matchLocked.has(p.id)
               return `<button type="button" class="match-tile ${locked ? 'locked correct' : ''} ${this.matchSelectedIcon === p.id ? 'selected' : ''}" data-icon="${p.id}" ${infoAttr('mission-match')} ${locked ? 'disabled' : ''}>
                 <span class="card-icon" style="color:${COMPONENTS.find((c) => c.id === p.id)?.color}">${iconSvg(p.icon, 28)}</span>
-                <span style="color:var(--muted);font-family:var(--mono);font-size:.78rem">${locked ? 'Matched' : 'Select'}</span>
+                <span class="match-cue">${locked ? 'Matched' : 'Select'}</span>
               </button>`
             })
             .join('')}
@@ -1447,7 +1473,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         <span class="chip">Score ${this.quizScore}</span>
       </div>
       <div class="quiz-card" ${answered ? infoAttr(quizInfoId(q.id)) : ''}>
-        <h3 style="margin-top:0">${q.prompt}</h3>
+        <h3 class="york-prompt">${q.prompt}</h3>
         <div class="choices">${choices}</div>
         <div id="quiz-feedback">${feedback}</div>
         <div style="margin-top:14px"><button class="btn" type="button" data-quiz-next style="display:${answered ? 'inline-flex' : 'none'}">Next</button></div>
@@ -1593,7 +1619,7 @@ COND ══╝     CHW → CRAH → HALL</div>
         <span class="chip">${this.progress.troubleSolved.length} of ${total}</span>
       </div>
       <div class="trouble-card">
-        <h3 style="margin-top:0">All incidents cleared</h3>
+        <h3 class="york-title">All incidents cleared</h3>
         <p>This set is complete. Select Practice again for a new order. Practice does not add XP.</p>
         <div style="margin-top:14px"><button class="btn" type="button" data-tr-practice>Practice again</button></div>
       </div>`
@@ -1621,7 +1647,7 @@ COND ══╝     CHW → CRAH → HALL</div>
       <div class="alarm-banner show">${this.snap.alarm ?? t.title}</div>
       <div class="kpi-strip">${this.kpiHtml(this.snap)}</div>
       <div class="trouble-card" ${picked !== null ? infoAttr(troubleInfoId(t.id)) : ''}>
-        <h3 style="margin-top:0">${t.title}</h3>
+        <h3 class="york-prompt">${t.title}</h3>
         <ul>${t.symptoms.map((s) => `<li>${s}</li>`).join('')}</ul>
         <div class="choices">
           ${options
@@ -1684,7 +1710,7 @@ COND ══╝     CHW → CRAH → HALL</div>
             (i) => `
           <button type="button" class="maint-item ${this.maintChecks.has(i.id) ? 'on' : ''}" data-maint="${i.id}" ${infoAttr(maintInfoId(i.id))}>
             <div class="when">${i.when}</div>
-            <div style="margin-top:6px;font-weight:600">${i.text}</div>
+            <div class="task">${i.text}</div>
           </button>`,
           )
           .join('')}
@@ -1720,8 +1746,8 @@ COND ══╝     CHW → CRAH → HALL</div>
           <input id="it-load" type="range" min="2" max="8" step="0.1" value="${center}" />
         </label>
         <p class="empty-state" id="it-load-note">Trainer value. The live load moves a small amount around this target.</p>
-        <p id="capacity-read">Running capacity ${runningMw.toFixed(1)} MW.</p>
-        <p id="weather-target">Trainer LCHLT target is ${this.snap.lchltTargetF.toFixed(0)}°F for this dry-bulb.</p>
+        <p class="york-value" id="capacity-read">Running capacity ${runningMw.toFixed(1)} MW.</p>
+        <p class="york-value" id="weather-target">Trainer LCHLT target is ${this.snap.lchltTargetF.toFixed(0)}°F for this dry-bulb.</p>
         ${this.unitRowHtml('CH-01')}
         ${this.unitRowHtml('CH-02')}
         <div class="clock-row">
@@ -1730,7 +1756,7 @@ COND ══╝     CHW → CRAH → HALL</div>
           <button class="btn ghost ${this.controller.timeScale === 2 && !this.controller.paused ? 'on' : ''}" type="button" data-scale="2">2×</button>
           <button class="btn ghost ${this.controller.timeScale === 5 && !this.controller.paused ? 'on' : ''}" type="button" data-scale="5">5×</button>
           <button class="btn ghost" type="button" data-undo ${this.controller.canUndo ? '' : 'disabled'}>Undo the last change</button>
-          <span id="sim-time">Sim time ${Math.round(this.snap.t)} s</span>
+          <span class="york-value" id="sim-time">Sim time ${Math.round(this.snap.t)} s</span>
         </div>
       </section>`
   }
@@ -1740,7 +1766,7 @@ COND ══╝     CHW → CRAH → HALL</div>
     return `
       <div class="unit-row" data-unit="${id}">
         <strong>${id}</strong>
-        <span data-unit-state>${running ? 'In operation' : 'Standby'}</span>
+        <span class="york-value" data-unit-state>${running ? 'In operation' : 'Standby'}</span>
         <button class="btn" type="button" data-ch-start="${id}" ${running || this.ch01StartHeld(id) ? 'disabled' : ''}>Start</button>
         <button class="btn amber" type="button" data-ch-soft="${id}" ${running ? '' : 'disabled'}>Soft stop</button>
         <button class="btn rose" type="button" data-ch-safety="${id}">Safety stop</button>
@@ -1919,20 +1945,15 @@ COND ══╝     CHW → CRAH → HALL</div>
 
   private paintValveAlert() {
     const panel = this.root.querySelector<HTMLElement>('#valve-alert')
-    const copy = panel?.querySelector('#valve-alert-text')
+    const copy = panel?.querySelector<HTMLElement>('#valve-alert-text')
     if (!panel || !copy) return
     const show = valveAlertShow(this.valveAlert)
     const visible = !panel.hidden
-    const current = visible ? (copy.textContent ?? '') : ''
+    const current = visible ? (copy.textContent ?? '').replace(/\s+/g, ' ').trim() : ''
     const next = show?.text ?? ''
     if (current === next && visible === Boolean(show)) return
-    if (!show) {
-      panel.hidden = true
-      copy.textContent = ''
-      return
-    }
-    panel.hidden = false
-    this.relinkText(copy, show.text)
+    panel.hidden = !show
+    writeValveAlert(copy, next)
   }
 
   private applyTroubleIncident() {
