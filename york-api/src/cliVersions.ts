@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process'
-import { readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -263,63 +263,125 @@ export function claudeReprobeDelay(attempt: number, reason: string): number {
   return CLAUDE_REPROBE_STEPS_MS[index] ?? CLAUDE_AUTH_REPROBE_MS
 }
 
-type SmokeJob = { dir: string }
+type SmokeJob = { dir: string; pgid?: number }
+type ProcRow = { pid: number; pgid: number; command: string }
 
 const openSmokes = new Set<SmokeJob>()
 let smokeHooked = false
+const KILL_GRACE_MS = 2_000
 
-function helperUsesDir(dir: string, pid: number): boolean {
-  const prefix = `${dir}/`
+function listProcs(): ProcRow[] {
+  let text = ''
   try {
-    const cwd = readlinkSync(`/proc/${pid}/cwd`)
-    if (cwd === dir || cwd.startsWith(prefix)) return true
+    text = execFileSync('ps', ['-axww', '-o', 'pid=,pgid=,command='], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+    })
   } catch {
-    // This pid has no cwd we can read.
+    return []
   }
-  try {
-    const cmd = readFileSync(`/proc/${pid}/cmdline`).toString('utf8')
-    if (cmd.includes(dir)) return true
-  } catch {
-    // This pid has already exited.
+  const rows: ProcRow[] = []
+  for (const line of text.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*(.*)$/.exec(line)
+    if (!match?.[1] || !match[2]) continue
+    rows.push({ pid: Number(match[1]), pgid: Number(match[2]), command: match[3] ?? '' })
   }
-  return false
+  return rows
 }
 
-function killHelpers(dir: string): void {
-  let names: string[] = []
+function childPids(pid: number): number[] {
   try {
-    names = readdirSync('/proc')
+    const text = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' })
+    return text.split('\n').map((line) => Number(line)).filter((id) => id > 0)
   } catch {
-    return
-  }
-  for (const name of names) {
-    if (!/^\d+$/.test(name)) continue
-    const helper = Number(name)
-    if (helper === process.pid || !helperUsesDir(dir, helper)) continue
-    try {
-      process.kill(helper, 'SIGKILL')
-    } catch {
-      // The helper has already exited.
-    }
+    return []
   }
 }
 
-/** Kills helpers still using a smoke directory, then removes that directory. */
-export function releaseSmokeDir(dir: string, pid?: number): void {
-  if (pid) {
-    try {
-      process.kill(-pid, 'SIGKILL')
-    } catch {
-      // The group is already gone.
+function addProc(rows: ProcRow[], seen: Set<number>, pid: number, byPid: Map<number, ProcRow>): boolean {
+  if (pid === process.pid || seen.has(pid)) return false
+  seen.add(pid)
+  const known = byPid.get(pid)
+  rows.push(known ?? { pid, pgid: pid, command: '' })
+  return true
+}
+
+/** Helpers whose command names the directory, plus children found with pgrep. */
+function procsForDir(dir: string): ProcRow[] {
+  const listed = listProcs()
+  const byPid = new Map(listed.map((row) => [row.pid, row]))
+  const rows: ProcRow[] = []
+  const seen = new Set<number>()
+  const queue: number[] = []
+  for (const row of listed) {
+    if (row.command.includes(dir) && addProc(rows, seen, row.pid, byPid)) queue.push(row.pid)
+  }
+  while (queue.length > 0) {
+    const pid = queue.shift()
+    if (pid === undefined) continue
+    for (const child of childPids(pid)) {
+      if (addProc(rows, seen, child, byPid)) queue.push(child)
     }
   }
-  killHelpers(dir)
+  return rows
+}
+
+function groupsFor(dir: string, pgid?: number): number[] {
+  const ids = new Set<number>()
+  if (pgid && pgid > 1 && pgid !== process.pid) ids.add(pgid)
+  for (const row of procsForDir(dir)) {
+    if (row.pgid > 1 && row.pgid !== process.pid) ids.add(row.pgid)
+  }
+  return [...ids]
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  if (pgid === process.pid) return
+  try {
+    process.kill(-pgid, signal)
+  } catch {
+    // The group is already gone.
+  }
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function signalAndReap(groups: number[], signal: NodeJS.Signals): Promise<number[]> {
+  for (const id of groups) signalGroup(id, signal)
+  let left = groups.filter((id) => groupAlive(id))
+  const deadline = Date.now() + KILL_GRACE_MS
+  while (left.length > 0 && Date.now() < deadline) {
+    await sleep(50)
+    left = left.filter((id) => groupAlive(id))
+  }
+  return left
+}
+
+/** SIGTERM, then SIGKILL after 2 s. The directory is removed after the groups exit. */
+export async function releaseSmokeDir(dir: string, pgid?: number): Promise<void> {
+  const groups = groupsFor(dir, pgid)
+  const left = await signalAndReap(groups, 'SIGTERM')
+  if (left.length > 0) await signalAndReap(left, 'SIGKILL')
   rmSync(dir, { recursive: true, force: true })
 }
 
 function onSmokeStop(): void {
-  stopOpenSmokes()
-  process.exit(143)
+  void stopOpenSmokes().finally(() => {
+    process.exit(143)
+  })
 }
 
 function armSmokeStop(): void {
@@ -337,9 +399,16 @@ function disarmSmokeStop(): void {
 }
 
 /** A restart during startup finds this directory and clears it. */
-export function holdSmokeDir(dir: string): void {
-  openSmokes.add({ dir })
+export function holdSmokeDir(dir: string, pgid?: number): void {
+  openSmokes.add({ dir, pgid })
   armSmokeStop()
+}
+
+function smokeJob(dir: string): SmokeJob | undefined {
+  for (const job of openSmokes) {
+    if (job.dir === dir) return job
+  }
+  return undefined
 }
 
 function forgetSmokeDir(dir: string): void {
@@ -350,10 +419,10 @@ function forgetSmokeDir(dir: string): void {
 }
 
 /** Clears every smoke directory still open when a restart arrives. */
-export function stopOpenSmokes(): void {
+export async function stopOpenSmokes(): Promise<void> {
   const jobs = [...openSmokes]
   openSmokes.clear()
-  for (const job of jobs) releaseSmokeDir(job.dir)
+  for (const job of jobs) await releaseSmokeDir(job.dir, job.pgid)
   disarmSmokeStop()
 }
 
@@ -373,7 +442,13 @@ async function smokeOne(
   const timer = setTimeout(() => controller.abort(timeoutReason(budgetMs)), budgetMs)
   try {
     const launch = await prepare(dir)
-    const result = await nodeRunner.run(launch.cmd, launch.args, launch.input, launch.env, controller.signal, { cwd: launch.cwd })
+    const result = await nodeRunner.run(launch.cmd, launch.args, launch.input, launch.env, controller.signal, {
+      cwd: launch.cwd,
+      onSpawn: (pid) => {
+        const job = smokeJob(dir)
+        if (job) job.pgid = pid
+      },
+    })
     clearTimeout(timer)
     const timedOut = controller.signal.aborted
     const verdict = smokeVerdict(result.code, result.stdout, result.stderr, timedOut, budgetMs)
@@ -387,7 +462,7 @@ async function smokeOne(
     return verdict
   } finally {
     clearTimeout(timer)
-    releaseSmokeDir(dir)
+    await releaseSmokeDir(dir, smokeJob(dir)?.pgid)
     forgetSmokeDir(dir)
   }
 }

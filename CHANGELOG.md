@@ -6,9 +6,17 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z11
+
+- A parent heading covers only the consecutive sub-headings that follow it before any content. A blank line between those headings still keeps the group. The scope ends at the next heading after content, including a later plain heading, a blank-line heading, or a CAPS heading. "Eight-hour checklist" and "Shift start" drop when the step is untraced and "CHILLERS" keeps "- CH-01". "Shift start" and "First hour" drop when "Mid shift" keeps "2. ok". An emptied "## Pumps" drops when "CHILLERS" follows the removed sentence. "CHECKLIST" above "SHIFT START" still stays. "PUMPS" above "CHILLERS" still stays when the bullet stays.
+- One plan object may have 40 characters of lead-in and 80 characters of trailing text when that trail starts with whitespace. A tools object followed by "I will wait for the result." is a tool call. "Sure." before an answer object and "Thanks." after it is the answer. "It said {"answer":"x"}." stays prose. A trail of 81 characters stays prose.
+- "Use the { key. The "answer": is on screen." does not ask for JSON again. An unclosed `{"` after a short lead-in still does.
+- Smoke helpers are found with `pgrep -P` and `ps`. Each helper starts in its own process group. A stop sends SIGTERM, then SIGKILL after 2 seconds, on SIGTERM, SIGINT, and a restart. The temp directory is removed after the group exits.
+- `guard.table.test.ts` and `parse.table.test.ts` lock the D8 through D25 examples.
+
 ### 2026-10-09 — YORK-8Z10
 
-- A heading level is its # count. A heading directly above another heading, blank lines included, is one level above that heading. It drops when every content piece in that scope was removed, or when it is an empty leaf. It stays when any of that text remains, including text under a sub-heading. "CHECKLIST" stays above "SHIFT START". "EIGHT-HOUR CHECKLIST" stays above "Shift start". A blank line between them still keeps both. "PUMPS" above "CHILLERS" stays when the bullet stays. An emptied "**Pumps**" and "**Alarms**" drop. "Eight-hour checklist" stays when "Shift start" loses its step and "Mid shift" keeps "2. Log it".
+- A heading level is its # count. A heading directly above another heading, blank lines included, is one level above that heading. It drops when every content piece in that scope was removed, or when it is an empty leaf. It stays when kept text remains under that heading, including under a sub-heading in the same group. "CHECKLIST" stays above "SHIFT START". "EIGHT-HOUR CHECKLIST" stays above "Shift start". A blank line between them still keeps both. "PUMPS" above "CHILLERS" stays when the bullet stays. An emptied "**Pumps**" and "**Alarms**" drop.
 - An unclosed object after a short lead-in asks for JSON again. "Sure." before `{"answer":"A.", "tools": [` is that case. "It said {"answer":"x"}." stays prose.
 - A failed claude check sets YORK_CLAUDE_CLI to unavailable, including when the flag was ready. The key stays present.
 - A restart during the startup check kills cursor helpers that still use the smoke directory and removes that directory.

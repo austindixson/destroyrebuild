@@ -818,39 +818,109 @@ test('a claude retry keeps the YORK_CLAUDE_CLI setting', () => {
   assert.equal(down.YORK_CLAUDE_CLI, 'ready')
 })
 
-test('a restart clears cursor helpers and the smoke directory', async () => {
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitForFile(path: string): Promise<void> {
+  for (let i = 0; i < 50 && !existsSync(path); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+test('a restart clears helpers found by ps and the smoke directory', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
   const pidFile = join(dir, 'helper.pid')
-  const child = spawn(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.env.PIDFILE, String(process.pid)); setInterval(() => {}, 1000);'], {
-    cwd: dir,
+  const child = spawn(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);', pidFile], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PIDFILE: pidFile },
   })
+  child.on('exit', () => {})
   child.unref()
+  let pid = 0
   try {
-    for (let i = 0; i < 50 && !existsSync(pidFile); i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20))
-    }
-    const pid = Number(readFileSync(pidFile, 'utf8'))
+    await waitForFile(pidFile)
+    pid = Number(readFileSync(pidFile, 'utf8'))
     assert.ok(pid > 0)
+    const started = Date.now()
     holdSmokeDir(dir)
-    stopOpenSmokes()
+    await stopOpenSmokes()
     assert.equal(existsSync(dir), false)
-    let state = 'gone'
-    try {
-      const status = readFileSync(`/proc/${pid}/status`, 'utf8')
-      state = /^State:\s+(\S)/m.exec(status)?.[1] ?? 'gone'
-    } catch {
-      state = 'gone'
-    }
-    assert.equal(state === 'gone' || state === 'Z', true)
+    assert.equal(processAlive(pid), false)
+    assert.ok(Date.now() - started < 1_500)
   } finally {
-    stopOpenSmokes()
-    if (existsSync(pidFile)) {
-      const stray = Number(readFileSync(pidFile, 'utf8'))
+    await stopOpenSmokes()
+    try { process.kill(-pid, 'SIGKILL') } catch { /* group already gone */ }
+    if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a helper that ignores SIGTERM is killed with its setsid child after 2 s', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
+  const pidFile = join(dir, 'helper.pid')
+  const parentCode = [
+    'const { spawn } = require("node:child_process");',
+    'const fs = require("node:fs");',
+    'const child = spawn(process.execPath, ["-e", "process.on(\\"SIGTERM\\", () => {}); setInterval(() => {}, 1000);"], { detached: true, stdio: "ignore" });',
+    'child.unref();',
+    'fs.writeFileSync(process.argv[1], String(process.pid) + " " + String(child.pid));',
+    'setInterval(() => {}, 1000);',
+  ].join('')
+  const child = spawn(process.execPath, ['-e', parentCode, pidFile], {
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.on('exit', () => {})
+  child.unref()
+  let parent = 0
+  let grandchild = 0
+  try {
+    await waitForFile(pidFile)
+    const ids = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number)
+    parent = ids[0] ?? 0
+    grandchild = ids[1] ?? 0
+    assert.ok(parent > 0 && grandchild > 0)
+    const started = Date.now()
+    holdSmokeDir(dir)
+    await stopOpenSmokes()
+    const elapsed = Date.now() - started
+    assert.equal(existsSync(dir), false)
+    assert.equal(processAlive(parent), false)
+    assert.equal(processAlive(grandchild), false)
+    assert.ok(elapsed >= 1_800)
+  } finally {
+    await stopOpenSmokes()
+    for (const stray of [parent, grandchild]) {
+      try { process.kill(-stray, 'SIGKILL') } catch { /* group already gone */ }
       try { process.kill(stray, 'SIGKILL') } catch { /* already gone */ }
     }
+    if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a tracked process group stops when the command line omits the directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.on('exit', () => {})
+  child.unref()
+  const pid = child.pid ?? 0
+  try {
+    assert.ok(pid > 0)
+    holdSmokeDir(dir, pid)
+    await stopOpenSmokes()
+    assert.equal(existsSync(dir), false)
+    assert.equal(processAlive(pid), false)
+  } finally {
+    await stopOpenSmokes()
+    try { process.kill(-pid, 'SIGKILL') } catch { /* group already gone */ }
     if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
   }
 })

@@ -77,7 +77,8 @@ function prosePlan(answer: string): ModelPlan {
   return { answer, cites: [], tools: [], validJson: false }
 }
 
-const OUTSIDE_LIMIT = 40
+const LEAD_LIMIT = 40
+const TRAIL_LIMIT = 80
 const PLAN_KEY = /"(?:answer|tools)"\s*:/
 
 type Brace = { start: number; end: number }
@@ -123,8 +124,25 @@ function braceObjects(text: string): Brace[] {
   return found
 }
 
-function outsideLength(text: string, span: Brace): number {
-  return `${text.slice(0, span.start)}${text.slice(span.end)}`.trim().length
+function leadText(text: string, span: Brace): string {
+  return text.slice(0, span.start).trim()
+}
+
+/** A separated trail is commentary. Glued punctuation after `}` is an inline quote. */
+function trailOk(text: string, span: Brace): boolean {
+  const tail = text.slice(span.end)
+  if (tail.length === 0) return true
+  if (!/^\s/.test(tail)) return false
+  return tail.trim().length <= TRAIL_LIMIT
+}
+
+function frameOk(text: string, span: Brace): boolean {
+  return leadText(text, span).length <= LEAD_LIMIT && trailOk(text, span)
+}
+
+/** `{` starts a plan object only when the next non-space character is `"`. */
+function opensPlan(text: string, start: number): boolean {
+  return text.slice(start + 1).trimStart().startsWith('"')
 }
 
 function parsedObject(raw: string): Record<string, unknown> | null {
@@ -145,11 +163,7 @@ function planSpans(text: string): Brace[] {
   return braceObjects(text).filter((span) => PLAN_KEY.test(text.slice(span.start, span.end)))
 }
 
-function tailText(text: string, span: Brace): string {
-  return text.slice(span.end).trim()
-}
-
-/** A `{` that never closes, when the tail still names answer or tools. */
+/** A `{"` that never closes, when the tail still names answer or tools. */
 function unclosedPlan(text: string): Brace | null {
   let depth = 0
   let start = -1
@@ -177,22 +191,22 @@ function unclosedPlan(text: string): Brace | null {
       if (depth === 0) start = -1
     }
   }
-  if (depth === 0 || start < 0 || !PLAN_KEY.test(text.slice(start))) return null
+  if (depth === 0 || start < 0 || !opensPlan(text, start) || !PLAN_KEY.test(text.slice(start))) return null
   return { start, end: text.length }
 }
 
-/** One plan object with a short lead-in and no text after it. A quote stays prose. */
+/** One plan object with a short lead-in and a short separated trail. A glued quote stays prose. */
 function ledPlan(text: string): Record<string, unknown> | null {
   const spans = planSpans(text)
   if (spans.length !== 1) return null
   const span = spans[0]
-  if (!span || outsideLength(text, span) > OUTSIDE_LIMIT || tailText(text, span).length > 0) return null
+  if (!span || !frameOk(text, span)) return null
   const row = parsedObject(text.slice(span.start, span.end))
   if (!row || !hasPlanKey(row)) return null
   return row
 }
 
-/** A broken, unclosed, or repeated plan object with a short lead-in needs another JSON reply. */
+/** A broken, unclosed, or repeated plan object inside the lead and trail limits needs another JSON reply. */
 export function jsonRetryNeeded(text: string): boolean {
   const body = replyBody(text)
   if (wholeObject(body)) return false
@@ -200,9 +214,9 @@ export function jsonRetryNeeded(text: string): boolean {
   const closed = planSpans(body)
   if (closed.length > 1) return true
   if (open && closed.length > 0) return true
-  if (open) return outsideLength(body, open) <= OUTSIDE_LIMIT
+  if (open) return leadText(body, open).length <= LEAD_LIMIT
   const span = closed[0]
-  if (!span || outsideLength(body, span) > OUTSIDE_LIMIT || tailText(body, span).length > 0) return false
+  if (!span || !frameOk(body, span)) return false
   const row = parsedObject(body.slice(span.start, span.end))
   return !row || !hasPlanKey(row)
 }

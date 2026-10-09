@@ -846,7 +846,7 @@ test('stacked headings and a heading above a blank line stay', () => {
     '',
   )
   const later = 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it'
-  assert.equal(dropUntracedNumbers(later, ''), 'Eight-hour checklist\nMid shift\n2. Log it')
+  assert.equal(dropUntracedNumbers(later, ''), 'Mid shift\n2. Log it')
 })
 
 test('schedule words do not empty an answer', () => {
@@ -970,7 +970,10 @@ test('heading scope follows one level rule', () => {
     ['hash-nest', '# Eight-hour checklist\n## Shift start\n1. Open the valve.', '# Eight-hour checklist\n## Shift start\n1. Open the valve.'],
     ['pumps-empty-above-chillers', 'PUMPS\nCHILLERS\n- Open the valve.', 'PUMPS\nCHILLERS\n- Open the valve.'],
     ['emptied-bold', '**Pumps**\nThe count is 99.\n**Alarms**\nThe count is 88.', ''],
-    ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Eight-hour checklist\nMid shift\n2. Log it'],
+    ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Mid shift\n2. Log it'],
+    ['d24-chillers-after-blank', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\n\nCHILLERS\n- CH-01', 'CHILLERS\n- CH-01'],
+    ['d24-mid-after-content', 'Shift start\nFirst hour\n1. Check pump 3 (untraced)\nMid shift\n2. ok', 'Mid shift\n2. ok'],
+    ['d24-emptied-hash', '## Pumps\nThe count is 99.\nCHILLERS\n- Open the valve.', 'CHILLERS\n- Open the valve.'],
     ['d16-shift-start', 'Eight-hour checklist\nShift start\n1. Open the valve.', 'Eight-hour checklist\nShift start\n1. Open the valve.'],
     ['d8-sibling-removed', 'PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', 'CHILLERS\n1. Open the valve.'],
     ['d8-empty-leaf', 'PUMPS', ''],

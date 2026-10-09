@@ -45,6 +45,7 @@ export interface ProcessRunOptions {
   cwd?: string
   maxBytes?: number
   killGraceMs?: number
+  onSpawn?: (pid: number) => void
 }
 
 export interface ProcessRunner {
@@ -107,6 +108,7 @@ export const nodeRunner: ProcessRunner = {
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
+      if (child.pid !== undefined) options?.onSpawn?.(child.pid)
       const out: Buffer[] = []
       const err: Buffer[] = []
       let outSize = 0

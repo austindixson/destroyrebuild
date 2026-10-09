@@ -406,43 +406,22 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
-function hashLevel(text: string): number | null {
-  const marks = /^(#{1,6})(?:\s|$)/.exec(text.trim())
-  if (!marks?.[1]) return null
-  return marks[1].length
-}
-
-/** A plain heading sits under every markdown level. Blank lines are not pieces. */
-const PLAIN_LEVEL = 8
-
-function followedByHeading(raw: Piece[], index: number): boolean {
-  const next = raw[index + 1]
-  return !!next && isHeading(next.text)
-}
-
-/** Hash count wins. A heading directly above another heading is one level above it. */
-function headingLevels(raw: Piece[]): number[] {
-  const levels = new Array<number>(raw.length).fill(0)
-  for (let i = raw.length - 1; i >= 0; i -= 1) {
-    const part = raw[i]
-    if (!part || !isHeading(part.text)) continue
-    const hash = hashLevel(part.text)
-    if (hash !== null) {
-      levels[i] = hash
-      continue
-    }
-    const below = levels[i + 1] ?? PLAIN_LEVEL
-    levels[i] = followedByHeading(raw, i) ? below - 1 : PLAIN_LEVEL
-  }
-  return levels
-}
-
-/** Scope runs until the next heading at this level or a higher one. */
-function scopeEnd(raw: Piece[], levels: number[], index: number): number {
-  const level = levels[index] ?? 0
+/**
+ * A parent covers the consecutive headings that follow it before any content.
+ * Blank lines are separators, so they stay inside that group.
+ * The next heading after content ends the scope: a later plain heading,
+ * a blank-line heading, or a CAPS heading.
+ */
+function scopeEnd(raw: Piece[], index: number): number {
+  let seenContent = false
   for (let j = index + 1; j < raw.length; j += 1) {
     const part = raw[j]
-    if (part && isHeading(part.text) && (levels[j] ?? 0) <= level) return j
+    if (!part) continue
+    if (!isHeading(part.text)) {
+      seenContent = true
+      continue
+    }
+    if (seenContent) return j
   }
   return raw.length
 }
@@ -471,13 +450,12 @@ function headingStays(facts: ScopeFacts): boolean {
 }
 
 function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
-  const levels = headingLevels(raw)
   const kept = new Set(keptPieces)
   const stay = new Set<Piece>()
   for (let i = 0; i < raw.length; i += 1) {
     const part = raw[i]
     if (!part || !isHeading(part.text)) continue
-    if (headingStays(scopeFacts(raw, kept, i + 1, scopeEnd(raw, levels, i)))) stay.add(part)
+    if (headingStays(scopeFacts(raw, kept, i + 1, scopeEnd(raw, i)))) stay.add(part)
   }
   return stay
 }
