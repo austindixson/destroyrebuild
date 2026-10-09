@@ -8,14 +8,15 @@
  * draw a bank of 18 yet. The next slice adds lead/lag staging for N=18, then 36.
  */
 
-import type { Actor, PlantController, PlantResult, StopMode, TimeScale, WeatherPreset } from './controller'
+import type { ActionRecord, Actor, PlantController, PlantResult, StopMode, TimeScale, WeatherPreset } from './controller'
 import type { ChillerUnitState, IncidentKind } from './plantSim'
-import { isIncidentKind } from './plantSim'
+import { isIncidentKind } from './plantSim.ts'
 
 export interface ToolResult {
   ok: boolean
   message: string
   snapshot: PlantResult['snapshot']
+  rows?: Record<string, unknown>[]
 }
 
 export interface YorkToolInfo {
@@ -48,6 +49,63 @@ function str(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
+const ACTION_ROWS = 10
+
+function argText(args: unknown): string {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return ''
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') parts.push(`${key}=${value}`)
+  }
+  return parts.length > 0 ? ` ${parts.join(' ')}` : ''
+}
+
+function actionText(row: ActionRecord): string {
+  return `t=${Math.round(row.t)} ${row.actor} ${row.action}${argText(row.args)}`
+}
+
+function plainArgs(args: unknown): Record<string, string | number | boolean> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return {}
+  const out: Record<string, string | number | boolean> = {}
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') out[key] = value
+  }
+  return out
+}
+
+function actionLogMessage(rows: readonly ActionRecord[]): string {
+  const last = rows.slice(-ACTION_ROWS)
+  if (last.length === 0) return 'The action log is empty.'
+  return [`${rows.length} rows.`, ...last.map(actionText)].join('\n')
+}
+
+function actionRows(rows: readonly ActionRecord[]): Record<string, unknown>[] {
+  return rows.slice(-ACTION_ROWS).map((row) => ({
+    t: Math.round(row.t),
+    actor: row.actor,
+    action: row.action,
+    args: plainArgs(row.args),
+  }))
+}
+
+function alarmTexts(controller: PlantController): string[] {
+  const alarms = controller.getAlarms()
+  const lines: string[] = []
+  if (alarms.alarm) lines.push(alarms.alarm)
+  for (const row of alarms.log) {
+    if (row.kind === 'alarm' && row.text !== alarms.alarm) lines.push(row.text)
+  }
+  for (const unit of controller.snapshot.units) {
+    if (unit.mode === 'alarm') lines.push(`${unit.id} mode is alarm.`)
+  }
+  return lines
+}
+
+function alarmMessage(controller: PlantController): string {
+  const lines = alarmTexts(controller)
+  return lines.length > 0 ? lines.join('\n') : 'No active alarm.'
+}
+
 const TOOLS: ToolDef[] = [
   {
     name: 'plant.getSnapshot',
@@ -64,7 +122,7 @@ const TOOLS: ToolDef[] = [
     run: (controller, args) => {
       const since = num(args.sinceT)
       const rows = controller.getActionLog(since ?? undefined)
-      return { ok: true, message: `${rows.length} actions.`, snapshot: controller.snapshot }
+      return { ok: true, message: actionLogMessage(rows), rows: actionRows(rows), snapshot: controller.snapshot }
     },
   },
   {
@@ -73,8 +131,12 @@ const TOOLS: ToolDef[] = [
     description: 'Read the alarm text and the OptiView log.',
     parameters: { type: 'object', properties: {} },
     run: (controller) => {
-      const alarms = controller.getAlarms()
-      return { ok: true, message: alarms.alarm ?? 'No alarm.', snapshot: controller.snapshot }
+      return {
+        ok: true,
+        message: alarmMessage(controller),
+        rows: alarmTexts(controller).map((text) => ({ text })),
+        snapshot: controller.snapshot,
+      }
     },
   },
   {
@@ -279,17 +341,21 @@ const TOOLS: ToolDef[] = [
         if (!id || capacityMw === null || typeof row.running !== 'boolean') {
           return { ok: false, message: 'Each unit needs an id, a run state, and a capacity.', snapshot: controller.snapshot }
         }
-        units.push({ id, running: row.running, capacityMw })
+        units.push({ id, running: row.running, capacityMw: Math.max(0, capacityMw) })
       }
       return fromPlant(controller.configureFleet(units, actor))
     },
   },
 ]
 
+export function yorkToolCatalog(): YorkToolInfo[] {
+  return TOOLS.map(({ name, gate, description, parameters }) => ({ name, gate, description, parameters }))
+}
+
 export function createYorkTools(controller: PlantController): YorkToolbox {
   const byName = new Map(TOOLS.map((tool) => [tool.name, tool]))
   return {
-    list: () => TOOLS.map(({ name, gate, description, parameters }) => ({ name, gate, description, parameters })),
+    list: () => yorkToolCatalog(),
     call: (name, args = {}, actor = 'user') => {
       const tool = byName.get(name)
       if (!tool) return { ok: false, message: 'This trainer has no tool with that name.', snapshot: controller.snapshot }

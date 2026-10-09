@@ -27,6 +27,11 @@ const files = [
   'src/sim/tools.ts',
   'src/sim/troubleMap.ts',
   'src/3d/chillerScene.ts',
+  'src/chat/copy.ts',
+  'src/chat/confirmCopy.ts',
+  'src/chat/panel.ts',
+  'src/chat/loop.ts',
+  '../york-api/src/copy.ts',
   'index.html',
 ]
 

@@ -1,0 +1,12 @@
+# The live York chat process runs on the captain's Mac, not in this service.
+# The static site Caddy proxies /api/york/* to YORK_API_UPSTREAM (Tailscale Funnel).
+# Set YORK_PROXY_SECRET on the static site and on the Mac. See ENV.md.
+# This file remains so an old Railway service root does not advertise CLI pins.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/york/health"

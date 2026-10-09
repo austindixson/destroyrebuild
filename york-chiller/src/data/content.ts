@@ -760,8 +760,9 @@ export const GLOSSARY = {
   'n-plus-1': {
     term: 'N+1',
     aliases: ['N+1'],
-    definition: 'N+1 means one extra unit of capacity beyond the load.',
-    why: 'The spare unit counts only when it is online before you remove a machine.',
+    definition:
+      'N+1 means one extra unit of capacity beyond the load. The spare is every running chiller plus every standby chiller that can start, minus the largest unit.',
+    why: 'Compare that spare capacity with the IT load. N+1 holds when the spare capacity still covers the load.',
   },
   optiview: {
     term: 'OptiView',
