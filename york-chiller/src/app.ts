@@ -124,23 +124,20 @@ function splitValveAlert(text: string): { head: string; body: string } {
 
 function focusedGlossary(scope: Element): string | undefined {
   const active = document.activeElement
-  if (!(active instanceof HTMLElement) || !active.classList.contains('jargon') || !scope.contains(active)) return
-  return active.dataset.glossary
+  return active instanceof HTMLElement && active.classList.contains('jargon') && scope.contains(active)
+    ? active.dataset.glossary
+    : undefined
 }
 
 function writeValveAlert(copy: HTMLElement, text: string) {
   const head = copy.querySelector('#valve-alert-head')
   const body = copy.querySelector('#valve-alert-body')
   if (!head || !body) return
-  if (!text) {
-    head.textContent = ''
-    body.textContent = ''
-    return
-  }
   const glossary = focusedGlossary(copy)
   const parts = splitValveAlert(text)
   head.textContent = parts.head
   body.textContent = parts.body
+  if (!text) return
   linkGlossary(copy)
   if (glossary) copy.querySelector<HTMLElement>(`.jargon[data-glossary="${CSS.escape(glossary)}"]`)?.focus()
 }
