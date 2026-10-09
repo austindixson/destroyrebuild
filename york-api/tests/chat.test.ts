@@ -5,10 +5,10 @@ import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
 import { parseModelPlan } from '../src/parse.ts'
-import { buildPrompt, N_PLUS_ONE_LINE } from '../src/prompt.ts'
+import { buildPrompt, jsonWithin, N_PLUS_ONE_LINE } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
-import { finishAnswer, polishAnswer } from '../src/finish.ts'
+import { finishAnswer, loggableRaw, polishAnswer } from '../src/finish.ts'
 import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
@@ -363,10 +363,10 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /% speed/)
   assert.match(round1.user, /chiller motor current only/)
   assert.match(round1.user, /% open/)
-  assert.equal(promptBytes(round1), 2132)
-  assert.equal(promptBytes(round0), 3357)
-  assert.equal(round1.user.length, 551)
-  assert.equal(round0.user.length, 2002)
+  assert.equal(promptBytes(round1), 2150)
+  assert.equal(promptBytes(round0), 3375)
+  assert.equal(round1.user.length, 569)
+  assert.equal(round0.user.length, 2020)
 })
 
 test('a follow-up prompt keeps the chiller row, differential pressure, hall return, and LCHLT setpoint', () => {
@@ -542,12 +542,17 @@ test('an open case drops trouble and quiz passages', () => {
     { id: 'trainer:trouble:low-flow', title: 'Low flow', href: '/x', text: 'Typical symptoms: Hot hall. Open the bypass valve.' },
     { id: 'trainer:info:trouble-low-flow', title: 'Low flow card', href: '/x', text: 'Open the bypass valve.' },
     { id: 'trainer:quiz:flow', title: 'Flow quiz', href: '/x', text: 'Open the bypass valve.' },
+    { id: 'trainer:info:quiz-q1', title: 'Quiz card', href: '/x', text: 'Open the bypass valve and read full load amps.' },
     { id: 'trainer:glossary:fla', title: 'FLA', href: '/x', text: 'Percent of full load amps on the motor.' },
   ]
   const hidden = searchChunks(rows, 'bypass valve full load amps', 4, true)
   assert.deepEqual(hidden.map((item) => item.id), ['trainer:glossary:fla'])
   const shown = searchChunks(rows, 'bypass valve', 4, false)
   assert.equal(shown.some((item) => item.id.startsWith('trainer:trouble:')), true)
+  const duringQuiz = searchChunks(rows, 'bypass valve full load amps', 4, false, true)
+  assert.equal(duringQuiz.some((item) => item.id.startsWith('trainer:quiz:')), false)
+  assert.equal(duringQuiz.some((item) => item.id.startsWith('trainer:info:quiz-')), false)
+  assert.equal(duringQuiz.some((item) => item.id.startsWith('trainer:glossary:')), true)
 })
 
 test('an open case hides the keyed answer for the trouble questions', () => {
@@ -621,7 +626,9 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
     await finishAnswer(STRAY_ROOT, [], [], { blocksWrites: true }, async () => decline)
     assert.deepEqual(notes, [])
     process.env.YORK_DEBUG_RAW = '1'
-    await finishAnswer(`sk-ant-abcdefghij ${STRAY_ROOT}`, [], [], { blocksWrites: true }, async () => decline)
+    await finishAnswer(`sk-ant-abcdefghij\n${STRAY_ROOT}`, [], [], { blocksWrites: true }, async () => decline)
+    assert.deepEqual(notes, [])
+    await finishAnswer(STRAY_ROOT, [], [], { blocksWrites: true }, async () => decline)
   } finally {
     console.debug = debug
     if (prevClient === undefined) delete process.env.YORK_LOG_CLIENT
@@ -633,18 +640,18 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
   assert.match(logged, /york-api finish raw=/)
   assert.match(logged, /cooling tower/)
   assert.equal(logged.includes('sk-ant-'), false)
-  assert.match(logged, /\[redacted\]/)
+  assert.equal(loggableRaw(`The hall is warm.\nsk-ant-abcdefghij\nOpen the valve.`), 'The hall is warm.\nOpen the valve.')
 })
 
-test('the N+1 fleet sentence keeps prompt numbers the glossary chunk omits', () => {
+test('the N+1 example numbers are not traced on a first-round answer', () => {
   const gloss = 'N+1 means one extra unit of capacity beyond the load. The spare is every running chiller plus every standby chiller that can start, minus the largest unit.'
   const fleet = '17 times 5 MW is 85 MW.'
   assert.equal(dropUntracedNumbers(fleet, gloss), '')
   assert.match(dropUntracedNumbers(fleet, N_PLUS_ONE_LINE), /17 times 5 MW is 85 MW/)
-  const kept = polishAnswer(fleet, [], [], {}, [], N_PLUS_ONE_LINE)
-  assert.match(kept.answer, /17 times 5 MW is 85 MW/)
-  const dropped = polishAnswer(fleet, [], [], {})
-  assert.equal(dropped.answer.includes('85'), false)
+  const dropped = polishAnswer('Hall supply is 80 F.', [], [], { plant: { hallSupplyF: 72 } })
+  assert.equal(dropped.answer, '')
+  const fleetDropped = polishAnswer(fleet, [], [], {})
+  assert.equal(fleetDropped.answer.includes('85'), false)
 })
 
 test('a rewrite drops an added sentence and keeps the restated fact', async () => {
@@ -717,7 +724,7 @@ test('% FLA on a valve, fan, or tower is dropped', () => {
   assert.equal(kept.includes('valve'), false)
   assert.equal(kept.includes('fan'), false)
   assert.equal(kept.includes('tower'), false)
-  const polished = polishAnswer(mixed, [], [], {}, [], '40 80')
+  const polished = polishAnswer(mixed, [], [], { motorFla: 40 })
   assert.match(polished.answer, /motor current is 40% FLA/)
   assert.equal(polished.answer.includes('valve'), false)
   assert.equal(polished.answer.includes('fan'), false)
@@ -759,9 +766,20 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
   assert.equal(dropUntracedNumbers('Heading:\n1. A. 2. B 1.8. 3. C.', ''), 'Heading:\n1. A. 3. C.')
   assert.equal(dropUntracedNumbers('Load. 4.2 MW now. 1. A.', '4.2'), 'Load. 4.2 MW now. 1. A.')
   assert.equal(dropUntracedNumbers('9.5 psi is low. 1. A.', '9.5'), '9.5 psi is low. 1. A.')
+  assert.equal(dropUntracedNumbers('The load is 95MW.', ''), '')
+  assert.equal(dropUntracedNumbers('The offset is -7.', ''), '')
+  assert.equal(dropUntracedNumbers('The band is 118-140.', '118'), '')
+  assert.equal(dropUntracedNumbers('The load is 95MW.', '95'), 'The load is 95MW.')
+  assert.equal(dropUntracedNumbers('The offset is -7.', '-7'), 'The offset is -7.')
+  assert.equal(dropUntracedNumbers('The band is 118-140.', '118 140'), 'The band is 118-140.')
+  assert.equal(dropUntracedNumbers('1. A. 2. B 1.8. Start it later. Reason: r. 3. C.', ''), '1. A. 3. C.')
+  const heading = 'Heading:\n1. Open the valve.'
+  assert.equal(dropMisusedFla(heading), heading)
+  assert.equal(dropUnmatchedQuotes(heading), heading)
+  assert.match(polishAnswer(heading, [], [], {}).answer, /Heading:\n1\. Open the valve\./)
 })
 
-const NUMBER_TOKEN = /(?<![A-Za-z0-9-])\d+(?:\.\d+)?(?![A-Za-z0-9])/g
+const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 
 test('a number token in the output keeps the value it had in the input', () => {
   const cases = [

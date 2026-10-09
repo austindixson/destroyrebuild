@@ -1,12 +1,12 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
 import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
 import { containsSecretMaterial, redactReason } from './leak.ts'
-import { OPEN_DECLINE } from './prompt.ts'
+import { OPEN_DECLINE, withNPlusOne } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
 
 function corpusFor(snapshot: unknown, chunks: Chunk[], toolText: string): string {
-  return `${JSON.stringify(snapshot)}\n${chunks.map((chunk) => chunk.text).join('\n')}\n${toolText}`
+  return `${JSON.stringify(withNPlusOne(snapshot))}\n${chunks.map((chunk) => chunk.text).join('\n')}\n${toolText}`
 }
 
 function toolText(results: ToolResultIn[]): string {
@@ -58,9 +58,19 @@ function restoreDecline(cleaned: string, raw: string, open: boolean): string {
   return [...kept, cleaned].filter((part) => part.length > 0).join(' ')
 }
 
+/** Lines that hold a secret stay out of the debug log. */
+export function loggableRaw(raw: string): string {
+  return raw
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0 && !containsSecretMaterial(line))
+    .join('\n')
+}
+
 function logRaw(raw: string): void {
   if (process.env.YORK_DEBUG_RAW !== '1') return
-  console.debug(`york-api finish raw=${redactReason(raw)}`)
+  const safe = loggableRaw(raw)
+  if (!safe) return
+  console.debug(`york-api finish raw=${redactReason(safe)}`)
 }
 
 type EmptyCode = 'ste-drop' | 'label-only' | 'quote-drop' | 'number-drop' | 'leak' | 'parse'
@@ -167,7 +177,6 @@ export function polishAnswer(
   chunks: Chunk[],
   snapshot: unknown,
   results: ToolResultIn[] = [],
-  extraCorpus = '',
 ): { answer: string; sources: ChatSource[]; empty?: EmptyCode } {
   const allowed = new Set(chunks.map((chunk) => chunk.id))
   const knownCites = citeIds.map((id) => matchedCite(id, allowed)).filter(Boolean)
@@ -175,7 +184,7 @@ export function polishAnswer(
   const cites = stripped.cites.length > 0 ? stripped.cites : knownCites
   const traced = dropUntracedNumbers(
     stripped.text,
-    `${corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results))}\n${extraCorpus}`,
+    corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results)),
   )
   const quoted = dropUnmatchedQuotes(traced)
   const ste = dropSteSentences(dropMisusedFla(quoted))
@@ -193,18 +202,17 @@ export async function finishAnswer(
   snapshot: unknown,
   rewrite: (req: LlmRequest) => Promise<string>,
   results: ToolResultIn[] = [],
-  extraCorpus = '',
 ): Promise<{ answer: string; sources: ChatSource[] }> {
   if (!raw.trim()) {
     logEmpty('parse')
     return { answer: NO_ANSWER, sources: [] }
   }
-  logRaw(raw)
   if (containsSecretMaterial(raw)) {
     logEmpty('leak')
     return { answer: NO_ANSWER, sources: [] }
   }
-  const first = polishAnswer(raw, citeIds, chunks, snapshot, results, extraCorpus)
+  logRaw(raw)
+  const first = polishAnswer(raw, citeIds, chunks, snapshot, results)
   if (first.answer) return first
   logEmpty(first.empty ?? 'parse')
   try {
@@ -225,7 +233,7 @@ export async function finishAnswer(
       logEmpty('parse')
       return { answer: NO_ANSWER, sources: [] }
     }
-    const second = polishAnswer(kept, citeIds, chunks, snapshot, results, extraCorpus)
+    const second = polishAnswer(kept, citeIds, chunks, snapshot, results)
     if (second.answer) return second
     logEmpty(second.empty ?? 'parse')
     return { answer: NO_ANSWER, sources: [] }

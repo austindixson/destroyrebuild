@@ -1,7 +1,9 @@
 import { LIVE_LABEL } from './copy.ts'
 
 const MARKER = /\[(trainer:[a-z0-9:_-]+)\]/gi
-const NUMBER_TOKEN = /(?<![A-Za-z0-9-])\d+(?:\.\d+)?(?![A-Za-z0-9])/g
+const UNIT_ID = /\bCH-\d+\b/gi
+/** A whole number, including 95MW, -7, and each side of 118-140. Unit ids are removed first. */
+const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 
 export function yorkFlaWording(text: string): string {
   return text.replaceAll('%RLA', '% FLA').replaceAll('%TSLA', '% FLA')
@@ -13,9 +15,13 @@ function misusedFla(sentence: string): boolean {
   return sentence.includes('% FLA') && PLANT_PERCENT.test(sentence)
 }
 
+function keepPieces(text: string, keep: (sentence: string) => boolean): string {
+  return joinPieces(splitPieces(text).filter((part) => keep(part.text)))
+}
+
 /** % FLA is motor current. A valve, fan, or tower does not use that unit. */
 export function dropMisusedFla(text: string): string {
-  return sentences(text).filter((sentence) => !misusedFla(sentence)).join(' ')
+  return keepPieces(text, (sentence) => !misusedFla(sentence))
 }
 
 export function stripMarkers(text: string, allowed: Set<string>): { text: string; cites: string[] } {
@@ -58,7 +64,7 @@ function splitPieces(text: string): Piece[] {
 }
 
 function numberTokens(text: string): string[] {
-  return text.match(NUMBER_TOKEN) ?? []
+  return text.replace(UNIT_ID, ' ').match(NUMBER_TOKEN) ?? []
 }
 
 /** A leading "3." or "3. " is a checklist marker, not a live reading. */
@@ -86,17 +92,38 @@ function joinedSteps(parts: Piece[]): Piece[] {
   return out
 }
 
+function numbersKnown(text: string, known: Set<string>): boolean {
+  return checkedNumbers(text).every((num) => known.has(num))
+}
+
+function isStepPiece(steps: Piece[], index: number): boolean {
+  const sentence = steps[index]
+  return !!sentence && STEP_MARKER.test(sentence.text)
+}
+
+/** A dropped step takes every sentence up to the next step marker. */
+function skipDroppedStep(steps: Piece[], index: number): number {
+  let next = index + 1
+  if (!isStepPiece(steps, index)) return next
+  while (next < steps.length && !isStepPiece(steps, next)) next += 1
+  return next
+}
+
 function withoutUntraced(steps: Piece[], known: Set<string>): Piece[] {
   const kept: Piece[] = []
-  for (let i = 0; i < steps.length; i += 1) {
+  let i = 0
+  while (i < steps.length) {
     const sentence = steps[i]
-    if (!sentence) continue
-    if (checkedNumbers(sentence.text).every((num) => known.has(num))) {
-      kept.push(sentence)
+    if (!sentence) {
+      i += 1
       continue
     }
-    const next = steps[i + 1]
-    if (STEP_MARKER.test(sentence.text) && next?.text.startsWith('Reason:')) i += 1
+    if (numbersKnown(sentence.text, known)) {
+      kept.push(sentence)
+      i += 1
+      continue
+    }
+    i = skipDroppedStep(steps, i)
   }
   return kept
 }
@@ -122,7 +149,7 @@ function oddQuotes(sentence: string): boolean {
 
 /** A stray quote mark is an unmatched fragment, not a sentence to keep. */
 export function dropUnmatchedQuotes(text: string): string {
-  return sentences(text).filter((sentence) => !oddQuotes(sentence)).join(' ')
+  return keepPieces(text, (sentence) => !oddQuotes(sentence))
 }
 
 export function dropUntracedNumbers(text: string, corpus: string): string {

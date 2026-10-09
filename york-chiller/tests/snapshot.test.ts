@@ -235,9 +235,12 @@ test('trouble, drill, and quiz views keep their live state', () => {
   assert.equal(match['match.score'], '3/8')
   assert.equal(match['match.best'], 'Best 4/8')
 
-  const quiz = captureScreenSnapshot(screen('quiz', snap)).shown
-  assert.equal(quiz['quiz.place'], '3/10')
-  assert.equal(quiz['quiz.score'], 'Score 1')
+  const quizShot = captureScreenSnapshot(screen('quiz', snap))
+  assert.equal(quizShot.quizOpen, true)
+  assert.equal(quizShot.shown['quiz.place'], '3/10')
+  assert.equal(quizShot.shown['quiz.score'], 'Score 1')
+  assert.equal(captureScreenSnapshot(screen('quiz', snap, { quizDone: true })).quizOpen, false)
+  assert.equal(captureScreenSnapshot(screen('home', snap)).quizOpen, false)
 
   const maint = captureScreenSnapshot(screen('maintenance', snap)).shown
   assert.equal(maint['maint.count'], '2/14')

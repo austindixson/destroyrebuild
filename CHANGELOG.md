@@ -6,6 +6,18 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z
+
+- A number is a whole token after a unit id such as CH-01 is removed. 95MW, -7, and each side of 118-140 are checked.
+- The N+1 example numbers are not a corpus. The server stores the spare count on the snapshot. "Hall supply is 80 F." is dropped when 80 is not a live reading.
+- A dropped step takes every sentence up to the next step marker.
+- The quote filter and the % FLA filter keep the newline in front of a numbered step. A heading on its own line stays apart from that step.
+- Grok startup asks for a streaming JSON tool report and stays off unless that report is "tools":[].
+- Quiz passages stay out while a quiz question is open.
+- The leak check runs before the raw log. A line that contains secret material is withheld.
+- Elapsed time and timed-out tiers come from the server clock.
+- A 12,000-character snapshot cut stays valid JSON, including a fleet of 45 units.
+
 ### 2026-10-09 — YORK-8Y
 
 - A checklist marker is not rewritten. A reading such as 4.2 or 9.5 stays as written. A dropped step still takes its marker and the Reason after it. Gaps in the numbers stay.

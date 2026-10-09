@@ -5,7 +5,7 @@ import type { Inflight } from './inflight.ts'
 import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAILABLE } from './copy.ts'
 import { containsSecretMaterial, publicSecrets, redactReason } from './leak.ts'
 import { finishAnswer } from './finish.ts'
-import { buildPrompt, N_PLUS_ONE_LINE } from './prompt.ts'
+import { buildPrompt } from './prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from './turn.ts'
 import type { ChatRequest, ChatResponse, ChatSource, Chunk, HistoryItem, LlmAnswer, LlmRequest, ToolResultIn } from './types.ts'
 
@@ -13,7 +13,7 @@ export interface ChatDeps {
   ip: string
   now: () => number
   budget: Budget
-  search: (query: string, blocksWrites?: boolean) => Chunk[]
+  search: (query: string, blocksWrites?: boolean, quizOpen?: boolean) => Chunk[]
   complete: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
   signal: AbortSignal
   inflight?: Inflight
@@ -125,6 +125,11 @@ export function readRequest(body: unknown): ChatRequest | null {
   }
 }
 
+function pinnedTier(only: ChatDeps['only']): CliTier | null {
+  if (only) return only
+  return null
+}
+
 function answerBody(answer: string, model: string, sources: ChatSource[], notice?: string): ChatResponse {
   return { status: 'answer', answer, sources, provider: 'local', model, notice }
 }
@@ -142,11 +147,10 @@ async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps
   if (req.snapshot.blocksWrites === true && !planned.answer) {
     return answerBody(CLOCK_BLOCK, llm.model, [], notice)
   }
-  const passages = req.round < 1 ? N_PLUS_ONE_LINE : ''
   const finished = await finishAnswer(planned.answer, planned.cites, chunks, req.snapshot, async (prompt) => {
     const next = await deps.complete(prompt, deps.signal)
     return next.text
-  }, req.toolResults, passages)
+  }, req.toolResults)
   return answerBody(finished.answer, llm.model, finished.sources, notice)
 }
 
@@ -157,9 +161,9 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (process.env.YORK_LOG_CLIENT === '1') console.log(`york-api chat key=${budgetKey(deps.ip)} round=${req.round}`)
   const slot = deps.budget.allow(deps.ip, req.round, deps.now())
   if (!slot.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
-  req.tier = continueTier(req.tier, deps.only ?? null)
+  req.tier = continueTier(req.tier, pinnedTier(deps.only))
   if (req.round > MAX_TOOL_ROUND) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }
-  const chunks = deps.search(req.question, req.snapshot.blocksWrites === true)
+  const chunks = deps.search(req.question, req.snapshot.blocksWrites === true, req.snapshot.quizOpen === true)
   const gate = holdInflight(deps.inflight)
   if (!gate.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
   try {

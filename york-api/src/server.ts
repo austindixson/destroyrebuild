@@ -16,13 +16,64 @@ const chunks = index as Chunk[]
 const MAX_BODY = 200_000
 export const REQUEST_MS = 135_000
 
-/** Time left on the one 135 s window. Later rounds send elapsedMs from the trainer clock. */
+/** Time left on the one 135 s window. The server passes its own elapsedMs. */
 export function chatWindowMs(raw: unknown): number {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return REQUEST_MS
   const value = (raw as Record<string, unknown>).elapsedMs
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return REQUEST_MS
   const elapsed = Math.min(Math.floor(value), REQUEST_MS)
   return REQUEST_MS - elapsed
+}
+
+interface ChatClock {
+  startedAt: number
+  timedOut: string[]
+}
+
+const chatClocks = new Map<string, ChatClock>()
+
+function clockKey(ip: string, row: Record<string, unknown>): string {
+  const question = typeof row.question === 'string' ? row.question : ''
+  return `${ip}\n${question}`
+}
+
+function asRow(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw as Record<string, unknown>
+}
+
+/** Elapsed time and timed-out tiers for this question. Client fields are ignored. */
+export function serverChatClock(ip: string, raw: unknown, now: number): { elapsedMs: number; timedOut: string[] } {
+  const row = asRow(raw)
+  if (!row) return { elapsedMs: 0, timedOut: [] }
+  const round = typeof row.round === 'number' && row.round > 0 ? Math.floor(row.round) : 0
+  const key = clockKey(ip, row)
+  const existing = round > 0 ? chatClocks.get(key) : undefined
+  const clock = existing ?? { startedAt: now, timedOut: [] }
+  if (!existing) chatClocks.set(key, clock)
+  if (chatClocks.size > 100) {
+    const oldest = chatClocks.keys().next().value
+    if (oldest && oldest !== key) chatClocks.delete(oldest)
+  }
+  return { elapsedMs: Math.max(0, now - clock.startedAt), timedOut: [...clock.timedOut] }
+}
+
+export function rememberTimeouts(ip: string, raw: unknown, timedOut: string[]): void {
+  const row = asRow(raw)
+  if (!row) return
+  const clock = chatClocks.get(clockKey(ip, row))
+  if (!clock) return
+  clock.timedOut = timedOut
+}
+
+function applyServerClock(ip: string, raw: unknown, now: number): number {
+  const timing = serverChatClock(ip, raw, now)
+  const row = asRow(raw)
+  if (row) {
+    row.elapsedMs = timing.elapsedMs
+    row.timedOut = timing.timedOut
+  }
+  return chatWindowMs({ elapsedMs: timing.elapsedMs })
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
@@ -65,7 +116,7 @@ export interface YorkServerOptions {
   complete?: (req: LlmRequest, signal: AbortSignal) => Promise<LlmAnswer>
   budget?: Budget
   inflight?: Inflight
-  search?: (query: string, blocksWrites?: boolean) => Chunk[]
+  search?: (query: string, blocksWrites?: boolean, quizOpen?: boolean) => Chunk[]
   proxySecret?: string
 }
 
@@ -122,17 +173,18 @@ async function onChat(
   let abort: { signal: AbortSignal; stop(): void } | undefined
   try {
     const raw = await readJson(req)
-    abort = requestSignal(res, chatWindowMs(raw))
+    abort = requestSignal(res, applyServerClock(ip, raw, Date.now()))
     const result = await handleChat(raw, {
       ip,
       now: () => Date.now(),
       budget,
       inflight,
-      search: options.search ?? ((query, blocksWrites) => searchChunks(chunks, query, 4, blocksWrites === true)),
+      search: options.search ?? ((query, blocksWrites, quizOpen) => searchChunks(chunks, query, 4, blocksWrites === true, quizOpen === true)),
       complete: options.complete ?? ((prompt, signal) => completeWithCascade(prompt, signal, process.env, only)),
       signal: abort.signal,
       only,
     })
+    if ('timedOut' in result.body && Array.isArray(result.body.timedOut)) rememberTimeouts(ip, raw, result.body.timedOut)
     send(res, result.http, result.body)
   } catch {
     send(res, 200, { status: 'unavailable', answer: UNAVAILABLE })

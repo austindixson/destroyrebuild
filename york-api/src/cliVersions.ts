@@ -159,6 +159,24 @@ export async function probeAndLogClis(
   if (platform === 'darwin') await smokeClis(env)
 }
 
+/** Grok startup must report an empty tool list. A filled list fails the check. */
+export function grokToolsEmpty(text: string): boolean {
+  if (/"tools"\s*:\s*\[[^\]]/.test(text)) return false
+  return /"tools"\s*:\s*\[\s*\]/.test(text)
+}
+
+/** The smoke call asks for the tool report. A chat call stays on the text launch. */
+export function grokSmokeArgs(args: string[]): string[] {
+  if (args.includes('--output-format')) return args
+  return [...args, '--output-format', 'streaming-json']
+}
+
+export function grokStartupVerdict(verdict: SmokeVerdict, stdout: string): SmokeVerdict {
+  if (!verdict.ok) return verdict
+  if (grokToolsEmpty(stdout)) return verdict
+  return { ok: false, reason: 'tools' }
+}
+
 /** True when the reply contains the smoke token. Case and surrounding punctuation do not matter. */
 export function smokeAnswerOk(stdout: string): boolean {
   const text = replyText(stdout).replace(/^[\s"'`.,:;!?()[\]{}]+|[\s"'`.,:;!?()[\]{}]+$/g, '')
@@ -223,7 +241,8 @@ async function smokeOne(
     const result = await nodeRunner.run(launch.cmd, launch.args, launch.input, launch.env, controller.signal, { cwd: launch.cwd })
     clearTimeout(timer)
     const timedOut = controller.signal.aborted
-    noteSmoke(env, name, flag, smokeVerdict(result.code, result.stdout, result.stderr, timedOut, budgetMs))
+    const verdict = smokeVerdict(result.code, result.stdout, result.stderr, timedOut, budgetMs)
+    noteSmoke(env, name, flag, name === 'grok' ? grokStartupVerdict(verdict, result.stdout) : verdict)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'error'
     noteSmoke(env, name, flag, { ok: false, reason: redactReason(message) })
@@ -235,7 +254,10 @@ async function smokeOne(
 
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
   const jobs = [
-    smokeOne(env, 'grok', 'YORK_GROK_CLI', (dir) => prepareGrokLaunch(dir, SMOKE_PROMPT, env)),
+    smokeOne(env, 'grok', 'YORK_GROK_CLI', async (dir) => {
+      const launch = await prepareGrokLaunch(dir, SMOKE_PROMPT, env)
+      return { ...launch, args: grokSmokeArgs(launch.args) }
+    }),
     smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env)),
     smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env)),
   ]

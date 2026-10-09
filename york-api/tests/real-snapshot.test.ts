@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { jsonWithin } from '../src/prompt.ts'
 
 function runSnapshot(fault = '') {
   const script = fileURLToPath(new URL('../scripts/real-snapshot.mjs', import.meta.url))
@@ -40,4 +41,18 @@ test('the real snapshot is the trainer capture, including hall-hot at 40 percent
   assert.match(checklist, /real-snapshot\.mjs/)
   assert.match(checklist, /tail -c \+/)
   assert.equal(checklist.includes('~/.ssh/york-canary.txt'), false)
+  const unit = (home.snapshot as { units?: { id: string }[] }).units?.[0]
+  assert.ok(unit)
+  let count = 45
+  let wide: { units: { id: string }[] } = { ...home.snapshot, units: Array.from({ length: count }, () => unit) }
+  while (JSON.stringify(wide).length <= 12_000 && count < 400) {
+    count += 15
+    wide = { ...home.snapshot, units: Array.from({ length: count }, () => unit) }
+  }
+  assert.ok(JSON.stringify(wide).length > 12_000)
+  const cut = jsonWithin(wide)
+  assert.ok(cut.length <= 12_000)
+  const parsed = JSON.parse(cut) as { units: { id: string }[] }
+  assert.ok(parsed.units.length >= 1)
+  assert.equal(parsed.units[0].id, unit.id)
 })

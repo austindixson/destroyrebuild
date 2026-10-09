@@ -53,6 +53,84 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
+const CAN_START = new Set(['lead', 'lag', 'standby'])
+
+function unitRows(snapshot: Record<string, unknown>): Record<string, unknown>[] {
+  const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
+  const listed = Array.isArray(snapshot.units) ? snapshot.units : plant.units
+  return recordList(listed)
+}
+
+function unitCanRun(unit: Record<string, unknown>): boolean {
+  if (unit.running === true) return true
+  return typeof unit.mode === 'string' && CAN_START.has(unit.mode)
+}
+
+/** Available chillers minus the largest unit. The glossary example fleet is not a live number. */
+export function nPlusOneSpare(snapshot: unknown): number {
+  if (!isRecord(snapshot)) return 0
+  const available = unitRows(snapshot).filter(unitCanRun)
+  if (available.length === 0) return 0
+  return available.length - 1
+}
+
+export function withNPlusOne(snapshot: unknown): Record<string, unknown> {
+  const row = isRecord(snapshot) ? snapshot : {}
+  return { ...row, nPlusOneSpare: nPlusOneSpare(row) }
+}
+
+const JSON_LIMIT = 12_000
+
+function arrayWithin(items: unknown[], limit: number): string {
+  let lo = 0
+  let hi = items.length
+  let best = '[]'
+  while (lo <= hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    const text = JSON.stringify(items.slice(0, mid))
+    if (text.length <= limit) {
+      best = text
+      lo = mid + 1
+      continue
+    }
+    hi = mid - 1
+  }
+  return best
+}
+
+function fitChild(kept: Record<string, unknown>, key: string, item: unknown, limit: number): unknown {
+  const room = limit - JSON.stringify({ ...kept, [key]: null }).length + 4
+  if (room < 2) return undefined
+  const parsed = JSON.parse(jsonWithin(item, room)) as unknown
+  const trial = JSON.stringify({ ...kept, [key]: parsed })
+  if (trial.length > limit) return undefined
+  return parsed
+}
+
+function objectWithin(value: Record<string, unknown>, limit: number): string {
+  const kept: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (JSON.stringify({ ...kept, [key]: item }).length <= limit) {
+      kept[key] = item
+      continue
+    }
+    const shrunk = fitChild(kept, key, item, limit)
+    if (shrunk !== undefined) kept[key] = shrunk
+    break
+  }
+  const out = JSON.stringify(kept)
+  return out.length <= limit ? out : '{}'
+}
+
+/** A snapshot cut that still parses. A 45-unit fleet keeps a valid prefix. */
+export function jsonWithin(value: unknown, limit = JSON_LIMIT): string {
+  const text = JSON.stringify(value)
+  if (text.length <= limit) return text
+  if (Array.isArray(value)) return arrayWithin(value, limit)
+  if (!isRecord(value)) return 'null'
+  return objectWithin(value, limit)
+}
+
 function recordList(value: unknown): Record<string, unknown>[] {
   if (!Array.isArray(value)) return []
   const out: Record<string, unknown>[] = []
@@ -102,7 +180,11 @@ function chillerRows(snapshot: Record<string, unknown>, plant: Record<string, un
 /** Follow-up readings. Pressures use chwDpPsi, chwDpTargetPsi, cwDpPsi, and condPsig on each chiller row. */
 function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
   const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
-  const readings: Record<string, unknown> = { units: chillerRows(snapshot, plant), ...numericReadings(plant) }
+  const readings: Record<string, unknown> = {
+    units: chillerRows(snapshot, plant),
+    ...numericReadings(plant),
+    nPlusOneSpare: nPlusOneSpare(snapshot),
+  }
   if (typeof snapshot.blocksWrites === 'boolean') readings.blocksWrites = snapshot.blocksWrites
   if (typeof snapshot.incident === 'string' || snapshot.incident === null) readings.incident = snapshot.incident
   if (typeof plant.alarm === 'string' && plant.alarm.length > 0) readings.alarm = plant.alarm
@@ -110,11 +192,11 @@ function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unk
 }
 
 function snapshotJson(snapshot: Record<string, unknown>): string {
-  return JSON.stringify(snapshot).slice(0, 12000)
+  return jsonWithin(withNPlusOne(snapshot))
 }
 
 function readingsJson(snapshot: Record<string, unknown>): string {
-  return JSON.stringify(readingsSnapshot(snapshot)).slice(0, 12000)
+  return jsonWithin(readingsSnapshot(snapshot))
 }
 
 function toolResultLines(req: ChatRequest, limit: number): string {

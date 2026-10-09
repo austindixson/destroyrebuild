@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { cursorBinIsGrok, probeAndLogClis, smokeVerdict } from '../src/cliVersions.ts'
+import { cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, smokeVerdict } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -18,13 +18,14 @@ import {
   prepareClaudeLaunch,
   prepareCursorLaunch,
   GROK_DISALLOWED_TOOLS,
+  grokArgs,
   grokHomeReadDeny,
   prepareGrokLaunch,
   providerChildEnv,
   replyText,
   timeoutReason,
 } from '../src/providers.ts'
-import { REQUEST_MS, chatWindowMs, yorkOnlyFrom } from '../src/server.ts'
+import { REQUEST_MS, chatWindowMs, rememberTimeouts, serverChatClock, yorkOnlyFrom } from '../src/server.ts'
 import { applySandboxProbe, execTreeUnderHome, launchCommand, macSandboxProfile, probeSandbox, profileDeniesHome } from '../src/sandbox.ts'
 import type { LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -397,10 +398,28 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.ok(shared.grok + shared.claude + shared.cursor + shared.codex <= REQUEST_MS)
   const loop = readFileSync(fileURLToPath(new URL('../../york-chiller/src/chat/loop.ts', import.meta.url)), 'utf8')
   assert.match(loop, /ABORT_MS = 145_000/)
-  assert.match(loop, /elapsedMs/)
+  assert.equal(loop.includes('elapsedMs'), false)
   assert.equal(chatWindowMs({ elapsedMs: 0 }), REQUEST_MS)
   assert.equal(chatWindowMs({ elapsedMs: 80_000 }), 55_000)
   assert.equal(chatWindowMs({ elapsedMs: 200_000 }), 0)
+  const clockBody = { question: 'server clock', round: 0, elapsedMs: 90_000, timedOut: ['claude'] }
+  const opened = serverChatClock('127.0.0.1', clockBody, 1_000)
+  assert.equal(opened.elapsedMs, 0)
+  assert.deepEqual(opened.timedOut, [])
+  rememberTimeouts('127.0.0.1', clockBody, ['grok'])
+  const followed = serverChatClock('127.0.0.1', { question: 'server clock', round: 1, elapsedMs: 0, timedOut: ['cursor'] }, 81_000)
+  assert.equal(followed.elapsedMs, 80_000)
+  assert.deepEqual(followed.timedOut, ['grok'])
+  const answered = smokeVerdict(0, 'YORKOK. {"tools":[]}', '', false, 70_000)
+  assert.deepEqual(grokStartupVerdict(answered, 'YORKOK. {"tools":[]}'), { ok: true, reason: 'answered' })
+  assert.equal(grokToolsEmpty('{"tools":[{"name":"bash"}]}'), false)
+  assert.equal(grokToolsEmpty('{"tools":[]}\n{"tools":[{"name":"bash"}]}'), false)
+  assert.deepEqual(grokStartupVerdict(answered, 'YORKOK.'), { ok: false, reason: 'tools' })
+  assert.deepEqual(grokStartupVerdict({ ok: false, reason: 'exit=1 stderr=' }, ''), { ok: false, reason: 'exit=1 stderr=' })
+  const smokeArgs = grokSmokeArgs(grokArgs('probe'))
+  assert.equal(smokeArgs.at(-2), '--output-format')
+  assert.equal(smokeArgs.at(-1), 'streaming-json')
+  assert.equal(grokArgs('probe').includes('--output-format'), false)
   assert.ok(REQUEST_MS < 145_000)
   const caddy = readFileSync(fileURLToPath(new URL('../../Caddyfile', import.meta.url)), 'utf8')
   assert.match(caddy, /\{http\.request\.header\.X-Real-IP\}/)

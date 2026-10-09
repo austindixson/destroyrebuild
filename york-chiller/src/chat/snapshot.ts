@@ -54,6 +54,7 @@ export interface ScreenSnapshot {
   incident: IncidentKind | null
   chaosLabel: string | null
   blocksWrites: boolean
+  quizOpen: boolean
   optiTab: ScreenInput['optiTab']
   optiLog: string[]
   units: UnitSnapshot[]
@@ -337,6 +338,10 @@ function writesBlocked(input: ScreenInput): boolean {
   return input.view === 'trouble' && !input.troubleDone && !input.troublePicked && input.troubleSeconds > 0
 }
 
+function quizQuestionOpen(input: ScreenInput): boolean {
+  return input.view === 'quiz' && !input.quizDone && input.quizIndex < input.quizTotal
+}
+
 const FRESH_PROGRESS: ProgressState = {
   explored: [],
   plantComplete: false,
@@ -429,6 +434,7 @@ export function captureScreenSnapshot(input: ScreenInput): ScreenSnapshot {
     incident: input.incident,
     chaosLabel: input.chaosLabel,
     blocksWrites: writesBlocked(input),
+    quizOpen: quizQuestionOpen(input),
     optiTab: input.optiTab,
     optiLog: input.optiLog.slice(),
     units: input.snap.units.map((unit) => ({ ...unit })),

@@ -32,13 +32,20 @@ function hidesAnswer(id: string): boolean {
   return FIX_KPI.has(id)
 }
 
-function visibleChunks(chunks: Chunk[], blocksWrites: boolean): Chunk[] {
-  if (!blocksWrites) return chunks
-  return chunks.filter((chunk) => !hidesAnswer(chunk.id))
+const QUIZ_PASSAGE = /^(?:trainer:quiz:|trainer:info:quiz-)/
+
+function hideChunk(id: string, blocksWrites: boolean, quizOpen: boolean): boolean {
+  if (quizOpen && QUIZ_PASSAGE.test(id)) return true
+  if (blocksWrites && hidesAnswer(id)) return true
+  return false
 }
 
-export function searchChunks(chunks: Chunk[], query: string, limit = 4, blocksWrites = false): Chunk[] {
-  const pool = visibleChunks(chunks, blocksWrites)
+function visibleChunks(chunks: Chunk[], blocksWrites: boolean, quizOpen: boolean): Chunk[] {
+  return chunks.filter((chunk) => !hideChunk(chunk.id, blocksWrites, quizOpen))
+}
+
+export function searchChunks(chunks: Chunk[], query: string, limit = 4, blocksWrites = false, quizOpen = false): Chunk[] {
+  const pool = visibleChunks(chunks, blocksWrites, quizOpen)
   const terms = tokens(query)
   if (terms.length === 0) return pool.slice(0, limit)
   return pool
