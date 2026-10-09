@@ -6,6 +6,13 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z10
+
+- A heading level is its # count. A heading directly above another heading, blank lines included, is one level above that heading. It drops when every content piece in that scope was removed, or when it is an empty leaf. It stays when any of that text remains, including text under a sub-heading. "CHECKLIST" stays above "SHIFT START". "EIGHT-HOUR CHECKLIST" stays above "Shift start". A blank line between them still keeps both. "PUMPS" above "CHILLERS" stays when the bullet stays. An emptied "**Pumps**" and "**Alarms**" drop. "Eight-hour checklist" stays when "Shift start" loses its step and "Mid shift" keeps "2. Log it".
+- An unclosed object after a short lead-in asks for JSON again. "Sure." before `{"answer":"A.", "tools": [` is that case. "It said {"answer":"x"}." stays prose.
+- A failed claude check sets YORK_CLAUDE_CLI to unavailable, including when the flag was ready. The key stays present.
+- A restart during the startup check kills cursor helpers that still use the smoke directory and removes that directory.
+
 ### 2026-10-09 — YORK-8Z9
 
 - A reply with one JSON object and 40 characters or less of other text is that object when the object has an "answer" or "tools" key. "Here is my reply:" before a tools object is a tool plan. "Sure." before an answer object is an answer. A longer sentence that quotes a JSON object stays prose. A broken object, or two plan objects, asks for one JSON object again.

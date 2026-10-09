@@ -506,6 +506,16 @@ test('a short lead-in before one JSON object is that object', () => {
   const twice = 'Sure.\n{"answer":"One.","cites":[],"tools":[]}\n{"answer":"Two.","cites":[],"tools":[]}'
   assert.equal(jsonRetryNeeded(twice), true)
   assert.equal(usableModelText(twice), false)
+  const quoted = 'It said {"answer":"x"}.'
+  const inline = parseModelPlan(quoted)
+  assert.equal(inline.validJson, false)
+  assert.equal(inline.answer, quoted)
+  assert.equal(jsonRetryNeeded(quoted), false)
+  assert.equal(usableModelText(quoted), true)
+  const unclosed = 'Sure.\n{"answer":"A.", "tools": ['
+  assert.equal(parseModelPlan(unclosed).validJson, false)
+  assert.equal(jsonRetryNeeded(unclosed), true)
+  assert.equal(usableModelText(unclosed), false)
 })
 
 test('prose that announces a tool is not an answer', async () => {
@@ -951,17 +961,38 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
 
 const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 
+test('heading scope follows one level rule', () => {
+  const rows = [
+    ['d21-caps-stack', 'CHECKLIST\nSHIFT START\n1. Open the valve.', 'CHECKLIST\nSHIFT START\n1. Open the valve.'],
+    ['d21-eight-hour-caps', 'EIGHT-HOUR CHECKLIST\nShift start\n1. Open the valve.', 'EIGHT-HOUR CHECKLIST\nShift start\n1. Open the valve.'],
+    ['blank-line-parent', 'Eight-hour checklist\n\nShift start\n1. Open the valve.', 'Eight-hour checklist\n\nShift start\n1. Open the valve.'],
+    ['bold-parent', '**Pumps**\nCHILLERS\n1. Open the valve.', '**Pumps**\nCHILLERS\n1. Open the valve.'],
+    ['hash-nest', '# Eight-hour checklist\n## Shift start\n1. Open the valve.', '# Eight-hour checklist\n## Shift start\n1. Open the valve.'],
+    ['pumps-empty-above-chillers', 'PUMPS\nCHILLERS\n- Open the valve.', 'PUMPS\nCHILLERS\n- Open the valve.'],
+    ['emptied-bold', '**Pumps**\nThe count is 99.\n**Alarms**\nThe count is 88.', ''],
+    ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Eight-hour checklist\nMid shift\n2. Log it'],
+    ['d16-shift-start', 'Eight-hour checklist\nShift start\n1. Open the valve.', 'Eight-hour checklist\nShift start\n1. Open the valve.'],
+    ['d8-sibling-removed', 'PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', 'CHILLERS\n1. Open the valve.'],
+    ['d8-empty-leaf', 'PUMPS', ''],
+    ['empty-child', 'PUMPS\nFANS', 'PUMPS'],
+    ['d8r-empty-bold', '**Pumps**', ''],
+    ['hour-body', 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.', 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'],
+    ['emptied-parent', 'Eight-hour checklist\nShift start\nThe count is 99.', ''],
+  ] as const
+  for (const [name, raw, out] of rows) assert.equal(dropUntracedNumbers(raw, ''), out, name)
+})
+
 test('an empty heading drops when its section lost its text', () => {
   assert.equal(dropUntracedNumbers('PUMPS', ''), '')
   assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n- Open the valve.', ''), 'CHILLERS\n- Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'PUMPS\nFANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'PUMPS\nCHILLERS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n- Open the valve.', ''), 'PUMPS\nCHILLERS\n- Open the valve.')
   assert.equal(
     dropUntracedNumbers('PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', ''),
     'CHILLERS\n1. Open the valve.',
   )
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), '')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), 'PUMPS')
   assert.equal(dropUntracedNumbers('**Pumps**', ''), '')
   assert.equal(dropUntracedNumbers('**Pumps**\n1. Open the valve.', ''), '**Pumps**\n1. Open the valve.')
   assert.equal(dropUntracedNumbers('**Pumps**\nThe count is 99.', ''), '')

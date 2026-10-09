@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { redactReason } from './leak.ts'
@@ -262,6 +263,100 @@ export function claudeReprobeDelay(attempt: number, reason: string): number {
   return CLAUDE_REPROBE_STEPS_MS[index] ?? CLAUDE_AUTH_REPROBE_MS
 }
 
+type SmokeJob = { dir: string }
+
+const openSmokes = new Set<SmokeJob>()
+let smokeHooked = false
+
+function helperUsesDir(dir: string, pid: number): boolean {
+  const prefix = `${dir}/`
+  try {
+    const cwd = readlinkSync(`/proc/${pid}/cwd`)
+    if (cwd === dir || cwd.startsWith(prefix)) return true
+  } catch {
+    // This pid has no cwd we can read.
+  }
+  try {
+    const cmd = readFileSync(`/proc/${pid}/cmdline`).toString('utf8')
+    if (cmd.includes(dir)) return true
+  } catch {
+    // This pid has already exited.
+  }
+  return false
+}
+
+function killHelpers(dir: string): void {
+  let names: string[] = []
+  try {
+    names = readdirSync('/proc')
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue
+    const helper = Number(name)
+    if (helper === process.pid || !helperUsesDir(dir, helper)) continue
+    try {
+      process.kill(helper, 'SIGKILL')
+    } catch {
+      // The helper has already exited.
+    }
+  }
+}
+
+/** Kills helpers still using a smoke directory, then removes that directory. */
+export function releaseSmokeDir(dir: string, pid?: number): void {
+  if (pid) {
+    try {
+      process.kill(-pid, 'SIGKILL')
+    } catch {
+      // The group is already gone.
+    }
+  }
+  killHelpers(dir)
+  rmSync(dir, { recursive: true, force: true })
+}
+
+function onSmokeStop(): void {
+  stopOpenSmokes()
+  process.exit(143)
+}
+
+function armSmokeStop(): void {
+  if (smokeHooked) return
+  smokeHooked = true
+  process.on('SIGTERM', onSmokeStop)
+  process.on('SIGINT', onSmokeStop)
+}
+
+function disarmSmokeStop(): void {
+  if (openSmokes.size > 0 || !smokeHooked) return
+  process.off('SIGTERM', onSmokeStop)
+  process.off('SIGINT', onSmokeStop)
+  smokeHooked = false
+}
+
+/** A restart during startup finds this directory and clears it. */
+export function holdSmokeDir(dir: string): void {
+  openSmokes.add({ dir })
+  armSmokeStop()
+}
+
+function forgetSmokeDir(dir: string): void {
+  for (const job of openSmokes) {
+    if (job.dir === dir) openSmokes.delete(job)
+  }
+  disarmSmokeStop()
+}
+
+/** Clears every smoke directory still open when a restart arrives. */
+export function stopOpenSmokes(): void {
+  const jobs = [...openSmokes]
+  openSmokes.clear()
+  for (const job of jobs) releaseSmokeDir(job.dir)
+  disarmSmokeStop()
+}
+
 async function smokeOne(
   env: NodeJS.ProcessEnv,
   name: string,
@@ -273,6 +368,7 @@ async function smokeOne(
   const limits = tierBudgetMs(env)
   const budgetMs = limits[name as keyof typeof limits]
   const dir = await mkdtemp(join(tmpdir(), `york-smoke-${name}-`))
+  holdSmokeDir(dir)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(timeoutReason(budgetMs)), budgetMs)
   try {
@@ -291,14 +387,15 @@ async function smokeOne(
     return verdict
   } finally {
     clearTimeout(timer)
-    await rm(dir, { recursive: true, force: true })
+    releaseSmokeDir(dir)
+    forgetSmokeDir(dir)
   }
 }
 
-/** A retry keeps the saved flag. Success with no saved flag sets ready. It does not delete the key. */
+/** A failure sets unavailable. A success keeps a saved value and does not delete the key. */
 export function restoreClaudeFlag(env: NodeJS.ProcessEnv, saved: string | undefined, ok: boolean): void {
   if (!ok) {
-    env.YORK_CLAUDE_CLI = saved ?? 'unavailable'
+    env.YORK_CLAUDE_CLI = 'unavailable'
     return
   }
   env.YORK_CLAUDE_CLI = saved === undefined || saved === 'unavailable' ? 'ready' : saved

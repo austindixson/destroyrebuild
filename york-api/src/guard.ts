@@ -412,84 +412,73 @@ function hashLevel(text: string): number | null {
   return marks[1].length
 }
 
-/** An all-caps label is a peer of the next all-caps label. A phrase heading can be a parent. */
-function capsHeading(text: string): boolean {
-  const plain = text.trim().replace(/[*_]/g, '').replace(/^#{1,6}\s*/, '')
-  return /[A-Z]/.test(plain) && plain === plain.toUpperCase()
+/** A plain heading sits under every markdown level. Blank lines are not pieces. */
+const PLAIN_LEVEL = 8
+
+function followedByHeading(raw: Piece[], index: number): boolean {
+  const next = raw[index + 1]
+  return !!next && isHeading(next.text)
 }
 
-function hashDeeper(parent: string, child: string): boolean | null {
-  const parentHash = hashLevel(parent)
-  const childHash = hashLevel(child)
-  if (parentHash === null || childHash === null) return null
-  return childHash > parentHash
-}
-
-function isParent(part: Piece, next: Piece | undefined): boolean {
-  if (!next || !isHeading(next.text) || /\n\s*\n/.test(part.sep)) return false
-  const deeper = hashDeeper(part.text, next.text)
-  if (deeper !== null) return deeper
-  if (hashLevel(part.text) !== null) return true
-  if (capsHeading(part.text) && capsHeading(next.text)) return false
-  return !capsHeading(part.text)
-}
-
-function bodyEnd(raw: Piece[], start: number, limit: number): number {
-  let end = start
-  while (end < limit) {
-    const piece = raw[end]
-    if (!piece || isHeading(piece.text)) break
-    end += 1
+/** Hash count wins. A heading directly above another heading is one level above it. */
+function headingLevels(raw: Piece[]): number[] {
+  const levels = new Array<number>(raw.length).fill(0)
+  for (let i = raw.length - 1; i >= 0; i -= 1) {
+    const part = raw[i]
+    if (!part || !isHeading(part.text)) continue
+    const hash = hashLevel(part.text)
+    if (hash !== null) {
+      levels[i] = hash
+      continue
+    }
+    const below = levels[i + 1] ?? PLAIN_LEVEL
+    levels[i] = followedByHeading(raw, i) ? below - 1 : PLAIN_LEVEL
   }
-  return end
+  return levels
 }
 
-function bodyKeepsContent(raw: Piece[], kept: Set<Piece>, start: number, end: number): boolean {
+/** Scope runs until the next heading at this level or a higher one. */
+function scopeEnd(raw: Piece[], levels: number[], index: number): number {
+  const level = levels[index] ?? 0
+  for (let j = index + 1; j < raw.length; j += 1) {
+    const part = raw[j]
+    if (part && isHeading(part.text) && (levels[j] ?? 0) <= level) return j
+  }
+  return raw.length
+}
+
+type ScopeFacts = { raw: boolean; kept: boolean; child: boolean }
+
+function scopeFacts(raw: Piece[], kept: Set<Piece>, start: number, end: number): ScopeFacts {
+  const facts: ScopeFacts = { raw: false, kept: false, child: false }
   for (let k = start; k < end; k += 1) {
     const piece = raw[k]
-    if (piece && kept.has(piece) && !isHeading(piece.text)) return true
-  }
-  return false
-}
-
-/** A blank line ends the parent. Later sections inside the span still belong to it. */
-function parentScope(raw: Piece[], index: number, limit: number): number {
-  let j = index + 1
-  while (j < limit) {
-    const prev = raw[j - 1]
-    const piece = raw[j]
-    if (!prev || !piece) break
-    if (isHeading(piece.text) && /\n\s*\n/.test(prev.sep)) return j
-    j += 1
-  }
-  return limit
-}
-
-function markRanges(raw: Piece[], kept: Set<Piece>, start: number, limit: number, stay: Set<Piece>): void {
-  let i = start
-  while (i < limit) {
-    const part = raw[i]
-    if (!part || !isHeading(part.text)) {
-      i += 1
+    if (!piece) continue
+    if (isHeading(piece.text)) {
+      facts.child = true
       continue
     }
-    if (isParent(part, raw[i + 1])) {
-      const scope = parentScope(raw, i, limit)
-      if (bodyKeepsContent(raw, kept, i + 1, scope)) stay.add(part)
-      markRanges(raw, kept, i + 1, scope, stay)
-      i = scope
-      continue
-    }
-    const end = bodyEnd(raw, i + 1, limit)
-    if (bodyKeepsContent(raw, kept, i + 1, end)) stay.add(part)
-    i = end > i ? end : i + 1
+    facts.raw = true
+    if (kept.has(piece)) facts.kept = true
   }
+  return facts
 }
 
-/** A parent stays when any later section under it keeps text. */
+/** Kept text stays, including text under a sub-heading. An empty leaf drops. */
+function headingStays(facts: ScopeFacts): boolean {
+  if (facts.kept) return true
+  return !facts.raw && facts.child
+}
+
 function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
+  const levels = headingLevels(raw)
+  const kept = new Set(keptPieces)
   const stay = new Set<Piece>()
-  markRanges(raw, new Set(keptPieces), 0, raw.length, stay)
+  for (let i = 0; i < raw.length; i += 1) {
+    const part = raw[i]
+    if (!part || !isHeading(part.text)) continue
+    if (headingStays(scopeFacts(raw, kept, i + 1, scopeEnd(raw, levels, i)))) stay.add(part)
+  }
   return stay
 }
 

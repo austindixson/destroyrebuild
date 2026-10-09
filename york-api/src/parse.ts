@@ -145,26 +145,64 @@ function planSpans(text: string): Brace[] {
   return braceObjects(text).filter((span) => PLAN_KEY.test(text.slice(span.start, span.end)))
 }
 
-/** One plan object with a short lead-in. A longer sentence stays prose. */
+function tailText(text: string, span: Brace): string {
+  return text.slice(span.end).trim()
+}
+
+/** A `{` that never closes, when the tail still names answer or tools. */
+function unclosedPlan(text: string): Brace | null {
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escape = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i] ?? ''
+    if (inString) {
+      const next = closeString(ch, escape)
+      inString = next.inString
+      escape = next.escape
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') {
+      if (depth === 0) start = i
+      depth += 1
+      continue
+    }
+    if (ch === '}' && depth > 0) {
+      depth -= 1
+      if (depth === 0) start = -1
+    }
+  }
+  if (depth === 0 || start < 0 || !PLAN_KEY.test(text.slice(start))) return null
+  return { start, end: text.length }
+}
+
+/** One plan object with a short lead-in and no text after it. A quote stays prose. */
 function ledPlan(text: string): Record<string, unknown> | null {
   const spans = planSpans(text)
   if (spans.length !== 1) return null
   const span = spans[0]
-  if (!span || outsideLength(text, span) > OUTSIDE_LIMIT) return null
+  if (!span || outsideLength(text, span) > OUTSIDE_LIMIT || tailText(text, span).length > 0) return null
   const row = parsedObject(text.slice(span.start, span.end))
   if (!row || !hasPlanKey(row)) return null
   return row
 }
 
-/** A broken or repeated plan object with a short lead-in needs another JSON reply. */
+/** A broken, unclosed, or repeated plan object with a short lead-in needs another JSON reply. */
 export function jsonRetryNeeded(text: string): boolean {
   const body = replyBody(text)
   if (wholeObject(body)) return false
-  const spans = planSpans(body)
-  if (spans.length === 0) return false
-  if (spans.length > 1) return true
-  const span = spans[0]
-  if (!span || outsideLength(body, span) > OUTSIDE_LIMIT) return false
+  const open = unclosedPlan(body)
+  const closed = planSpans(body)
+  if (closed.length > 1) return true
+  if (open && closed.length > 0) return true
+  if (open) return outsideLength(body, open) <= OUTSIDE_LIMIT
+  const span = closed[0]
+  if (!span || outsideLength(body, span) > OUTSIDE_LIMIT || tailText(body, span).length > 0) return false
   const row = parsedObject(body.slice(span.start, span.end))
   return !row || !hasPlanKey(row)
 }

@@ -986,6 +986,38 @@ test('two plan objects in one reply are asked once more', async () => {
   }
 })
 
+test('an unclosed JSON lead-in is asked once more', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 135_000)
+  const seen: string[] = []
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  let calls = 0
+  const fixed = '{"answer":"The hall is stable.","cites":[],"tools":[]}'
+  try {
+    const result = await cascade(
+      [
+        adapter('grok', GROK_MODEL, async (item) => {
+          calls += 1
+          seen.push(item.user)
+          return calls === 1 ? 'Sure.\n{"answer":"A.", "tools": [' : fixed
+        }, true, 65_000),
+      ],
+      req,
+      controller.signal,
+    )
+    assert.equal(calls, 2)
+    assert.equal(result.text, fixed)
+    assert.match(seen[1] ?? '', /The last reply was prose/)
+    assert.match(lines.join('\n'), /reask reason=prose/)
+  } finally {
+    console.log = log
+  }
+})
+
 test('a short JSON lead-in is accepted without a reask', async () => {
   const controller = new AbortController()
   stampDeadline(controller.signal, Date.now() + 135_000)

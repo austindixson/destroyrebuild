@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,7 +8,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, recoverGrok, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverGrok, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -799,13 +800,13 @@ test('a claude retry keeps the YORK_CLAUDE_CLI setting', () => {
   restoreClaudeFlag(ready, 'ready', true)
   assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
   restoreClaudeFlag(ready, 'ready', false)
-  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
+  assert.equal(ready.YORK_CLAUDE_CLI, 'unavailable')
   assert.equal(Object.hasOwn(ready, 'YORK_CLAUDE_CLI'), true)
   const custom: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'local' }
   restoreClaudeFlag(custom, 'local', true)
   assert.equal(custom.YORK_CLAUDE_CLI, 'local')
   restoreClaudeFlag(custom, 'local', false)
-  assert.equal(custom.YORK_CLAUDE_CLI, 'local')
+  assert.equal(custom.YORK_CLAUDE_CLI, 'unavailable')
   const unset: NodeJS.ProcessEnv = {}
   restoreClaudeFlag(unset, undefined, true)
   assert.equal(unset.YORK_CLAUDE_CLI, 'ready')
@@ -815,6 +816,43 @@ test('a claude retry keeps the YORK_CLAUDE_CLI setting', () => {
   const down: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
   restoreClaudeFlag(down, 'unavailable', true)
   assert.equal(down.YORK_CLAUDE_CLI, 'ready')
+})
+
+test('a restart clears cursor helpers and the smoke directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
+  const pidFile = join(dir, 'helper.pid')
+  const child = spawn(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.env.PIDFILE, String(process.pid)); setInterval(() => {}, 1000);'], {
+    cwd: dir,
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, PIDFILE: pidFile },
+  })
+  child.unref()
+  try {
+    for (let i = 0; i < 50 && !existsSync(pidFile); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    assert.ok(pid > 0)
+    holdSmokeDir(dir)
+    stopOpenSmokes()
+    assert.equal(existsSync(dir), false)
+    let state = 'gone'
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8')
+      state = /^State:\s+(\S)/m.exec(status)?.[1] ?? 'gone'
+    } catch {
+      state = 'gone'
+    }
+    assert.equal(state === 'gone' || state === 'Z', true)
+  } finally {
+    stopOpenSmokes()
+    if (existsSync(pidFile)) {
+      const stray = Number(readFileSync(pidFile, 'utf8'))
+      try { process.kill(stray, 'SIGKILL') } catch { /* already gone */ }
+    }
+    if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('grok smoke retries once and reprobes on the claude backoff', async () => {
