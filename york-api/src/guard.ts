@@ -124,32 +124,57 @@ function shown(value: number, places: number): string {
   return (Math.round(value * factor) / factor).toFixed(places)
 }
 
-const EQUATION_SOURCE = String.raw`(?<![\d.])(-?\d+(?:\.\d+)?)\s*([+-])\s*(-?\d+(?:\.\d+)?)\s*=\s*(-?\d+(?:\.\d+)?)`
+const NUM = String.raw`[-\u2212]?\d+(?:\.\d+)?`
+const EQUATION_SOURCE = String.raw`(?<![\d.])(${NUM})\s*([+\-\u2212*\u00d7/\u00f7])\s*(${NUM})\s*=\s*(${NUM})`
 
-type Work = { left: string; op: '+' | '-'; right: string; result: string }
+type Op = '+' | '-' | '*' | '/'
+type Work = { left: string; op: Op; right: string; result: string }
 
-function isOp(op: string | undefined): op is '+' | '-' {
-  return op === '+' || op === '-'
+function canonNum(token: string): string {
+  return token.replaceAll('\u2212', '-')
+}
+
+function asOp(op: string | undefined): Op | null {
+  switch (op) {
+    case '+':
+      return '+'
+    case '-':
+    case '\u2212':
+      return '-'
+    case '*':
+    case '\u00d7':
+      return '*'
+    case '/':
+    case '\u00f7':
+      return '/'
+    default:
+      return null
+  }
 }
 
 function readWork(match: RegExpMatchArray): Work | null {
   const left = match[1]
-  const op = match[2]
+  const op = asOp(match[2])
   const right = match[3]
   const result = match[4]
-  if (!left || !isOp(op) || !right || !result) return null
+  if (!left || !op || !right || !result) return null
   return { left, op, right, result }
 }
 
 function workValue(row: Work): number | null {
-  const left = Number(row.left)
-  const right = Number(row.right)
+  const left = Number(canonNum(row.left))
+  const right = Number(canonNum(row.right))
   if (!Number.isFinite(left) || !Number.isFinite(right)) return null
   switch (row.op) {
     case '+':
       return left + right
     case '-':
       return left - right
+    case '*':
+      return left * right
+    case '/':
+      if (right === 0) return null
+      return left / right
     default: {
       const unexpected: never = row.op
       return unexpected
@@ -159,20 +184,21 @@ function workValue(row: Work): number | null {
 
 /** The result keeps at least as many decimal places as either input. */
 function workIsRight(row: Work, known: Set<string>): number | null {
-  if (!known.has(row.left) || !known.has(row.right)) return null
+  if (!known.has(canonNum(row.left)) || !known.has(canonNum(row.right))) return null
   const value = workValue(row)
   if (value === null) return null
   const places = decimalPlaces(row.result)
   if (places < decimalPlaces(row.left) || places < decimalPlaces(row.right)) return null
-  if (row.result !== shown(value, places)) return null
+  if (canonNum(row.result) !== shown(value, places)) return null
   return value
 }
 
 function coversToken(token: string, result: string, value: number): boolean {
-  if (token === result) return true
+  const shownToken = canonNum(token)
+  if (shownToken === canonNum(result)) return true
   const places = decimalPlaces(token)
   if (places < decimalPlaces(result)) return false
-  return token === shown(value, places)
+  return shownToken === shown(value, places)
 }
 
 function equationMatches(text: string): RegExpMatchArray[] {
@@ -260,10 +286,13 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
+/** Body is the text before the next heading. A later section does not count. */
 function sectionHasBody(parts: Piece[], index: number): boolean {
   for (let j = index + 1; j < parts.length; j += 1) {
     const piece = parts[j]
-    if (piece && !isHeading(piece.text)) return true
+    if (!piece) continue
+    if (isHeading(piece.text)) return false
+    return true
   }
   return false
 }
@@ -313,6 +342,27 @@ function dropEmptyHeadings(parts: Piece[]): Piece[] {
   return out
 }
 
+type DropStyle = 'span' | 'bullet-sentence'
+
+function resumeAt(steps: Piece[], index: number, style: DropStyle): number {
+  const origin = steps[index]
+  if (style === 'bullet-sentence' && origin && BULLET.test(origin.text)) return index + 1
+  return skipDroppedStep(steps, index)
+}
+
+/** The next kept sentence in a bullet keeps the marker when the first sentence drops. */
+function graftBullet(steps: Piece[], index: number, keep: (text: string) => boolean): void {
+  const origin = steps[index]
+  if (!origin || !BULLET.test(origin.text)) return
+  const end = skipDroppedStep(steps, index)
+  for (let j = index + 1; j < end; j += 1) {
+    const piece = steps[j]
+    if (!piece || isListMarker(piece.text) || !keep(piece.text)) continue
+    if (!piece.text.startsWith('- ')) piece.text = `- ${piece.text}`
+    return
+  }
+}
+
 function carryBreak(kept: Piece[], steps: Piece[], resume: number): void {
   const last = kept[kept.length - 1]
   const bridge = steps[resume - 1]
@@ -321,7 +371,7 @@ function carryBreak(kept: Piece[], steps: Piece[], resume: number): void {
   last.sep = bridge.sep
 }
 
-function selectPieces(steps: Piece[], keep: (text: string) => boolean): Piece[] {
+function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: DropStyle): Piece[] {
   const kept: Piece[] = []
   let i = 0
   while (i < steps.length) {
@@ -336,7 +386,8 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean): Piece[] 
       continue
     }
     if (!isListMarker(sentence.text)) graftLineLabel(steps, i, keep)
-    const resume = skipDroppedStep(steps, i)
+    if (style === 'bullet-sentence') graftBullet(steps, i, keep)
+    const resume = resumeAt(steps, i, style)
     carryBreak(kept, steps, resume)
     i = resume
   }
@@ -344,8 +395,8 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean): Piece[] 
 }
 
 /** Keep the separators, including a newline after a period. A dropped step takes its marker. */
-export function dropKeptPieces(text: string, keep: (sentence: string) => boolean): string {
-  const kept = dropEmptyHeadings(selectPieces(joinedSteps(splitPieces(text)), keep))
+export function dropKeptPieces(text: string, keep: (sentence: string) => boolean, style: DropStyle = 'span'): string {
+  const kept = dropEmptyHeadings(selectPieces(joinedSteps(splitPieces(text)), keep, style))
   return joinPieces(kept)
 }
 
@@ -368,9 +419,47 @@ function oddQuotes(sentence: string): boolean {
   return count % 2 === 1
 }
 
+function quoteCount(text: string): number {
+  let count = 0
+  for (const ch of text) if (ch === '"') count += 1
+  return count
+}
+
+function quoteGroupEnd(steps: Piece[], index: number): number {
+  const origin = steps[index]
+  if (origin && BULLET.test(origin.text)) return skipDroppedStep(steps, index)
+  let next = index + 1
+  while (next < steps.length) {
+    const prev = steps[next - 1]
+    if (!prev || prev.sep.includes('\n')) break
+    next += 1
+  }
+  return next
+}
+
+/** A balanced line or bullet keeps a quote that opens in one sentence and closes in the next. */
+function excusedQuotes(steps: Piece[]): Set<string> {
+  const excused = new Set<string>()
+  let i = 0
+  while (i < steps.length) {
+    const end = quoteGroupEnd(steps, i)
+    let count = 0
+    for (let j = i; j < end; j += 1) count += quoteCount(steps[j]?.text ?? '')
+    if (count % 2 === 0) {
+      for (let j = i; j < end; j += 1) {
+        const text = steps[j]?.text ?? ''
+        if (quoteCount(text) % 2 === 1) excused.add(text)
+      }
+    }
+    i = Math.max(end, i + 1)
+  }
+  return excused
+}
+
 /** A stray quote mark is an unmatched fragment, not a sentence to keep. */
 export function dropUnmatchedQuotes(text: string): string {
-  return dropKeptPieces(text, (sentence) => !oddQuotes(sentence))
+  const excused = excusedQuotes(joinedSteps(splitPieces(text)))
+  return dropKeptPieces(text, (sentence) => excused.has(sentence) || !oddQuotes(sentence))
 }
 
 export function sentencePieces(text: string): Piece[] {
@@ -383,7 +472,7 @@ export function joinSentencePieces(parts: Piece[]): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known))
+  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known), 'bullet-sentence')
 }
 
 export function labelLiveNumbers(text: string): string {

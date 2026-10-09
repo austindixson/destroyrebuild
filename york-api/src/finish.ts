@@ -152,7 +152,12 @@ function dropOrphanReasons(source: string, cleaned: string): string {
     }
     const index = findFrom(sourceSentences, part.text, cursor)
     cursor = index + 1
-    if (reasonKept(sourceSentences, index, kept)) out.push(part)
+    if (reasonKept(sourceSentences, index, kept)) {
+      out.push(part)
+      continue
+    }
+    const last = out[out.length - 1]
+    if (last && part.sep.includes('\n')) last.sep = part.sep
   }
   return joinSentencePieces(out)
 }

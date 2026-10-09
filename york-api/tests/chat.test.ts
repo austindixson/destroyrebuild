@@ -10,6 +10,7 @@ import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { finishAnswer, loggableRaw, polishAnswer } from '../src/finish.ts'
 import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
+import { steHits } from '../src/steRuntime.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -784,7 +785,7 @@ test('stacked headings and a heading above a blank line stay', () => {
   assert.equal(dropUntracedNumbers(stacked, ''), stacked)
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\nShift start\n1. Open the valve.', ''),
-    'Eight-hour checklist\nShift start\n1. Open the valve.',
+    'Shift start\n1. Open the valve.',
   )
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
@@ -816,14 +817,14 @@ test('schedule labels stay and a hall reading is still checked', () => {
 })
 
 test('a heading and a bullet drop together, and a lone next-line command follows its step', () => {
-  assert.equal(dropUntracedNumbers('HEADING\n- The count is 9. The spare follows.', ''), '')
+  assert.equal(dropUntracedNumbers('HEADING\n- The count is 9. The spare follows.', ''), 'HEADING\n- The spare follows.')
   assert.equal(
     dropUntracedNumbers('HEADING\n- The count is 9. The spare follows.\n- Open the valve.', ''),
-    'HEADING\n- Open the valve.',
+    'HEADING\n- The spare follows.\n- Open the valve.',
   )
   assert.equal(
     dropUntracedNumbers('HEADING\n- The count is 9.\nThe spare follows.\n\nThe hall is warm.', ''),
-    'HEADING\n\nThe hall is warm.',
+    'HEADING\n- The spare follows.\n\nThe hall is warm.',
   )
   assert.equal(
     dropUntracedNumbers('1. A.\n2. The count is 9.\nStart it later.\n3. C.', ''),
@@ -903,6 +904,62 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
 })
 
 const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
+
+test('an empty heading stops at the next heading', () => {
+  assert.equal(dropUntracedNumbers('PUMPS', ''), '')
+  assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
+})
+
+test('a heading or label is exempt from the STE passive check', () => {
+  assert.deepEqual(steHits('WHAT WAS DONE (from the OptiView log)'), [])
+  assert.deepEqual(steHits('What was done:'), [])
+  assert.equal(steHits('The valve was closed by the operator.').includes('passive'), true)
+  const title = polishAnswer('WHAT WAS DONE (from the OptiView log)\nOpen the valve.', [], [], {})
+  assert.match(title.answer, /WHAT WAS DONE \(from the OptiView log\)/)
+  assert.match(title.answer, /Open the valve/)
+  const moved = polishAnswer('What was done: the valve was closed by the operator. Open the spare.', [], [], {})
+  assert.match(moved.answer, /What was done: Open the spare\./)
+  assert.equal(moved.answer.includes('closed'), false)
+})
+
+test('a quoted alarm that spans sentences on one line or bullet stays', () => {
+  const alarm = 'The alarm says "Low head. Check the pump."'
+  assert.equal(dropUnmatchedQuotes(alarm), alarm)
+  const bullet = '- The alarm says "Low head.\nCheck the pump."'
+  assert.equal(dropUnmatchedQuotes(bullet), bullet)
+  assert.equal(dropUnmatchedQuotes('Watch the "valve.'), '')
+})
+
+test('an untraced number drops its bullet sentence and leaves the rest', () => {
+  assert.equal(dropUntracedNumbers('- The count is 99. Open the valve.', ''), '- Open the valve.')
+  assert.equal(dropUntracedNumbers('- Open the valve. The count is 99.', ''), '- Open the valve.')
+})
+
+test('unicode math symbols count in an equation', () => {
+  const minus = 'CHW dP is 7.5 psi below target (17 − 9.5 = 7.5).'
+  assert.equal(dropUntracedNumbers(minus, '17 9.5'), minus)
+  const times = 'The product is 8 (4 × 2 = 8).'
+  assert.equal(dropUntracedNumbers(times, '4 2'), times)
+  const div = 'The ratio is 4 (8 ÷ 2 = 4).'
+  assert.equal(dropUntracedNumbers(div, '8 2'), div)
+  const star = 'The product is 8 (4 * 2 = 8).'
+  assert.equal(dropUntracedNumbers(star, '4 2'), star)
+  const slash = 'The ratio is 4 (8 / 2 = 4).'
+  assert.equal(dropUntracedNumbers(slash, '8 2'), slash)
+})
+
+test('an orphaned Reason keeps the newline before the next step', () => {
+  const lined = polishAnswer(
+    'Open the valve. The valve was closed by the operator. Reason: The spare is ready.\n3. Read the hall.',
+    [],
+    [],
+    {},
+  )
+  assert.match(lined.answer, /Open the valve\.\n3\. Read the hall\./)
+  assert.equal(lined.answer.includes('Reason:'), false)
+  assert.equal(lined.answer.includes('closed'), false)
+})
 
 test('a number token in the output keeps the value it had in the input', () => {
   const cases = [

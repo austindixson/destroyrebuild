@@ -38,14 +38,41 @@ function sentencesOf(text: string): string[] {
     .filter(Boolean)
 }
 
+const TITLE_LIMIT = 8
+
+function coreTitle(sentence: string): string {
+  return sentence.trim().replace(/\s*\([^)]*\)\s*$/, '').trim()
+}
+
+/** A heading or a bare label is not a sentence for the STE check. */
+function bareTitle(sentence: string): boolean {
+  const text = sentence.trim()
+  if (!text || /[.!?]$/.test(text)) return false
+  if (/^\d+\.(?=\s|$)/.test(text) || /^-\s+/.test(text)) return false
+  if (/:\s*\S/.test(text)) return false
+  const core = coreTitle(text)
+  if (/\d/.test(core)) return false
+  const words = core.split(/\s+/).filter(Boolean)
+  return words.length > 0 && words.length <= TITLE_LIMIT
+}
+
+/** The label prefix is not checked again after it moves onto the next sentence. */
+function labelBody(sentence: string): string {
+  const match = /^([^:\n]{1,80}?):\s+/.exec(sentence.trim())
+  if (!match) return sentence
+  return sentence.trim().slice(match[0].length)
+}
+
 function sentenceHits(sentence: string): string[] {
+  if (bareTitle(sentence)) return []
+  const body = labelBody(sentence)
   const hits: string[] = []
-  const count = wordsOf(sentence).length
-  const limit = procedural(sentence) ? 20 : 25
+  const count = wordsOf(body).length
+  const limit = procedural(body) ? 20 : 25
   if (count > limit) hits.push('length')
-  if (CONTRACTION.test(sentence)) hits.push('contraction')
-  if (PASSIVE.test(sentence)) hits.push('passive')
-  const lower = sentence.toLowerCase()
+  if (CONTRACTION.test(body)) hits.push('contraction')
+  if (PASSIVE.test(body)) hits.push('passive')
+  const lower = body.toLowerCase()
   for (const phrase of PHRASALS) {
     if (lower.includes(phrase)) hits.push('phrasal')
   }

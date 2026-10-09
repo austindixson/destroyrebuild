@@ -364,11 +364,54 @@ export function codexLaunchArgsOk(args: string[]): boolean {
   )
 }
 
-/** A reply that is only reasoning_effort tags is an empty failure. */
+function lineObject(line: string): Record<string, unknown> | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+  try {
+    const whole = JSON.parse(trimmed) as unknown
+    if (whole && typeof whole === 'object' && !Array.isArray(whole)) return whole as Record<string, unknown>
+  } catch {
+    // A prefixed line can still hold one object.
+  }
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  try {
+    const embedded = JSON.parse(trimmed.slice(start, end + 1)) as unknown
+    if (embedded && typeof embedded === 'object' && !Array.isArray(embedded)) return embedded as Record<string, unknown>
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** The last JSON object in a stream. Earlier events stay out of the check. */
+export function finalReplyObject(text: string): Record<string, unknown> | null {
+  const lines = text.split(/\r?\n/)
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const parsed = lineObject(lines[i] ?? '')
+    if (parsed) return parsed
+  }
+  return null
+}
+
+function streamReply(text: string): string | null {
+  const objects: Record<string, unknown>[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const parsed = lineObject(line)
+    if (parsed) objects.push(parsed)
+  }
+  const last = objects.length >= 2 ? objects[objects.length - 1] : null
+  return last ? JSON.stringify(last) : null
+}
+
+/** A reply that is only reasoning_effort tags is an empty failure. A stream uses its final JSON object. */
 export function replyText(stdout: string): string {
   const text = stdout.trim()
   if (!text) return ''
   if (/^(?:\s*<reasoning_effort>\s*\d*\s*<\/reasoning_effort>\s*)+$/i.test(text)) return ''
+  const streamed = streamReply(text)
+  if (streamed !== null) return streamed
   return text
 }
 
@@ -571,9 +614,13 @@ function requestEnv(env: NodeJS.ProcessEnv, dir: string, extra: NodeJS.ProcessEn
   return dropKeys(childEnv(env, { ...extra, PWD: dir }), drop)
 }
 
-/** Exit code plus the first stderr line. Stdout is omitted so the prompt stays out of the log. */
-export function failureReason(code: number, stderr: string): string {
-  return `exit=${code} stderr=${redactReason(stderr)}`
+/** Exit code, the first stderr line, and the first stdout line when stderr is empty. */
+export function failureReason(code: number | null, stderr: string, stdout = ''): string {
+  const err = redactReason(stderr)
+  const out = redactReason(stdout)
+  const head = `exit=${code ?? 'null'} stderr=${err}`
+  if (!out || out === err) return head
+  return `${head} stdout=${out}`
 }
 
 /** The abort reason for a tier timer. A budget kill logs this string. */
@@ -600,7 +647,7 @@ async function runLaunch(launch: CliLaunch, signal: AbortSignal, run: ProcessRun
     throw new Error('aborted')
   }
   if (result.code !== 0) {
-    const reason = failureReason(result.code, result.stderr)
+    const reason = failureReason(result.code, result.stderr, result.stdout)
     console.log(`york-api cli launch failed reason=${redactReason(reason)}`)
     throw new Error(reason)
   }

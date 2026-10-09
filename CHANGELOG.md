@@ -6,6 +6,17 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z5
+
+- An empty heading is judged only up to the next heading. "PUMPS" with nothing under it is dropped. A later section does not keep that heading. "Eight-hour checklist" above "Shift start" is dropped. "Hour 0 to 1" still counts as body because it contains digits.
+- A heading or a bare label is exempt from the STE sentence filter. "WHAT WAS DONE (from the OptiView log)" and "What was done:" stay. When a label moves onto the next sentence, the label itself is not checked again. "The valve was closed by the operator." is still dropped.
+- Quote marks balance across a whole line or bullet. A multi-sentence quoted alarm stays. An unmatched quote on its own is still dropped.
+- An untraced number inside a bullet drops that sentence. The bullet marker moves onto the next kept sentence. A numbered step still drops the whole step when its first sentence fails.
+- An equation accepts a Unicode minus and the operators ×, ÷, *, and /.
+- An orphaned Reason keeps the newline before the next step.
+- Grok startup reads the tools list and the smoke token from the final reply JSON. An earlier stream event does not decide the check.
+- A claude exit with empty stderr logs stdout and the exit code. A probe every 60 seconds marks claude ready again when it recovers.
+
 ### 2026-10-09 — YORK-8Z4
 
 - A plain label line keeps its label on the next kept sentence of that line. "Chilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig, return 52 psig." keeps "Chilled-water loop" with the supply sentence. A line whose sentences are all dropped loses the label too.

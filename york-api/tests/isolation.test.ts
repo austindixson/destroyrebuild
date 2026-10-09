@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, smokeVerdict } from '../src/cliVersions.ts'
+import { cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, smokeVerdict } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -22,6 +22,7 @@ import {
   grokHomeReadDeny,
   prepareGrokLaunch,
   providerChildEnv,
+  failureReason,
   replyText,
   timeoutReason,
 } from '../src/providers.ts'
@@ -414,6 +415,10 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.deepEqual(grokStartupVerdict(answered, 'YORKOK. {"tools":[]}'), { ok: true, reason: 'answered' })
   assert.equal(grokToolsEmpty('{"tools":[{"name":"bash"}]}'), false)
   assert.equal(grokToolsEmpty('{"tools":[]}\n{"tools":[{"name":"bash"}]}'), false)
+  assert.equal(grokToolsEmpty('{"tools":[{"name":"bash"}]}\n{"result":"YORKOK","tools":[]}'), true)
+  assert.equal(replyText('{"text":"YORKOK"}\n{"result":"no","tools":[]}').includes('YORKOK'), false)
+  assert.equal(smokeVerdict(0, '{"text":"YORKOK"}\n{"result":"no","tools":[]}', '', false, 1_000).ok, false)
+  assert.equal(failureReason(1, '', 'Error: not logged in'), 'exit=1 stderr= stdout=Error: not logged in')
   assert.deepEqual(grokStartupVerdict(answered, 'YORKOK.'), { ok: false, reason: 'tools' })
   assert.deepEqual(grokStartupVerdict({ ok: false, reason: 'exit=1 stderr=' }, ''), { ok: false, reason: 'exit=1 stderr=' })
   const smokeArgs = grokSmokeArgs(grokArgs('probe'))
@@ -659,6 +664,36 @@ test('fast guard: a budget kill logs timeout budget, not an empty exit', async (
   const joined = lines.join('\n')
   assert.match(joined, /york-api cli launch failed reason=timeout budget=15000/)
   assert.equal(joined.includes('exit=1 stderr='), false)
+})
+
+test('claude exit 1 with empty stderr logs stdout, and a later probe marks claude ready', async () => {
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    await assert.rejects(
+      () => completeClaude(req, new AbortController().signal, {
+        async run() {
+          return { code: 1, stdout: 'Error: not logged in', stderr: '' }
+        },
+      }, { PATH: process.env.PATH, HOME: '/tmp' }),
+      /exit=1/,
+    )
+  } finally {
+    console.log = log
+  }
+  const joined = lines.join('\n')
+  assert.match(joined, /exit=1/)
+  assert.match(joined, /stdout=Error: not logged in/)
+  const env: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
+  const still = await recoverClaude(env, async () => ({ ok: false, reason: 'exit=1 stderr= stdout=Error: not logged in' }))
+  assert.equal(still, false)
+  assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
+  const back = await recoverClaude(env, async () => ({ ok: true, reason: 'answered' }))
+  assert.equal(back, true)
+  assert.equal(env.YORK_CLAUDE_CLI, 'ready')
 })
 
 test('fast guard: a client abort logs aborted, not exit=1', async () => {
