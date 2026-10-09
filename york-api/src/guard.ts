@@ -28,6 +28,19 @@ function numberTokens(text: string): string[] {
   return text.match(NUMBER_TOKEN) ?? []
 }
 
+function oddQuotes(sentence: string): boolean {
+  let count = 0
+  for (const ch of sentence) {
+    if (ch === '"') count += 1
+  }
+  return count % 2 === 1
+}
+
+/** A stray quote mark is an unmatched fragment, not a sentence to keep. */
+export function dropUnmatchedQuotes(text: string): string {
+  return sentences(text).filter((sentence) => !oddQuotes(sentence)).join(' ')
+}
+
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
   const kept = sentences(text).filter((sentence) => numberTokens(sentence).every((num) => known.has(num)))

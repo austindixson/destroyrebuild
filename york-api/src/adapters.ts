@@ -19,8 +19,8 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 75_000
-export const CLAUDE_BUDGET_MS = 10_000
+export const GROK_BUDGET_MS = 70_000
+export const CLAUDE_BUDGET_MS = 15_000
 export const CURSOR_BUDGET_MS = 50_000
 export const CODEX_BUDGET_MS = 10_000
 
@@ -32,10 +32,10 @@ export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number
   return Math.max(0, Math.floor(left))
 }
 
-/** Codex off is 75/10/50, equal to the 135 s server deadline. Codex on is 65/10/50/10. */
+/** Codex off is 70/15/50. Codex on takes 10 s from grok: 60/15/50/10. Both fit in 135 s. */
 export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
-    return { grok: 65_000, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
+    return { grok: 60_000, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
   }
   return { grok: GROK_BUDGET_MS, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
 }

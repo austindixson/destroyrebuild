@@ -51,11 +51,21 @@ function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
   return [claude, ...adapters.slice(0, index), ...adapters.slice(index + 1)]
 }
 
+/** A last tier starts on the time left when at least this much remains. */
+export const LAST_TIER_FLOOR_MS = 40_000
+
+/** The last enabled tier runs on the time left when that remainder is at least 40 s. */
+function lastTierRuns(later: Adapter[], left: number): boolean {
+  if (later.some((item) => item.enabled())) return false
+  return left >= LAST_TIER_FLOOR_MS
+}
+
 function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, round: number | undefined): boolean {
   if ((round ?? 0) >= 1) return false
   const budget = adapter.budgetMs
   if (!budget) return false
   const left = remainingMs(signal)
+  if (lastTierRuns(later, left)) return false
   const skip = adapter.id === 'claude'
     ? skipClaude(later, left, budget)
     : left < budget || leavesCursorShort(adapter, later, left)

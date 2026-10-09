@@ -8,7 +8,8 @@ import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
-import { dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
+import { finishAnswer, polishAnswer } from '../src/finish.ts'
+import { dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -233,6 +234,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /State only a value that the snapshot, the tool results, or the passages show/)
   assert.match(prompt.system, /Passage symptoms are examples, not live readings/)
   assert.match(prompt.system, /State a live value only from the snapshot or the tool results/)
+  assert.match(prompt.system, /IT load 4\.2 MW/)
+  assert.match(prompt.system, /Do not write a raw field name such as itLoadMw/)
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
   assert.match(prompt.user, /standby units that can start/)
   assert.match(prompt.user, /Subtract the largest unit/)
@@ -245,8 +248,7 @@ test('the example shows one tool object and says to leave tools empty', () => {
     { question: 'q', previousQuestions: [], history: [], snapshot: { blocksWrites: true }, round: 0, toolResults: [] },
     [],
   )
-  assert.match(openCase.system, /decline in one sentence/)
-  assert.match(openCase.system, /on-screen readings and the pick/)
+  assert.match(openCase.system, /I cannot give the answer while the case is open\. Check the readings on screen, then make your pick\./)
   assert.equal(openCase.openCase, true)
   assert.equal(prompt.system.includes('"tools":[]'), false)
   const follow = buildPrompt(
@@ -441,6 +443,48 @@ test('an open case hides the keyed answer for the trouble questions', () => {
     assert.equal(shown.some((item) => item.id === 'trainer:info:chaos-high-head'), true)
     assert.equal(shown.some((item) => item.id === 'trainer:info:kpi-head'), true)
   }
+})
+
+const STRAY_ROOT = 'The cooling tower cannot reject enough heat." Work from the pick...'
+
+test('an unmatched quote fragment is dropped and an open case keeps the decline', async () => {
+  assert.equal(dropUnmatchedQuotes(STRAY_ROOT), '')
+  const decline = 'I cannot give the answer while the case is open. Check the readings on screen, then make your pick.'
+  const mixed = `${decline} ${STRAY_ROOT}`
+  const polished = polishAnswer(mixed, [], [], { blocksWrites: true })
+  assert.match(polished.answer, /I cannot give the answer while the case is open\./)
+  assert.match(polished.answer, /Check the readings on screen, then make your pick\./)
+  assert.equal(polished.answer.includes('cooling tower'), false)
+  assert.equal(polished.answer.includes('"'), false)
+  const alone = polishAnswer(STRAY_ROOT, [], [], { blocksWrites: true })
+  assert.equal(alone.answer, '')
+  let called = false
+  const finished = await finishAnswer(STRAY_ROOT, [], [], { blocksWrites: true }, async () => {
+    called = true
+    return decline
+  })
+  assert.equal(called, true)
+  assert.match(finished.answer, /I cannot give the answer while the case is open\./)
+  assert.equal(finished.answer.includes('cooling tower'), false)
+  const prev = process.env.YORK_LOG_CLIENT
+  process.env.YORK_LOG_CLIENT = '1'
+  const notes: string[] = []
+  const debug = console.debug
+  console.debug = (msg?: unknown) => {
+    notes.push(String(msg))
+  }
+  try {
+    await finishAnswer(`sk-ant-abcdefghij ${STRAY_ROOT}`, [], [], { blocksWrites: true }, async () => decline)
+  } finally {
+    console.debug = debug
+    if (prev === undefined) delete process.env.YORK_LOG_CLIENT
+    else process.env.YORK_LOG_CLIENT = prev
+  }
+  const logged = notes.join('\n')
+  assert.match(logged, /york-api finish raw=/)
+  assert.match(logged, /cooling tower/)
+  assert.equal(logged.includes('sk-ant-'), false)
+  assert.match(logged, /\[redacted\]/)
 })
 
 test('unit ids are not live numbers and corpus checks use number tokens', () => {

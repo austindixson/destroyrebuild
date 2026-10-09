@@ -1,5 +1,7 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
-import { dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
+import { dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
+import { redactReason } from './leak.ts'
+import { OPEN_DECLINE } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
 
@@ -33,6 +35,34 @@ function dropSteSentences(text: string): string {
     .join(' ')
 }
 
+const DECLINE_SENTENCES = OPEN_DECLINE.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter((part) => part.length > 0)
+
+function caseOpen(snapshot: unknown): boolean {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return false
+  return (snapshot as Record<string, unknown>).blocksWrites === true
+}
+
+function sentenceList(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter((sentence) => sentence.length > 0)
+}
+
+/** An open case keeps the decline when the model wrote it. Other filters must not drop it. */
+function restoreDecline(cleaned: string, raw: string, open: boolean): string {
+  if (!open) return cleaned
+  const have = new Set(sentenceList(cleaned))
+  const kept = DECLINE_SENTENCES.filter((sentence) => raw.includes(sentence) && !have.has(sentence))
+  if (kept.length === 0) return cleaned
+  return [...kept, cleaned].filter((part) => part.length > 0).join(' ')
+}
+
+function logRaw(raw: string): void {
+  if (process.env.YORK_LOG_CLIENT !== '1') return
+  console.debug(`york-api finish raw=${redactReason(raw)}`)
+}
+
 function withoutLabel(text: string): string {
   return text
     .split(/(?<=[.!?])\s+/)
@@ -56,7 +86,11 @@ export function polishAnswer(
     stripped.text,
     corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results)),
   )
-  const clear = labelLiveNumbers(dropSteSentences(traced))
+  const clear = restoreDecline(
+    labelLiveNumbers(dropSteSentences(dropUnmatchedQuotes(traced))),
+    raw,
+    caseOpen(snapshot),
+  )
   if (!withoutLabel(clear)) return { answer: '', sources: [] }
   return { answer: clear, sources: sourcesFor(cites, chunks) }
 }
@@ -70,6 +104,7 @@ export async function finishAnswer(
   results: ToolResultIn[] = [],
 ): Promise<{ answer: string; sources: ChatSource[] }> {
   if (!raw.trim()) return { answer: NO_ANSWER, sources: [] }
+  logRaw(raw)
   const first = polishAnswer(raw, citeIds, chunks, snapshot, results)
   if (first.answer) return first
   try {

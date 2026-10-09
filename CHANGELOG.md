@@ -6,6 +6,15 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Q
+
+- The last enabled tier runs when at least 40 s remain. The 135 s cap and the process-group kill stay. Grok plus claude plus that floor is 125 s.
+- Round 0 gives grok 70 s and claude 15 s. With Codex on, grok is 60 s. Run 12 left cursor 49,503 ms after a 75 s grok timeout and a 10 s claude timeout, so cursor never started.
+- An open case tells the model to reply with "I cannot give the answer while the case is open. Check the readings on screen, then make your pick."
+- A sentence with an unmatched quote is dropped. An open case keeps that decline when the model wrote it.
+- `YORK_LOG_CLIENT=1` logs the raw model text at debug level with tokens removed.
+- The prompt asks for a plain label such as "IT load 4.2 MW".
+
 ### 2026-10-09 — YORK-8P
 
 - Round 0 skips claude only when the time left is under claude's budget. A full cursor slot does not skip claude.
@@ -88,7 +97,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - The service does not use a provider API key.
 - Codex runs only when `YORK_CODEX=1`.
 - The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
-- Round 0 gives grok 75 s, claude 10 s, and cursor 50 s. Every round shares the time left on one 135 s window.
+- Round 0 gives grok 70 s, claude 15 s, and cursor 50 s. The last tier still runs when at least 40 s remain. Every round shares the time left on one 135 s window.
 - The server stops the request at 135 s.
 - The trainer stops at 145 s. Caddy waits 155 s.
 - Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.

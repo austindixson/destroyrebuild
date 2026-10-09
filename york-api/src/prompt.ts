@@ -7,6 +7,7 @@ const SYSTEM = [
   'Passage symptoms are examples, not live readings. State a live value only from the snapshot or the tool results.',
   'Do not add a plant fact that those sources omit.',
   'Call every live number a trainer-model value.',
+  'Name a live value in plain words, such as "IT load 4.2 MW". Do not write a raw field name such as itLoadMw.',
   'Use % FLA. Do not use %RLA or %TSLA.',
   'Use short active sentences. Do not use contractions.',
   'Do not invent a manual, a form number, or a page number.',
@@ -20,7 +21,9 @@ const SYSTEM = [
   'Do not request a plant change while blocksWrites is true.',
 ].join(' ')
 
-const OPEN_CASE = 'Case is open. If asked for the answer or the root cause, decline in one sentence. Point to the on-screen readings and the pick.'
+export const OPEN_DECLINE = 'I cannot give the answer while the case is open. Check the readings on screen, then make your pick.'
+
+const OPEN_CASE = `If asked for the answer or the root cause, reply with only this text: "${OPEN_DECLINE}"`
 
 function toolLines(): string {
   return Object.keys(TOOL_GATES)

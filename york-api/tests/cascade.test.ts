@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { buildAdapters } from '../src/adapters.ts'
-import { cascade, type Adapter } from '../src/cascade.ts'
+import { LAST_TIER_FLOOR_MS, cascade, type Adapter } from '../src/cascade.ts'
 import { stampDeadline } from '../src/deadline.ts'
 import { resetHolds, tryHold } from '../src/slots.ts'
 import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, roundBudgetMs, tierBudgetMs } from '../src/adapters.ts'
@@ -68,15 +68,17 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(grok.includes('-p'), false)
   assert.equal(grokLaunchArgsOk(grok), true)
   assert.equal(grokLaunchArgsOk(['-p']), false)
-  assert.equal(GROK_BUDGET_MS, 75_000)
-  assert.equal(CLAUDE_BUDGET_MS, 10_000)
+  assert.equal(GROK_BUDGET_MS, 70_000)
+  assert.equal(CLAUDE_BUDGET_MS, 15_000)
   assert.equal(CURSOR_BUDGET_MS, 50_000)
   assert.equal(CODEX_BUDGET_MS, 10_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= 135_000)
+  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + LAST_TIER_FLOOR_MS < 135_000)
+  assert.equal(LAST_TIER_FLOOR_MS, 40_000)
   const off = tierBudgetMs({})
-  assert.deepEqual(off, { grok: 75_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
+  assert.deepEqual(off, { grok: 70_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
   const on = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.deepEqual(on, { grok: 65_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
+  assert.deepEqual(on, { grok: 60_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
   assert.ok(on.grok + on.claude + on.cursor + on.codex <= 135_000)
   const runner = {
     async run() {
@@ -85,7 +87,7 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   }
   const adapters = buildAdapters({ YORK_SANDBOX: 'ready' }, runner)
   assert.deepEqual(adapters.map((item) => item.id), ['grok', 'claude', 'cursor', 'codex'])
-  assert.equal(adapters[0]?.budgetMs, 75_000)
+  assert.equal(adapters[0]?.budgetMs, 70_000)
   assert.equal(adapters[2]?.budgetMs, 50_000)
   assert.equal(adapters[0]?.limit, 2)
   assert.equal(adapters[1]?.limit, 3)
@@ -308,6 +310,63 @@ test('claude is skipped only when the time left is under its budget', async () =
   }
   assert.deepEqual(calls, [])
   assert.match(lines.join('\n'), /york-api cli claude skipped reason=budget remaining=/)
+})
+
+test('cursor runs when 49503 ms remain and it is the last tier', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 49_503)
+  const calls: string[] = []
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const result = await cascade(
+      [
+        adapter('grok', GROK_MODEL, async () => {
+          calls.push('grok')
+          return 'The hall is stable.'
+        }, true, GROK_BUDGET_MS),
+        adapter('claude', 'claude-haiku-5-5', async () => {
+          calls.push('claude')
+          throw new Error('timeout budget=15000')
+        }, true, CLAUDE_BUDGET_MS),
+        adapter('cursor', 'auto', async () => {
+          calls.push('cursor')
+          return 'The hall is stable.'
+        }, true, CURSOR_BUDGET_MS),
+      ],
+      req,
+      controller.signal,
+    )
+    assert.equal(result.provider, 'cursor')
+    assert.equal(calls.includes('cursor'), true)
+    assert.equal(calls.includes('grok'), false)
+  } finally {
+    console.log = log
+  }
+  assert.equal(lines.join('\n').includes('cursor skipped'), false)
+})
+
+test('the last tier stays skipped when fewer than 40 s remain', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 39_000)
+  const calls: string[] = []
+  await assert.rejects(
+    () => cascade(
+      [
+        adapter('cursor', 'auto', async () => {
+          calls.push('cursor')
+          return 'The hall is stable.'
+        }, true, CURSOR_BUDGET_MS),
+      ],
+      req,
+      controller.signal,
+    ),
+    /no provider/,
+  )
+  assert.deepEqual(calls, [])
 })
 
 test('an open case calls claude before grok', async () => {
