@@ -9,7 +9,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 ### 2026-10-09 — YORK-8Z4
 
 - A plain label line keeps its label on the next kept sentence of that line. "Chilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig, return 52 psig." keeps "Chilled-water loop" with the supply sentence. A line whose sentences are all dropped loses the label too.
-- A number that equals the sum or the difference of two traced numbers stays, rounded to the digits the answer shows. 17 and 9.5 allow 7.5 and 26.5. The prompt tells the model to state only a target that the data shows.
+- A computed number stays only when the same sentence shows the equation, both inputs trace to the data, and the arithmetic is right. "CHW dP is 7.5 psi below target (17 - 9.5 = 7.5)." stays. A bare 7.5 is dropped. Wrong arithmetic is dropped. The prompt states this rule.
 - An untraced number drops the sentence that holds it. The rest of the step stays, unless that sentence is the step's first sentence.
 - Stacked headings keep the top heading. "Eight-hour checklist" stays above "Hour 0 to 1" and above "Shift start".
 - Hour 4, After 6 hours, Every 4 h, Hours 0-2, At hour 8, and Within 2 hours are schedule labels. An answer that uses only those labels stays.

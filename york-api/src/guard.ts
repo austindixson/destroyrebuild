@@ -124,38 +124,84 @@ function shown(value: number, places: number): string {
   return (Math.round(value * factor) / factor).toFixed(places)
 }
 
-function matchesPair(token: string, left: number, right: number): boolean {
-  const places = decimalPlaces(token)
-  const sum = shown(left + right, places)
-  const down = shown(left - right, places)
-  const up = shown(right - left, places)
-  return token === sum || token === down || token === up
+const EQUATION_SOURCE = String.raw`(?<![\d.])(-?\d+(?:\.\d+)?)\s*([+-])\s*(-?\d+(?:\.\d+)?)\s*=\s*(-?\d+(?:\.\d+)?)`
+
+type Work = { left: string; op: '+' | '-'; right: string; result: string }
+
+function isOp(op: string | undefined): op is '+' | '-' {
+  return op === '+' || op === '-'
 }
 
-/** A sum or difference of two traced numbers, at the precision the answer shows. */
-function isDerived(token: string, values: number[]): boolean {
-  for (let i = 0; i < values.length; i += 1) {
-    for (let j = i + 1; j < values.length; j += 1) {
-      const left = values[i]
-      const right = values[j]
-      if (left === undefined || right === undefined) continue
-      if (matchesPair(token, left, right)) return true
+function readWork(match: RegExpMatchArray): Work | null {
+  const left = match[1]
+  const op = match[2]
+  const right = match[3]
+  const result = match[4]
+  if (!left || !isOp(op) || !right || !result) return null
+  return { left, op, right, result }
+}
+
+function workValue(row: Work): number | null {
+  const left = Number(row.left)
+  const right = Number(row.right)
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
+  switch (row.op) {
+    case '+':
+      return left + right
+    case '-':
+      return left - right
+    default: {
+      const unexpected: never = row.op
+      return unexpected
     }
+  }
+}
+
+/** The result keeps at least as many decimal places as either input. */
+function workIsRight(row: Work, known: Set<string>): number | null {
+  if (!known.has(row.left) || !known.has(row.right)) return null
+  const value = workValue(row)
+  if (value === null) return null
+  const places = decimalPlaces(row.result)
+  if (places < decimalPlaces(row.left) || places < decimalPlaces(row.right)) return null
+  if (row.result !== shown(value, places)) return null
+  return value
+}
+
+function coversToken(token: string, result: string, value: number): boolean {
+  if (token === result) return true
+  const places = decimalPlaces(token)
+  if (places < decimalPlaces(result)) return false
+  return token === shown(value, places)
+}
+
+function equationMatches(text: string): RegExpMatchArray[] {
+  return [...text.matchAll(new RegExp(EQUATION_SOURCE, 'g'))]
+}
+
+/** A sum or difference stays only when this sentence shows that equation. */
+function equationAllows(text: string, token: string, known: Set<string>): boolean {
+  for (const match of equationMatches(text)) {
+    const row = readWork(match)
+    if (!row) continue
+    const value = workIsRight(row, known)
+    if (value === null) continue
+    if (coversToken(token, row.result, value)) return true
   }
   return false
 }
 
-function tracedValues(known: Set<string>): number[] {
-  const out: number[] = []
-  for (const token of known) {
-    const value = Number(token)
-    if (Number.isFinite(value)) out.push(value)
+function badEquation(text: string, known: Set<string>): boolean {
+  for (const match of equationMatches(text)) {
+    const row = readWork(match)
+    if (row && workIsRight(row, known) === null) return true
   }
-  return out
+  return false
 }
 
-function numbersKnown(text: string, known: Set<string>, values: number[]): boolean {
-  return checkedNumbers(text).every((num) => known.has(num) || isDerived(num, values))
+function numbersKnown(text: string, known: Set<string>): boolean {
+  if (badEquation(text, known)) return false
+  return checkedNumbers(text).every((num) => known.has(num) || equationAllows(text, num, known))
 }
 
 function isListMarker(text: string): boolean {
@@ -337,8 +383,7 @@ export function joinSentencePieces(parts: Piece[]): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  const values = tracedValues(known)
-  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known, values))
+  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known))
 }
 
 export function labelLiveNumbers(text: string): string {

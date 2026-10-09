@@ -366,8 +366,10 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /Do not invent a new target or a setpoint/)
   assert.match(round0.system, /State only a target that the data shows/)
   assert.match(round1.system, /State only a target that the data shows/)
-  assert.equal(promptBytes(round1), 2233)
-  assert.equal(promptBytes(round0), 3458)
+  assert.match(round0.system, /computed number may appear only with its work shown/)
+  assert.match(round0.system, /17 - 9\.5 = 7\.5/)
+  assert.equal(promptBytes(round1), 2442)
+  assert.equal(promptBytes(round0), 3667)
   assert.equal(round1.user.length, 569)
   assert.equal(round0.user.length, 2020)
 })
@@ -765,10 +767,11 @@ test('a loop label stays on the next kept sentence', () => {
   assert.equal(dropUntracedNumbers('Loops.\nChilled-water loop: valve at 99. Supply is 98.', ''), 'Loops.')
 })
 
-test('a sum or difference of two traced numbers stays, and a later bad sentence drops alone', () => {
-  assert.equal(dropUntracedNumbers('The gap is 7.5 psi.', '17 9.5'), 'The gap is 7.5 psi.')
-  assert.equal(dropUntracedNumbers('The total is 26.5.', '17 9.5'), 'The total is 26.5.')
-  assert.equal(dropUntracedNumbers('The gap is 7.5 psi.', '17'), '')
+test('a computed number stays only with a correct equation in the same sentence', () => {
+  const good = 'CHW dP is 7.5 psi below target (17 - 9.5 = 7.5).'
+  assert.equal(dropUntracedNumbers(good, '17 9.5'), good)
+  assert.equal(dropUntracedNumbers('The gap is 7.5 psi.', '17 9.5'), '')
+  assert.equal(dropUntracedNumbers('CHW dP is 8.0 psi below target (17 - 9.5 = 8.0).', '17 9.5'), '')
   assert.equal(
     dropUntracedNumbers('1. Open the valve. The count is 99. Reason: the hall is warm.', ''),
     '1. Open the valve. Reason: the hall is warm.',
