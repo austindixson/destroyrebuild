@@ -712,6 +712,44 @@ test('an emptied answer logs a reason code and not the model text', async () => 
   assert.equal(joined.includes('valve'), false)
 })
 
+test('a dropped step does not leave its marker or its Reason', () => {
+  const steps = '4. A. Reason: a. 5. Watch the CW valve at 78% FLA. Reason: b. 6. C.'
+  assert.equal(dropMisusedFla(steps), '4. A. Reason: a. 6. C.')
+  assert.equal(dropUnmatchedQuotes('4. A. Reason: a. 5. Watch the "valve. Reason: b. 6. C.'), '4. A. Reason: a. 6. C.')
+  const polished = polishAnswer(steps, [], [], { valvePct: 78 })
+  assert.match(polished.answer, /^4\. A\. Reason: a\. 6\. C\./)
+  assert.equal(polished.answer.includes('78'), false)
+  assert.equal(polished.answer.includes('5.'), false)
+  assert.equal(polished.answer.includes('Reason: b'), false)
+  const passive = polishAnswer('4. A. Reason: a. 5. The valve is closed by the operator. Reason: b. 6. C.', [], [], {})
+  assert.match(passive.answer, /^4\. A\. Reason: a\. 6\. C\./)
+  assert.equal(passive.answer.includes('closed'), false)
+  assert.equal(passive.answer.includes('Reason: b'), false)
+})
+
+test('a newline after a period stays, and a paragraph after the list stays', () => {
+  const lined = polishAnswer('The hall is warm.\nOpen the valve. Reason: The hall is warm.', [], [], {})
+  assert.match(lined.answer, /^The hall is warm\.\nOpen the valve\. Reason: The hall is warm\./)
+  const keptBreak = polishAnswer(
+    'The hall is warm.\nOpen the valve. Reason: The hall is warm. The valve is closed by the operator. Reason: The spare is ready.',
+    [],
+    [],
+    {},
+  )
+  assert.match(keptBreak.answer, /^The hall is warm\.\nOpen the valve\. Reason: The hall is warm\./)
+  assert.equal(keptBreak.answer.includes('spare is ready'), false)
+  assert.equal(keptBreak.answer.includes('closed'), false)
+  assert.equal(dropUntracedNumbers('4. A. 5. The count is 9.\n\nThe hall is warm.', ''), '4. A.\n\nThe hall is warm.')
+  assert.equal(dropUntracedNumbers('4. A. 5. The count is 9.\nThe hall is warm.', ''), '4. A.\nThe hall is warm.')
+  assert.equal(
+    dropUntracedNumbers('4. A. 5. The count is 9.\nReason: r.\n\nThe hall is warm.', ''),
+    '4. A.\n\nThe hall is warm.',
+  )
+  const afterList = polishAnswer('4. A. 5. The count is 9.\n\nThe hall is warm.', [], [], {})
+  assert.match(afterList.answer, /^4\. A\.\n\nThe hall is warm\./)
+  assert.equal(afterList.answer.includes('9'), false)
+})
+
 test('% FLA on a valve, fan, or tower is dropped', () => {
   const mixed = [
     'The motor current is 40% FLA.',

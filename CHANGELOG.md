@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z2
+
+- A dropped step takes its marker with it. The % FLA filter, the quote filter, and the STE filter use the same step span as the number check. "4. A. Reason: a. 5. Watch the CW valve at 78% FLA. Reason: b. 6. C." becomes "4. A. Reason: a. 6. C."
+- A newline that follows a period stays in the answer.
+- A blank line, or a paragraph that is not part of the step, ends a dropped step. The paragraph after the list stays.
+
 ### 2026-10-09 — YORK-8Z
 
 - A number is a whole token after a unit id such as CH-01 is removed. 95MW, -7, and each side of 118-140 are checked.

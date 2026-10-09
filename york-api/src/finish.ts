@@ -1,5 +1,5 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
-import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
+import { dropKeptPieces, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, joinSentencePieces, labelLiveNumbers, sentencePieces, stripMarkers, yorkFlaWording } from './guard.ts'
 import { containsSecretMaterial, redactReason } from './leak.ts'
 import { OPEN_DECLINE, withNPlusOne } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
@@ -28,11 +28,7 @@ function matchedCite(id: string, allowed: Set<string>): string {
 
 /** One passive or long sentence must not discard the rest of a real answer. */
 function dropSteSentences(text: string): string {
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter((sentence) => sentence.length > 0 && steHits(sentence).length === 0)
-    .join(' ')
+  return dropKeptPieces(text, (sentence) => steHits(sentence).length === 0)
 }
 
 const DECLINE_SENTENCES = OPEN_DECLINE.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter((part) => part.length > 0)
@@ -149,18 +145,18 @@ function reasonKept(sentences: string[], index: number, kept: Set<string>): bool
 function dropOrphanReasons(source: string, cleaned: string): string {
   const sourceSentences = sentenceList(source)
   const kept = new Set(sentenceList(cleaned))
-  const out: string[] = []
+  const out: { text: string; sep: string }[] = []
   let cursor = 0
-  for (const sentence of sentenceList(cleaned)) {
-    if (!isReason(sentence)) {
-      out.push(sentence)
+  for (const part of sentencePieces(cleaned)) {
+    if (!isReason(part.text)) {
+      out.push(part)
       continue
     }
-    const index = findFrom(sourceSentences, sentence, cursor)
+    const index = findFrom(sourceSentences, part.text, cursor)
     cursor = index + 1
-    if (reasonKept(sourceSentences, index, kept)) out.push(sentence)
+    if (reasonKept(sourceSentences, index, kept)) out.push(part)
   }
-  return out.join(' ')
+  return joinSentencePieces(out)
 }
 
 function withoutLabel(text: string): string {

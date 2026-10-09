@@ -15,13 +15,9 @@ function misusedFla(sentence: string): boolean {
   return sentence.includes('% FLA') && PLANT_PERCENT.test(sentence)
 }
 
-function keepPieces(text: string, keep: (sentence: string) => boolean): string {
-  return joinPieces(splitPieces(text).filter((part) => keep(part.text)))
-}
-
 /** % FLA is motor current. A valve, fan, or tower does not use that unit. */
 export function dropMisusedFla(text: string): string {
-  return keepPieces(text, (sentence) => !misusedFla(sentence))
+  return dropKeptPieces(text, (sentence) => !misusedFla(sentence))
 }
 
 export function stripMarkers(text: string, allowed: Set<string>): { text: string; cites: string[] } {
@@ -31,7 +27,7 @@ export function stripMarkers(text: string, allowed: Set<string>): { text: string
     if (!cites.includes(id)) cites.push(id)
     return ''
   })
-  return { text: cleaned.replace(/\s{2,}/g, ' ').trim(), cites }
+  return { text: cleaned.replace(/[^\S\n]{2,}/g, ' ').trim(), cites }
 }
 
 /** A sentence end, or a newline that sits in front of a step marker. */
@@ -101,15 +97,36 @@ function isStepPiece(steps: Piece[], index: number): boolean {
   return !!sentence && STEP_MARKER.test(sentence.text)
 }
 
-/** A dropped step takes every sentence up to the next step marker. */
+/** A blank line, or a later line that is not a Reason, ends the step. */
+function endsStep(prev: Piece, next: Piece): boolean {
+  if (STEP_MARKER.test(next.text)) return true
+  if (/\n\s*\n/.test(prev.sep)) return true
+  if (prev.sep.includes('\n') && !next.text.startsWith('Reason:')) return true
+  return false
+}
+
+/** A dropped step takes its marker and the sentences that belong to it. */
 function skipDroppedStep(steps: Piece[], index: number): number {
   let next = index + 1
   if (!isStepPiece(steps, index)) return next
-  while (next < steps.length && !isStepPiece(steps, next)) next += 1
+  while (next < steps.length) {
+    const prev = steps[next - 1]
+    const piece = steps[next]
+    if (!prev || !piece || endsStep(prev, piece)) break
+    next += 1
+  }
   return next
 }
 
-function withoutUntraced(steps: Piece[], known: Set<string>): Piece[] {
+function carryBreak(kept: Piece[], steps: Piece[], resume: number): void {
+  const last = kept[kept.length - 1]
+  const bridge = steps[resume - 1]
+  if (!last || !bridge || resume >= steps.length) return
+  if (!bridge.sep.includes('\n')) return
+  last.sep = bridge.sep
+}
+
+function selectPieces(steps: Piece[], keep: (text: string) => boolean): Piece[] {
   const kept: Piece[] = []
   let i = 0
   while (i < steps.length) {
@@ -118,14 +135,21 @@ function withoutUntraced(steps: Piece[], known: Set<string>): Piece[] {
       i += 1
       continue
     }
-    if (numbersKnown(sentence.text, known)) {
+    if (keep(sentence.text)) {
       kept.push(sentence)
       i += 1
       continue
     }
-    i = skipDroppedStep(steps, i)
+    const resume = skipDroppedStep(steps, i)
+    carryBreak(kept, steps, resume)
+    i = resume
   }
   return kept
+}
+
+/** Keep the separators, including a newline after a period. A dropped step takes its marker. */
+export function dropKeptPieces(text: string, keep: (sentence: string) => boolean): string {
+  return joinPieces(selectPieces(joinedSteps(splitPieces(text)), keep))
 }
 
 function joinPieces(parts: Piece[]): string {
@@ -149,13 +173,20 @@ function oddQuotes(sentence: string): boolean {
 
 /** A stray quote mark is an unmatched fragment, not a sentence to keep. */
 export function dropUnmatchedQuotes(text: string): string {
-  return keepPieces(text, (sentence) => !oddQuotes(sentence))
+  return dropKeptPieces(text, (sentence) => !oddQuotes(sentence))
+}
+
+export function sentencePieces(text: string): Piece[] {
+  return splitPieces(text)
+}
+
+export function joinSentencePieces(parts: Piece[]): string {
+  return joinPieces(parts)
 }
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  const kept = withoutUntraced(joinedSteps(splitPieces(text)), known)
-  return joinPieces(kept)
+  return dropKeptPieces(text, (sentence) => numbersKnown(sentence, known))
 }
 
 export function labelLiveNumbers(text: string): string {
