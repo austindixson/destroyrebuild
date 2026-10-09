@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { ComponentId } from '../data/content'
 
 export type HotspotSelect = (id: ComponentId | null) => void
@@ -18,6 +20,25 @@ const MODEL_TIMEOUT_MS = 25_000
 const MODEL_CAP_MS = 180_000
 
 const MB = 1_048_576
+
+/** Desktop and phone both stay under this. A 2× buffer costs four times the pixels. */
+const MAX_PIXEL_RATIO = 1.5
+
+/**
+ * Fleet meshes by CSS pixels. Each band has about 20% hysteresis.
+ * Near is the 51,080 mesh. Mid is the 26,980 mesh. Tiny is the small mesh.
+ * A framed 18-unit extra is about 61–74 CSS pixels, so the tiny band covers that view.
+ */
+const LOD_TINY_IN_PX = 80
+const LOD_TINY_OUT_PX = 96
+const LOD_NEAR_IN_PX = 160
+const LOD_NEAR_OUT_PX = 128
+
+/** 0 = full mesh (focused unit), 1 = near, 2 = mid, 3 = tiny. */
+const LOD_FULL = 0
+const LOD_NEAR = 1
+const LOD_MID = 2
+const LOD_TINY = 3
 
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
 export function plantModelProgressText(loaded: number, total: number): string {
@@ -86,7 +107,7 @@ type PlantTag = 'CHWS' | 'CHWR' | 'CWS' | 'CWR' | 'GLS' | 'GLR' | 'TOWER · WATE
 const TAG_OFFSET: Record<PlantTag, { x: number; y: number }> = {
   CHWS: { x: 28, y: -112 },
   CHWR: { x: 28, y: -56 },
-  CWS: { x: 28, y: 4 },
+  CWS: { x: 112, y: 4 },
   CWR: { x: 28, y: 62 },
   GLS: { x: -72, y: -24 },
   GLR: { x: -72, y: 52 },
@@ -131,6 +152,15 @@ interface Hotspot {
   mesh: THREE.Object3D
 }
 
+interface FleetLayout {
+  cols: number
+  gapX: number
+  gapZ: number
+  originX: number
+  originZ: number
+  baseY: number
+}
+
 export class ChillerScene {
   readonly renderer: THREE.WebGLRenderer
   readonly scene = new THREE.Scene()
@@ -156,7 +186,62 @@ export class ChillerScene {
   private labelValues = new Map<PlantTag, HTMLElement>()
   private labelAnchors = new Map<PlantTag, CSS2DObject>()
   private occlusionAt = 0
-  private fitKey = ''
+  /** Stays set until fadeOccludedLabels actually tests, not merely until it is asked. */
+  private occlusionPending = false
+  private labelsNeedDraw = true
+  private viewW = -1
+  private viewH = -1
+  private viewPx = 0
+  private viewPy = 0
+  private viewPz = 0
+  private viewTx = 0
+  private viewTy = 0
+  private viewTz = 0
+  private readonly geos = new Map<string, THREE.BufferGeometry>()
+  private readonly materialCache = new Map<string, THREE.Material>()
+  private readonly pipeParts = new Map<THREE.Material, THREE.BufferGeometry[]>()
+  private fleetRoot: THREE.Group | null = null
+  private lodNearGeo: THREE.BufferGeometry | null = null
+  private lodMidGeo: THREE.BufferGeometry | null = null
+  private lodTinyGeo: THREE.BufferGeometry | null = null
+  private lodNearMesh: THREE.InstancedMesh | null = null
+  private lodMidMesh: THREE.InstancedMesh | null = null
+  private lodTinyMesh: THREE.InstancedMesh | null = null
+  private focusMesh: THREE.Mesh | null = null
+  private focusMat: THREE.MeshStandardMaterial | null = null
+  private readonly focusBase = new THREE.Color()
+  private fleetKey = ''
+  private fleetRun = ''
+  private fleetCount = 0
+  private fleetFocus = -1
+  private fleetX = new Float32Array(0)
+  private fleetY = new Float32Array(0)
+  private fleetZ = new Float32Array(0)
+  private fleetMats = new Float32Array(0)
+  private fleetShade = new Float32Array(0)
+  private lodLevel = new Uint8Array(0)
+  private lodSlot = new Uint16Array(0)
+  /** Longest axis of one chiller, in world units, for the screen-size LOD test. */
+  private fleetSpan = 1
+  private fleetOffX = 0
+  private fleetOffY = 0
+  private fleetOffZ = 0
+  private fog!: THREE.FogExp2
+  private fogBase = 0.035
+  /** Horizontal span of the lead plant. Larger fleets thin the fog against this. */
+  private plantSpan = 0
+  private groundFit = false
+  private floor!: THREE.Mesh
+  private floorRadius = 14
+  private grid: THREE.GridHelper | null = null
+  private backWall: THREE.Mesh | null = null
+  private headerPipe: THREE.Mesh | null = null
+  private ghost: THREE.Mesh | null = null
+  private readonly fleetMatrix = new THREE.Matrix4()
+  private readonly fleetPos = new THREE.Vector3()
+  private readonly fleetQuat = new THREE.Quaternion()
+  private readonly fleetScale = new THREE.Vector3()
+  private readonly fleetColor = new THREE.Color()
   private readonly occlusionDir = new THREE.Vector3()
   private readonly occlusionAnchor = new THREE.Vector3()
   private readings: SceneReadings | null = null
@@ -194,7 +279,7 @@ export class ChillerScene {
       powerPreference: lowPower ? 'low-power' : 'high-performance',
       failIfMajorPerformanceCaveat: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO))
     this.renderer.setSize(w, h, false)
     this.labelRenderer = new CSS2DRenderer()
     const labels = this.labelRenderer.domElement
@@ -209,13 +294,15 @@ export class ChillerScene {
     this.labelRenderer.setSize(w, h)
     void document.fonts.ready.then(() => {
       if (this.disposed) return
-      this.fitKey = ''
+      this.labelsNeedDraw = true
       this.needsRender = true
     })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = !lowPower
+    // r186 removed PCFSoftShadowMap. PCFShadowMap is the soft filter, at 1024 on desktop.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
 
     this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 80)
     this.camera.position.set(0.4, 5.2, 13)
@@ -238,7 +325,9 @@ export class ChillerScene {
       this.interacting = false
     })
 
-    this.scene.fog = new THREE.FogExp2(0x071018, lowPower ? 0.045 : 0.035)
+    this.fogBase = lowPower ? 0.045 : 0.035
+    this.fog = new THREE.FogExp2(0x071018, this.fogBase)
+    this.scene.fog = this.fog
     this.scene.add(this.root)
     this.buildEnvironment()
     this.ready = this.loadModel()
@@ -250,21 +339,53 @@ export class ChillerScene {
     document.addEventListener('visibilitychange', this.onVisibility)
     this.tick()
     requestAnimationFrame(() => this.onResize())
+    this.publishStatsHook()
+  }
+
+  /** Dev-only handle so a real-app sample can read renderer.info. No effect otherwise. */
+  private publishStatsHook() {
+    if (!import.meta.env.DEV) return
+    if (!new URLSearchParams(window.location.search).has('plantStats')) return
+    const win = window as Window & { __YORK_SCENE?: ChillerScene }
+    win.__YORK_SCENE = this
   }
 
   private segs(hi: number, lo: number) {
-    return this.lowPower ? lo : hi
+    if (this.lowPower) return lo
+    return Math.min(hi, Math.max(lo, 10))
   }
 
   private steel(color: number, metalness = 0.65, roughness = 0.4) {
-    return new THREE.MeshStandardMaterial({ color, metalness, roughness })
+    const key = `${color}:${metalness}:${roughness}`
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshStandardMaterial({ color, metalness, roughness })
+    this.materialCache.set(key, mat)
+    return mat
   }
 
-  private addHotspot(id: ComponentId, mesh: THREE.Object3D) {
+  private geo(key: string, make: () => THREE.BufferGeometry) {
+    const cached = this.geos.get(key)
+    if (cached) return cached
+    const created = make()
+    this.geos.set(key, created)
+    return created
+  }
+
+  private hiddenMat() {
+    const key = 'hidden'
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    this.materialCache.set(key, mat)
+    return mat
+  }
+
+  private addHotspot(id: ComponentId, mesh: THREE.Object3D, cast = true) {
     mesh.userData.componentId = id
     mesh.traverse((c) => {
       c.userData.componentId = id
-      if ((c as THREE.Mesh).isMesh) {
+      if (cast && (c as THREE.Mesh).isMesh) {
         c.castShadow = !this.lowPower
         c.receiveShadow = !this.lowPower
       }
@@ -301,6 +422,7 @@ export class ChillerScene {
     if (!this.lowPower) {
       key.castShadow = true
       key.shadow.mapSize.set(1024, 1024)
+      key.shadow.bias = -0.0004
       key.shadow.camera.near = 1
       key.shadow.camera.far = 30
       key.shadow.camera.left = -10
@@ -311,32 +433,33 @@ export class ChillerScene {
     this.scene.add(key)
     this.scene.add(new THREE.DirectionalLight(0x3ecfcf, 0.35).translateX(-5).translateY(3).translateZ(-4))
 
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(this.lowPower ? 10 : 14, this.segs(48, 24)),
+    this.floorRadius = this.lowPower ? 10 : 14
+    this.floor = new THREE.Mesh(
+      new THREE.CircleGeometry(this.floorRadius, this.segs(48, 24)),
       this.steel(0x121c28, 0.45, 0.55),
     )
-    floor.rotation.x = -Math.PI / 2
-    floor.receiveShadow = !this.lowPower
-    this.scene.add(floor)
+    this.floor.rotation.x = -Math.PI / 2
+    this.floor.receiveShadow = !this.lowPower
+    this.scene.add(this.floor)
 
     if (!this.lowPower) {
-      const grid = new THREE.GridHelper(18, 28, 0x24384c, 0x152433)
-      grid.position.y = 0.01
-      this.scene.add(grid)
+      this.grid = new THREE.GridHelper(18, 28, 0x24384c, 0x152433)
+      this.grid.position.y = 0.01
+      this.scene.add(this.grid)
     }
 
     const wallMat = this.steel(0x1a2736, 0.15, 0.9)
-    const back = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 0.15), wallMat)
-    back.position.set(0, 2.25, -5.8)
-    this.scene.add(back)
+    this.backWall = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 0.15), wallMat)
+    this.backWall.position.set(0, 2.25, -5.8)
+    this.scene.add(this.backWall)
 
-    const chw = new THREE.Mesh(
+    this.headerPipe = new THREE.Mesh(
       new THREE.CylinderGeometry(0.14, 0.14, 12, this.segs(16, 8)),
       this.steel(0x2a9d8f, 0.65, 0.35),
     )
-    chw.rotation.z = Math.PI / 2
-    chw.position.set(0, 3.1, -5.4)
-    this.scene.add(chw)
+    this.headerPipe.rotation.z = Math.PI / 2
+    this.headerPipe.position.set(0, 3.1, -5.4)
+    this.scene.add(this.headerPipe)
 
     if (!this.lowPower) {
       const ghostMat = new THREE.MeshStandardMaterial({
@@ -346,9 +469,9 @@ export class ChillerScene {
         metalness: 0.2,
         roughness: 0.7,
       })
-      const ghost = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.6, 2.2), ghostMat)
-      ghost.position.set(0, 1.1, -3.8)
-      this.scene.add(ghost)
+      this.ghost = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.6, 2.2), ghostMat)
+      this.ghost.position.set(0, 1.1, -3.8)
+      this.scene.add(this.ghost)
     }
 
     const stripe = new THREE.Mesh(
@@ -382,6 +505,7 @@ export class ChillerScene {
   private loadModel() {
     const url = `${import.meta.env.BASE_URL}models/ymc2.glb`
     const gltfLoader = new GLTFLoader()
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder)
     const fileLoader = new THREE.FileLoader(gltfLoader.manager)
     fileLoader.setResponseType('arraybuffer')
     this.modelLoader = fileLoader
@@ -498,6 +622,24 @@ export class ChillerScene {
     win.__YORK_MOUNT_COUNT = (win.__YORK_MOUNT_COUNT ?? 0) + 1
   }
 
+  /** Pull the fleet packages out of the lead so only the full mesh stays visible. */
+  private captureLodMeshes(model: THREE.Object3D) {
+    const drop: THREE.Mesh[] = []
+    model.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      this.keepLodGeo(mesh, drop)
+    })
+    for (const mesh of drop) mesh.removeFromParent()
+  }
+
+  private keepLodGeo(mesh: THREE.Mesh, drop: THREE.Mesh[]) {
+    if (mesh.name === 'lod-near') this.lodNearGeo = mesh.geometry
+    if (mesh.name === 'lod-mid') this.lodMidGeo = mesh.geometry
+    if (mesh.name === 'lod-tiny') this.lodTinyGeo = mesh.geometry
+    if (mesh.name === 'lod-near' || mesh.name === 'lod-mid' || mesh.name === 'lod-tiny') drop.push(mesh)
+  }
+
   /**
    * Fit the Meshy package. POSITION accessor on this GLB is about
    * 0.85 × 1.22 × 1.90, so the shells run on Z and Y is already up.
@@ -507,12 +649,12 @@ export class ChillerScene {
     if (this.disposed) return
     this.noteMountForTest()
     this.model = model
+    this.captureLodMeshes(model)
     model.traverse((c) => {
       const mesh = c as THREE.Mesh
-      if (mesh.isMesh) {
-        mesh.castShadow = false
-        mesh.receiveShadow = !this.lowPower
-      }
+      if (!mesh.isMesh) return
+      mesh.castShadow = false
+      mesh.receiveShadow = !this.lowPower
     })
     model.rotation.y = Math.PI / 2
     model.updateMatrixWorld(true)
@@ -533,8 +675,23 @@ export class ChillerScene {
     this.renderer.toneMappingExposure = 1.45
     this.placeProxyHotspots(fitted)
     this.buildFieldPiping(fitted)
+    if (!this.lowPower) this.addContactShadow(fitted)
     this.framePlant()
     this.needsRender = true
+  }
+
+  /** One invisible box casts the contact shadow. The package mesh receives it. */
+  private addContactShadow(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const caster = new THREE.Mesh(
+      new THREE.BoxGeometry(size.x * 0.9, Math.max(size.y * 0.8, 0.4), size.z * 0.9),
+      this.hiddenMat(),
+    )
+    caster.position.copy(center)
+    caster.castShadow = true
+    caster.receiveShadow = false
+    this.root.add(caster)
   }
 
   /** Fit the camera to the chiller plus both heat sinks. One placement, from the measured bounds. */
@@ -557,39 +714,447 @@ export class ChillerScene {
     this.camera.updateProjectionMatrix()
     this.controls.maxDistance = dist * 2.5
     this.controls.update()
+    this.fitAtmosphere(box)
+  }
+
+  /** Thin the fog and grow the pad once the bank is wider than the lead plant. */
+  private fitAtmosphere(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3())
+    const span = Math.max(size.x, size.z)
+    if (this.plantSpan === 0) this.plantSpan = span
+    const basis = Math.max(this.plantSpan, 1)
+    this.fog.density = this.fogBase * (basis / Math.max(span, basis))
+    if (span <= basis * 1.05) {
+      this.resetGround()
+      return
+    }
+    this.fitGround(span, box.getCenter(new THREE.Vector3()), box)
+  }
+
+  private fitGround(span: number, center: THREE.Vector3, box: THREE.Box3) {
+    this.groundFit = true
+    const cover = Math.max(span + 8, 18)
+    this.floor.scale.setScalar(cover / (this.floorRadius * 2))
+    this.floor.position.set(center.x, 0, center.z)
+    this.replaceGrid(cover, center)
+    this.placeBackdrop(box, center, cover)
+  }
+
+  private replaceGrid(cover: number, center: THREE.Vector3) {
+    if (!this.grid) return
+    this.scene.remove(this.grid)
+    disposeGrid(this.grid)
+    const div = Math.min(64, Math.max(28, Math.round(cover / 0.9)))
+    const grid = new THREE.GridHelper(cover, div, 0x24384c, 0x152433)
+    grid.position.set(center.x, 0.01, center.z)
+    this.scene.add(grid)
+    this.grid = grid
+  }
+
+  private placeBackdrop(box: THREE.Box3, center: THREE.Vector3, cover: number) {
+    const wall = this.backWall
+    if (!wall) return
+    const backZ = Math.min(-5.8, box.min.z - 1.4)
+    wall.position.set(center.x, wall.position.y, backZ)
+    wall.scale.x = Math.max(1, cover / 16)
+    const pipe = this.headerPipe
+    if (pipe) {
+      pipe.position.set(center.x, pipe.position.y, backZ + 0.4)
+      pipe.scale.y = Math.max(1, cover / 12)
+    }
+    if (this.ghost) this.ghost.position.set(center.x, this.ghost.position.y, backZ + 2.2)
+  }
+
+  private resetGround() {
+    if (!this.groundFit) return
+    this.groundFit = false
+    this.floor.scale.setScalar(1)
+    this.floor.position.set(0, 0, 0)
+    this.replaceGrid(18, new THREE.Vector3())
+    if (this.backWall) {
+      this.backWall.position.set(0, this.backWall.position.y, -5.8)
+      this.backWall.scale.x = 1
+    }
+    const pipe = this.headerPipe
+    if (pipe) {
+      pipe.position.set(0, pipe.position.y, -5.4)
+      pipe.scale.y = 1
+    }
+    if (this.ghost) this.ghost.position.set(0, this.ghost.position.y, -3.8)
   }
 
   setValve(kind: LoopKind, pct: number) {
     const turns = (pct / 100) * Math.PI * 3
+    const attr = `data-valve-${kind}`
+    let seen = false
     let moved = false
     for (const item of this.instruments) {
       if (item.kind !== kind) continue
+      seen = true
+      if (item.wheel.rotation.y === turns) continue
       item.wheel.rotation.y = turns
       moved = true
     }
-    if (moved) this.renderer.domElement.setAttribute(`data-valve-${kind}`, turns.toFixed(4))
-    this.needsRender = true
+    if (!seen) return
+    if (!moved && this.renderer.domElement.hasAttribute(attr)) return
+    this.renderer.domElement.setAttribute(attr, turns.toFixed(4))
+    if (moved) this.needsRender = true
   }
 
   /** Fan rpm follows the sim. 100% is a full spin; 0% is stopped. */
   setFans(dryPct: number, towerPct: number) {
-    this.drySpin = Math.max(0, dryPct) / 100 * 9
-    this.towerSpin = Math.max(0, towerPct) / 100 * 7
+    const dry = (Math.max(0, dryPct) / 100) * 9
+    const tower = (Math.max(0, towerPct) / 100) * 7
+    if (dry === this.drySpin && tower === this.towerSpin) return
+    this.drySpin = dry
+    this.towerSpin = tower
     this.poseFans(this.clock.getElapsedTime())
     this.needsRender = true
+  }
+
+  /**
+   * Draw the units after the lead machine. Two units keep the single package.
+   * A larger bank puts each extra unit in one instanced mesh per LOD level.
+   */
+  setFleet(units: { running: boolean }[]) {
+    if (units.length <= 2) {
+      this.clearFleet(true)
+      return
+    }
+    if (fleetCountKey(units.length) !== this.fleetKey) {
+      this.rebuildFleet(units)
+      return
+    }
+    this.paintFleetRunning(units)
+  }
+
+  /** New bank size reframes the hall. A start or stop only recolors the instances. */
+  private rebuildFleet(units: { running: boolean }[]) {
+    this.clearFleet(false)
+    if (!this.spawnFleet(units.slice(1))) return
+    this.fleetKey = fleetCountKey(units.length)
+    this.fleetRun = runBits(units.slice(1))
+    this.framePlant()
+    this.updateFleetLod()
+    this.labelsNeedDraw = true
+    this.occlusionPending = true
+    this.needsRender = true
+  }
+
+  private paintFleetRunning(units: { running: boolean }[]) {
+    if (this.fleetCount === 0) return
+    const bits = runBits(units.slice(1))
+    if (bits === this.fleetRun) return
+    this.fleetRun = bits
+    const extras = units.slice(1)
+    for (let i = 0; i < extras.length && i < this.fleetCount; i++) this.paintUnit(i, extras[i].running)
+    this.needsRender = true
+  }
+
+  private paintUnit(index: number, running: boolean) {
+    const shade = running ? 1 : 0.72
+    if (this.fleetShade[index] === shade) return
+    this.fleetShade[index] = shade
+    this.fleetColor.setRGB(shade, shade, shade)
+    const mesh = this.bucketFor(this.lodLevel[index])
+    if (mesh) {
+      mesh.setColorAt(this.lodSlot[index], this.fleetColor)
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
+    if (index === this.fleetFocus) this.poseFocusMesh()
+  }
+
+  private clearFleet(reframe: boolean) {
+    if (!this.fleetRoot) return
+    this.disposeFleetMeshes()
+    this.fleetKey = ''
+    this.fleetRun = ''
+    if (reframe) this.framePlant()
+    this.labelsNeedDraw = true
+    this.occlusionPending = true
+    this.needsRender = true
+  }
+
+  private disposeFleetMeshes() {
+    this.fleetRoot?.removeFromParent()
+    this.lodNearMesh?.dispose()
+    this.lodMidMesh?.dispose()
+    this.lodTinyMesh?.dispose()
+    this.focusMat?.dispose()
+    this.fleetRoot = null
+    this.lodNearMesh = null
+    this.lodMidMesh = null
+    this.lodTinyMesh = null
+    this.focusMesh = null
+    this.focusMat = null
+    this.fleetCount = 0
+    this.fleetFocus = -1
+  }
+
+  /** Fleet geometries leave the scene at load, so dispose them even when no fleet was built. */
+  private disposeLodGeometries() {
+    this.lodNearGeo?.dispose()
+    this.lodMidGeo?.dispose()
+    this.lodTinyGeo?.dispose()
+    this.lodNearGeo = null
+    this.lodMidGeo = null
+    this.lodTinyGeo = null
+  }
+
+  private spawnFleet(units: { running: boolean }[]) {
+    const hero = this.heroMesh()
+    const material = hero ? singleMaterial(hero) : null
+    if (!hero || !material || units.length === 0) return false
+    const layout = this.fleetLayout(hero, units.length)
+    this.allocFleet(units.length)
+    this.fleetRoot = new THREE.Group()
+    this.root.add(this.fleetRoot)
+    this.lodNearMesh = this.makeBucket(this.lodNearGeo ?? hero.geometry, material, units.length)
+    this.lodMidMesh = this.makeBucket(this.lodMidGeo ?? hero.geometry, material, units.length)
+    this.lodTinyMesh = this.makeBucket(this.lodTinyGeo ?? hero.geometry, material, units.length)
+    this.focusMesh = this.makeFocusMesh(hero.geometry, material)
+    this.fleetRoot.add(this.lodNearMesh, this.lodMidMesh, this.lodTinyMesh, this.focusMesh)
+    for (let i = 0; i < units.length; i++) this.storeFleetUnit(i, units[i].running, layout)
+    this.rememberFleetSpan(hero)
+    this.lodLevel.fill(LOD_TINY)
+    this.writeLodBuckets()
+    return true
+  }
+
+  private fleetLayout(hero: THREE.Mesh, count: number) {
+    hero.updateMatrixWorld(true)
+    hero.matrixWorld.decompose(this.fleetPos, this.fleetQuat, this.fleetScale)
+    const box = new THREE.Box3().setFromObject(hero)
+    const size = box.getSize(new THREE.Vector3())
+    const gapZ = size.z + 1.15
+    return {
+      cols: fleetColumns(count),
+      gapX: size.x + 0.9,
+      gapZ,
+      originX: box.min.x,
+      originZ: box.min.z - gapZ,
+      baseY: this.fleetPos.y,
+    }
+  }
+
+  private allocFleet(count: number) {
+    this.fleetCount = count
+    this.fleetFocus = -1
+    this.fleetX = new Float32Array(count)
+    this.fleetY = new Float32Array(count)
+    this.fleetZ = new Float32Array(count)
+    this.fleetMats = new Float32Array(count * 16)
+    this.fleetShade = new Float32Array(count)
+    this.lodLevel = new Uint8Array(count)
+    this.lodSlot = new Uint16Array(count)
+  }
+
+  private storeFleetUnit(index: number, running: boolean, layout: FleetLayout) {
+    const col = index % layout.cols
+    const row = Math.floor(index / layout.cols)
+    this.fleetPos.set(layout.originX + col * layout.gapX, layout.baseY, layout.originZ - row * layout.gapZ)
+    this.fleetX[index] = this.fleetPos.x
+    this.fleetY[index] = this.fleetPos.y
+    this.fleetZ[index] = this.fleetPos.z
+    this.fleetShade[index] = running ? 1 : 0.72
+    this.fleetMatrix.compose(this.fleetPos, this.fleetQuat, this.fleetScale)
+    this.fleetMatrix.toArray(this.fleetMats, index * 16)
+  }
+
+  private makeBucket(geo: THREE.BufferGeometry, material: THREE.Material, count: number) {
+    const mesh = new THREE.InstancedMesh(geo, material, count)
+    mesh.castShadow = false
+    mesh.receiveShadow = !this.lowPower
+    mesh.count = 0
+    mesh.visible = false
+    return mesh
+  }
+
+  private makeFocusMesh(geo: THREE.BufferGeometry, material: THREE.Material) {
+    const src = material as THREE.MeshStandardMaterial
+    const mat = src.clone()
+    this.focusMat = mat
+    this.focusBase.copy(src.color)
+    const mesh = new THREE.Mesh(geo, mat)
+    mesh.castShadow = false
+    mesh.receiveShadow = !this.lowPower
+    mesh.visible = false
+    mesh.matrixAutoUpdate = false
+    return mesh
+  }
+
+  private bucketFor(level: number) {
+    if (level === LOD_NEAR) return this.lodNearMesh
+    if (level === LOD_MID) return this.lodMidMesh
+    if (level === LOD_TINY) return this.lodTinyMesh
+    return null
+  }
+
+  private writeLodBuckets() {
+    const near = this.lodNearMesh
+    const mid = this.lodMidMesh
+    const tiny = this.lodTinyMesh
+    if (!near || !mid || !tiny) return
+    this.fillBucket(near, LOD_NEAR, this.countLevel(LOD_NEAR))
+    this.fillBucket(mid, LOD_MID, this.countLevel(LOD_MID))
+    this.fillBucket(tiny, LOD_TINY, this.countLevel(LOD_TINY))
+    this.poseFocusMesh()
+    this.needsRender = true
+  }
+
+  private countLevel(level: number) {
+    let count = 0
+    for (let i = 0; i < this.fleetCount; i++) if (this.lodLevel[i] === level) count++
+    return count
+  }
+
+  private fillBucket(mesh: THREE.InstancedMesh, level: number, count: number) {
+    mesh.count = count
+    mesh.visible = count > 0
+    let slot = 0
+    for (let i = 0; i < this.fleetCount; i++) {
+      if (this.lodLevel[i] !== level) continue
+      this.lodSlot[i] = slot
+      this.writeInstance(mesh, slot, i)
+      slot++
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    if (count > 0) {
+      mesh.computeBoundingBox()
+      mesh.computeBoundingSphere()
+    }
+  }
+
+  private writeInstance(mesh: THREE.InstancedMesh, slot: number, unit: number) {
+    this.fleetMatrix.fromArray(this.fleetMats, unit * 16)
+    mesh.setMatrixAt(slot, this.fleetMatrix)
+    const shade = this.fleetShade[unit]
+    this.fleetColor.setRGB(shade, shade, shade)
+    mesh.setColorAt(slot, this.fleetColor)
+  }
+
+  private poseFocusMesh() {
+    const mesh = this.focusMesh
+    if (!mesh) return
+    if (this.fleetFocus < 0) {
+      mesh.visible = false
+      return
+    }
+    mesh.visible = true
+    mesh.matrix.fromArray(this.fleetMats, this.fleetFocus * 16)
+    mesh.matrixWorldNeedsUpdate = true
+    const shade = this.fleetShade[this.fleetFocus]
+    this.focusMat?.color.copy(this.focusBase).multiplyScalar(shade)
+  }
+
+  /** World size of one banked unit, measured from the lead mesh. */
+  private rememberFleetSpan(hero: THREE.Mesh) {
+    const geo = hero.geometry
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    const box = geo.boundingBox
+    if (!box) return
+    const center = box.getCenter(new THREE.Vector3()).multiply(this.fleetScale).applyQuaternion(this.fleetQuat)
+    this.fleetOffX = center.x
+    this.fleetOffY = center.y
+    this.fleetOffZ = center.z
+    const size = box.getSize(new THREE.Vector3()).multiply(this.fleetScale)
+    this.fleetSpan = Math.max(size.x, size.y, size.z, 0.001)
+  }
+
+  private unitPixels(index: number) {
+    const dx = this.camera.position.x - (this.fleetX[index] + this.fleetOffX)
+    const dy = this.camera.position.y - (this.fleetY[index] + this.fleetOffY)
+    const dz = this.camera.position.z - (this.fleetZ[index] + this.fleetOffZ)
+    const dist = Math.hypot(dx, dy, dz)
+    const height = this.renderer.domElement.clientHeight || 1
+    const half = Math.tan((this.camera.fov * Math.PI) / 360)
+    return (this.fleetSpan * height) / (2 * Math.max(dist, 0.05) * half)
+  }
+
+  private updateFleetLod() {
+    if (this.fleetCount === 0) return
+    let changed = false
+    for (let i = 0; i < this.fleetCount; i++) {
+      const next = this.lodFor(i, this.unitPixels(i))
+      if (next === this.lodLevel[i]) continue
+      this.lodLevel[i] = next
+      changed = true
+    }
+    if (changed) this.writeLodBuckets()
+  }
+
+  private lodFor(index: number, pixels: number) {
+    if (index === this.fleetFocus) return LOD_FULL
+    const level = this.lodLevel[index]
+    if (level === LOD_NEAR && pixels >= LOD_NEAR_OUT_PX) return LOD_NEAR
+    if (level === LOD_TINY && pixels <= LOD_TINY_OUT_PX) return LOD_TINY
+    if (pixels >= LOD_NEAR_IN_PX) return LOD_NEAR
+    if (pixels <= LOD_TINY_IN_PX) return LOD_TINY
+    return LOD_MID
+  }
+
+  private focusFleetUnit(index: number) {
+    if (index === this.fleetFocus) return
+    this.fleetFocus = index
+    this.updateFleetLod()
+  }
+
+  private pickFleetUnit() {
+    const list = this.visibleFleetMeshes()
+    if (list.length === 0) return
+    const hit = this.raycaster.intersectObjects(list, false)[0]
+    if (!hit || hit.object === this.focusMesh) return
+    if (hit.instanceId === undefined) return
+    const unit = this.unitForSlot(hit.object as THREE.InstancedMesh, hit.instanceId)
+    if (unit >= 0) this.focusFleetUnit(unit)
+  }
+
+  private visibleFleetMeshes() {
+    const list: THREE.Object3D[] = []
+    const meshes = [this.lodNearMesh, this.lodMidMesh, this.lodTinyMesh, this.focusMesh]
+    for (const mesh of meshes) {
+      if (mesh && mesh.visible) list.push(mesh)
+    }
+    return list
+  }
+
+  private unitForSlot(mesh: THREE.InstancedMesh, slot: number) {
+    const level = this.levelForBucket(mesh)
+    for (let i = 0; i < this.fleetCount; i++) {
+      if (this.lodLevel[i] === level && this.lodSlot[i] === slot) return i
+    }
+    return -1
+  }
+
+  private levelForBucket(mesh: THREE.InstancedMesh) {
+    if (mesh === this.lodNearMesh) return LOD_NEAR
+    if (mesh === this.lodMidMesh) return LOD_MID
+    return LOD_TINY
+  }
+
+  private heroMesh(): THREE.Mesh | null {
+    const model = this.model
+    if (!model) return null
+    let found: THREE.Mesh | null = null
+    model.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!found && mesh.isMesh) found = mesh
+    })
+    return found
   }
 
   /** Refresh label text from the latest sim snapshot. Nodes stay put; only textContent changes. */
   setReadings(readings: SceneReadings) {
     this.readings = readings
+    let changed = false
     for (const [tag, el] of this.labelValues) {
       const next = readingText(tag, readings)
-      if (el.textContent !== next) {
-        el.textContent = next
-        this.fitKey = ''
-      }
+      if (el.textContent === next) continue
+      el.textContent = next
+      changed = true
     }
-    this.needsRender = true
+    if (changed) this.labelsNeedDraw = true
   }
 
   /**
@@ -682,6 +1247,7 @@ export class ChillerScene {
       ], line, 'gly', tip, 'x')
     }
     this.buildDryCooler(group, coolX, coolZ)
+    this.flushPipes(group)
     this.root.add(group)
   }
 
@@ -767,7 +1333,7 @@ export class ChillerScene {
     flangeAt: THREE.Vector3,
     flangeAxis: 'x' | 'z',
   ) {
-    this.runPipe(group, points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
+    this.runPipe(points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
     this.addFlange(group, flangeAt, flangeAxis)
     this.addValve(group, points[1].clone().lerp(points[2], 0.55), line.id, kind, line.tag)
     const run = points.length - 2
@@ -833,18 +1399,18 @@ export class ChillerScene {
   /** Fan disc lies in XZ and spins on Y. Local +Y is up, so the visible face is the top. */
   private fanDisc(radius: number) {
     const fan = new THREE.Group()
+    const tube = this.segs(6, 4)
+    const around = this.segs(16, 10)
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, 0.028, this.segs(6, 4), this.segs(16, 10)),
+      this.geo(`fan-ring-${radius}-${tube}-${around}`, () => new THREE.TorusGeometry(radius, 0.028, tube, around)),
       this.steel(0xd7dee6, 0.65, 0.3),
     )
     ring.rotation.x = Math.PI / 2
     fan.add(ring)
+    const bladeGeo = this.geo(`fan-blade-${radius}`, () => new THREE.BoxGeometry(radius * 0.85, 0.02, radius * 0.22))
     for (let i = 0; i < 4; i++) {
       const theta = (i * Math.PI) / 2
-      const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(radius * 0.85, 0.02, radius * 0.22),
-        this.steel(0xe7eef4, 0.55, 0.35),
-      )
+      const blade = new THREE.Mesh(bladeGeo, this.steel(0xe7eef4, 0.55, 0.35))
       blade.position.set(Math.cos(theta) * radius * 0.42, 0, Math.sin(theta) * radius * 0.42)
       blade.rotation.y = theta
       fan.add(blade)
@@ -852,26 +1418,53 @@ export class ChillerScene {
     return fan
   }
 
-  private runPipe(group: THREE.Group, points: THREE.Vector3[], radius: number, mat: THREE.Material) {
-    const up = new THREE.Vector3(0, 1, 0)
-    const dir = new THREE.Vector3()
+  private runPipe(points: THREE.Vector3[], radius: number, mat: THREE.Material) {
+    const radial = this.segs(10, 6)
+    const jointW = this.segs(8, 6)
+    const jointH = this.segs(6, 4)
     for (let i = 0; i < points.length - 1; i++) {
-      dir.subVectors(points[i + 1], points[i])
-      const len = dir.length()
-      if (len < 0.02) continue
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, this.segs(14, 8)), mat)
-      mesh.position.copy(points[i]).add(points[i + 1]).multiplyScalar(0.5)
-      mesh.quaternion.setFromUnitVectors(up, dir.normalize())
-      group.add(mesh)
-      const joint = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.15, this.segs(12, 8), this.segs(8, 6)), mat)
-      joint.position.copy(points[i + 1])
-      group.add(joint)
+      this.stashPipe(points[i], points[i + 1], radius, mat, radial, jointW, jointH)
     }
   }
 
+  private stashPipe(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    radius: number,
+    mat: THREE.Material,
+    radial: number,
+    jointW: number,
+    jointH: number,
+  ) {
+    const dir = new THREE.Vector3().subVectors(b, a)
+    const len = dir.length()
+    if (len < 0.02) return
+    const mid = a.clone().add(b).multiplyScalar(0.5)
+    const tube = new THREE.CylinderGeometry(radius, radius, len, radial, 1, true)
+    tube.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()))
+    tube.translate(mid.x, mid.y, mid.z)
+    pushGeo(this.pipeParts, mat, tube)
+    const joint = new THREE.SphereGeometry(radius * 1.15, jointW, jointH)
+    joint.translate(b.x, b.y, b.z)
+    pushGeo(this.pipeParts, mat, joint)
+  }
+
+  private flushPipes(group: THREE.Group) {
+    for (const [mat, parts] of this.pipeParts) {
+      const merged = mergePipe(parts)
+      if (!merged) continue
+      const mesh = new THREE.Mesh(merged, mat)
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      group.add(mesh)
+    }
+    this.pipeParts.clear()
+  }
+
   private addFlange(group: THREE.Group, pos: THREE.Vector3, axis: 'x' | 'z') {
+    const sides = this.segs(16, 8)
     const flange = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.16, 0.05, this.segs(16, 8)),
+      this.geo(`flange-${sides}`, () => new THREE.CylinderGeometry(0.16, 0.16, 0.05, sides)),
       this.steel(0xc5ccd1, 0.78, 0.28),
     )
     flange.position.copy(pos)
@@ -882,20 +1475,24 @@ export class ChillerScene {
   private addValve(group: THREE.Group, pos: THREE.Vector3, id: InstrumentId, kind: LoopKind, tag: PlantTag) {
     const valve = new THREE.Group()
     valve.position.copy(pos)
+    const bodySides = this.segs(14, 8)
     const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.14, 0.14, 0.26, this.segs(14, 8)),
+      this.geo(`valve-body-${bodySides}`, () => new THREE.CylinderGeometry(0.14, 0.14, 0.26, bodySides)),
       this.steel(0x1c2430, 0.72, 0.34),
     )
     body.rotation.z = Math.PI / 2
     valve.add(body)
+    const tube = this.segs(8, 6)
+    const ring = this.segs(18, 10)
     const wheel = new THREE.Mesh(
-      new THREE.TorusGeometry(0.16, 0.022, this.segs(8, 6), this.segs(18, 10)),
+      this.geo(`valve-wheel-${tube}-${ring}`, () => new THREE.TorusGeometry(0.16, 0.022, tube, ring)),
       this.steel(0xd7dee6, 0.85, 0.22),
     )
     wheel.position.y = 0.2
     valve.add(wheel)
+    const spokeGeo = this.geo('valve-spoke', () => new THREE.BoxGeometry(0.28, 0.015, 0.015))
     for (const rot of [0, Math.PI / 2]) {
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.015, 0.015), this.steel(0xd7dee6, 0.8, 0.25))
+      const spoke = new THREE.Mesh(spokeGeo, this.steel(0xd7dee6, 0.8, 0.25))
       spoke.position.y = 0.2
       spoke.rotation.y = rot
       wheel.add(spoke)
@@ -915,25 +1512,35 @@ export class ChillerScene {
     const gauge = new THREE.Group()
     gauge.position.copy(pos)
     const stem = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.018, 0.018, 0.16, 6),
+      this.geo('gauge-stem', () => new THREE.CylinderGeometry(0.018, 0.018, 0.16, 6)),
       this.steel(0x9aa4ad, 0.6, 0.3),
     )
     stem.position.y = 0.1
     gauge.add(stem)
+    const dialSides = this.segs(16, 8)
     const dial = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.085, 0.085, 0.035, this.segs(16, 8)),
-      new THREE.MeshStandardMaterial({
-        color: kind === 'p' ? 0xf4f7fb : 0xf0a202,
-        metalness: 0.25,
-        roughness: 0.4,
-        emissive: kind === 't' ? 0x7c4a03 : 0x000000,
-        emissiveIntensity: kind === 't' ? 0.25 : 0,
-      }),
+      this.geo(`gauge-dial-${dialSides}`, () => new THREE.CylinderGeometry(0.085, 0.085, 0.035, dialSides)),
+      this.gaugeMat(kind),
     )
     dial.rotation.x = Math.PI / 2
     dial.position.y = 0.2
     gauge.add(dial)
     group.add(gauge)
+  }
+
+  private gaugeMat(kind: 'p' | 't') {
+    const key = `gauge-${kind}`
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshStandardMaterial({
+      color: kind === 'p' ? 0xf4f7fb : 0xf0a202,
+      metalness: 0.25,
+      roughness: 0.4,
+      emissive: kind === 't' ? 0x7c4a03 : 0x000000,
+      emissiveIntensity: kind === 't' ? 0.25 : 0,
+    })
+    this.materialCache.set(key, mat)
+    return mat
   }
 
   private tagLabel(text: PlantTag, color: string) {
@@ -998,18 +1605,6 @@ export class ChillerScene {
     const canvas = this.renderer.domElement
     const view = canvas.getBoundingClientRect()
     if (view.width < 8 || view.height < 8) return
-    const key = [
-      canvas.clientWidth,
-      canvas.clientHeight,
-      this.camera.position.x.toFixed(2),
-      this.camera.position.y.toFixed(2),
-      this.camera.position.z.toFixed(2),
-      this.controls.target.x.toFixed(2),
-      this.controls.target.y.toFixed(2),
-      this.controls.target.z.toFixed(2),
-    ].join('|')
-    if (key === this.fitKey) return
-    this.fitKey = key
     const bounds = insetBox(domBox(view), 4)
     const hud = this.hudBoxes().map((box) => padBox(box, 4))
     const fitted: FittedTag[] = []
@@ -1067,14 +1662,14 @@ export class ChillerScene {
     const region = (id: ComponentId, nx: number, ny: number, nz: number, nw: number, nh: number, nd: number) => {
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(Math.max(size.x * nw, 0.2), Math.max(size.y * nh, 0.2), Math.max(size.z * nd, 0.2)),
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+        this.hiddenMat(),
       )
       mesh.position.set(
         min.x + size.x * (nx + nw / 2),
         min.y + size.y * (ny + nh / 2),
         min.z + size.z * (nz + nd / 2),
       )
-      this.addHotspot(id, mesh)
+      this.addHotspot(id, mesh, false)
     }
     // Fractions of the fitted package. Front is +Z (camera side).
     region('vsd', 0.0, 0.05, 0.15, 0.16, 0.85, 0.7)
@@ -1298,8 +1893,11 @@ export class ChillerScene {
         this.select(id)
         this.focus(id)
         this.onSelect(id)
+        this.focusFleetUnit(-1)
       }
+      return
     }
+    this.pickFleetUnit()
   }
 
   private onResize = () => {
@@ -1313,6 +1911,7 @@ export class ChillerScene {
     this.renderer.setSize(w, h, false)
     this.labelRenderer.setSize(w, h)
     this.placeAllTags()
+    this.labelsNeedDraw = true
     this.needsRender = true
   }
 
@@ -1383,12 +1982,15 @@ export class ChillerScene {
     this.fitTagsInView()
   }
 
-  /** Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag. */
-  private fadeOccludedLabels(now: number) {
-    if (now - this.occlusionAt < 0.25) return
+  /**
+   * Ray from the camera to each anchor. A hit well in front of the anchor means the chiller hides the tag.
+   * Returns false when the throttle skips the test, so the caller keeps the request.
+   */
+  private fadeOccludedLabels(now: number): boolean {
+    if (now - this.occlusionAt < 0.25) return false
     this.occlusionAt = now
     const model = this.model
-    if (!model) return
+    if (!model) return true
     const origin = this.camera.position
     const savedFar = this.raycaster.far
     for (const object of this.labelAnchors.values()) {
@@ -1403,14 +2005,58 @@ export class ChillerScene {
       object.element.classList.toggle('is-occluded', blocked)
     }
     this.raycaster.far = savedFar
+    return true
+  }
+
+  private viewDirty() {
+    const canvas = this.renderer.domElement
+    const w = canvas.clientWidth
+    const h = canvas.clientHeight
+    const p = this.camera.position
+    const t = this.controls.target
+    const dirty =
+      this.viewW !== w ||
+      this.viewH !== h ||
+      Math.abs(this.viewPx - p.x) > 0.004 ||
+      Math.abs(this.viewPy - p.y) > 0.004 ||
+      Math.abs(this.viewPz - p.z) > 0.004 ||
+      Math.abs(this.viewTx - t.x) > 0.004 ||
+      Math.abs(this.viewTy - t.y) > 0.004 ||
+      Math.abs(this.viewTz - t.z) > 0.004
+    if (!dirty) return false
+    this.viewW = w
+    this.viewH = h
+    this.viewPx = p.x
+    this.viewPy = p.y
+    this.viewPz = p.z
+    this.viewTx = t.x
+    this.viewTy = t.y
+    this.viewTz = t.z
+    return true
   }
 
   private renderFrame(t: number) {
-    if (!this.needsRender) return
-    this.renderer.render(this.scene, this.camera)
-    this.syncLabelLayer()
-    this.fadeOccludedLabels(t)
-    if (this.lowPower && !this.interacting) this.needsRender = false
+    if (this.viewDirty()) {
+      this.needsRender = true
+      this.labelsNeedDraw = true
+      this.occlusionPending = true
+      this.updateFleetLod()
+    }
+    if (this.needsRender) {
+      this.renderer.render(this.scene, this.camera)
+      if (this.lowPower && !this.interacting) this.needsRender = false
+    }
+    this.drawLabels(t)
+  }
+
+  private drawLabels(t: number) {
+    if (this.labelsNeedDraw) {
+      this.labelsNeedDraw = false
+      this.syncLabelLayer()
+      this.occlusionPending = true
+    }
+    if (!this.occlusionPending) return
+    if (this.fadeOccludedLabels(t)) this.occlusionPending = false
   }
 
   private tick = () => {
@@ -1437,17 +2083,72 @@ export class ChillerScene {
     this.labelValues.clear()
     this.labelAnchors.clear()
     this.controls.dispose()
-    this.scene.traverse((obj) => {
-      const mesh = obj as THREE.Mesh
-      if (mesh.isMesh) {
-        mesh.geometry?.dispose()
-        const mat = mesh.material
-        if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-        else mat?.dispose?.()
-      }
-    })
+    disposeSceneResources(this.scene)
+    this.disposeFleetMeshes()
+    this.disposeLodGeometries()
     this.renderer.dispose()
   }
+}
+
+function pushGeo(batches: Map<THREE.Material, THREE.BufferGeometry[]>, mat: THREE.Material, geo: THREE.BufferGeometry) {
+  const list = batches.get(mat)
+  if (list) list.push(geo)
+  else batches.set(mat, [geo])
+}
+
+function mergePipe(parts: THREE.BufferGeometry[]) {
+  if (parts.length === 0) return null
+  if (parts.length === 1) return parts[0]
+  const merged = mergeGeometries(parts, false)
+  for (const part of parts) part.dispose()
+  return merged
+}
+
+function fleetColumns(count: number) {
+  if (count > 24) return 9
+  if (count > 12) return 6
+  return 4
+}
+
+function fleetCountKey(count: number) {
+  return String(count)
+}
+
+function runBits(units: { running: boolean }[]) {
+  let bits = ''
+  for (const unit of units) bits += unit.running ? '1' : '0'
+  return bits
+}
+
+function disposeGrid(grid: THREE.GridHelper) {
+  grid.geometry.dispose()
+  const mats = Array.isArray(grid.material) ? grid.material : [grid.material]
+  for (const mat of mats) mat.dispose()
+}
+
+function singleMaterial(mesh: THREE.Mesh) {
+  return Array.isArray(mesh.material) ? mesh.material[0] ?? null : mesh.material
+}
+
+function hasGeometry(obj: THREE.Object3D): obj is THREE.Mesh {
+  const mesh = obj as THREE.Mesh
+  return Boolean(mesh.isMesh || (obj as THREE.Points).isPoints || (obj as THREE.Line).isLine)
+}
+
+function disposeSceneResources(scene: THREE.Scene) {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (!hasGeometry(mesh)) return
+    if (mesh.geometry) geometries.add(mesh.geometry)
+    const mat = mesh.material
+    if (Array.isArray(mat)) {
+      for (const item of mat) materials.add(item)
+    } else if (mat) materials.add(mat)
+  })
+  for (const geo of geometries) geo.dispose()
+  for (const mat of materials) mat.dispose()
 }
 
 interface ScreenBox {

@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import http from 'node:http'
+import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { plantModelProgressText } from '../york-chiller/src/3d/chillerScene'
 
@@ -198,63 +201,95 @@ test('the plant model falls back at the cap hook while percent still moves', asy
   await page.addInitScript((ms) => {
     ;(window as Window & { __YORK_MODEL_CAP_MS?: number }).__YORK_MODEL_CAP_MS = ms
   }, capMs)
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/york-chiller/')
-  const client = await page.context().newCDPSession(page)
-  await client.send('Network.enable')
-  await client.send('Network.emulateNetworkConditions', {
-    offline: false,
-    latency: 5,
-    downloadThroughput: 32_000,
-    uploadThroughput: 32_000,
-  })
-  await page.locator('.nav [data-nav="explorer"]').click()
-  const boot = page.locator('#canvas-boot')
-  const status = page.locator('#canvas-status')
-  await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
-  const seenZero = performance.now()
-  await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 15_000 })
-  await expect(status).not.toHaveText(SIMPLE_MODEL)
-  await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 30_000 })
-  const elapsed = performance.now() - seenZero
-  expect(elapsed).toBeGreaterThan(12_000)
-  expect(elapsed).toBeLessThan(36_000)
-  await expect(page.locator('.plant-tag')).toHaveCount(0)
-  await expect(boot).toHaveCount(0)
+  const drip = await dripModel(path.resolve('dist/york-chiller/models/ymc2.glb'), 6_500)
+  try {
+    await page.route('**/models/ymc2.glb', (route) => route.continue({ url: drip.url }))
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/york-chiller/')
+    await page.locator('.nav [data-nav="explorer"]').click()
+    const boot = page.locator('#canvas-boot')
+    const status = page.locator('#canvas-status')
+    await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
+    const seenZero = performance.now()
+    await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 15_000 })
+    await expect(status).not.toHaveText(SIMPLE_MODEL)
+    await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 30_000 })
+    const elapsed = performance.now() - seenZero
+    expect(elapsed).toBeGreaterThan(12_000)
+    expect(elapsed).toBeLessThan(36_000)
+    await expect(page.locator('.plant-tag')).toHaveCount(0)
+    await expect(boot).toHaveCount(0)
+  } finally {
+    drip.close()
+  }
 })
 
 test('the plant model falls back at the 180 second cap while percent still moves @slow', async ({ page }) => {
   test.slow()
   test.setTimeout(240_000)
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/york-chiller/')
-  const client = await page.context().newCDPSession(page)
-  await client.send('Network.enable')
-  await client.send('Network.emulateNetworkConditions', {
-    offline: false,
-    latency: 5,
-    downloadThroughput: 32_000,
-    uploadThroughput: 32_000,
-  })
-  await page.locator('.nav [data-nav="explorer"]').click()
-  const boot = page.locator('#canvas-boot')
-  const status = page.locator('#canvas-status')
-  await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 20_000 })
-  const seenZero = performance.now()
-  await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 20_000 })
-  await expect(status).not.toHaveText(SIMPLE_MODEL)
-  const holdMs = 150_000 - (performance.now() - seenZero)
-  expect(holdMs).toBeGreaterThan(120_000)
-  await page.waitForTimeout(holdMs)
-  await expect(boot).toHaveText(/The plant model file is at \d+ percent\./)
-  await expect(status).not.toHaveText(SIMPLE_MODEL)
-  await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 60_000 })
-  const elapsed = performance.now() - seenZero
-  expect(elapsed).toBeGreaterThan(165_000)
-  expect(elapsed).toBeLessThan(220_000)
-  await expect(page.locator('.plant-tag')).toHaveCount(0)
-  await expect(boot).toHaveCount(0)
+  const drip = await dripModel(path.resolve('dist/york-chiller/models/ymc2.glb'), 6_500)
+  try {
+    await page.route('**/models/ymc2.glb', (route) => route.continue({ url: drip.url }))
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/york-chiller/')
+    await page.locator('.nav [data-nav="explorer"]').click()
+    const boot = page.locator('#canvas-boot')
+    const status = page.locator('#canvas-status')
+    await expect(boot).toHaveText('The plant model file is at 0 percent.', { timeout: 30_000 })
+    const seenZero = performance.now()
+    await expect(boot).toHaveText('The plant model file is at 1 percent.', { timeout: 20_000 })
+    await expect(status).not.toHaveText(SIMPLE_MODEL)
+    const holdMs = 150_000 - (performance.now() - seenZero)
+    expect(holdMs).toBeGreaterThan(120_000)
+    await page.waitForTimeout(holdMs)
+    await expect(boot).toHaveText(/The plant model file is at \d+ percent\./)
+    await expect(status).not.toHaveText(SIMPLE_MODEL)
+    await expect(status).toHaveText(SIMPLE_MODEL, { timeout: 60_000 })
+    const elapsed = performance.now() - seenZero
+    expect(elapsed).toBeGreaterThan(165_000)
+    expect(elapsed).toBeLessThan(220_000)
+    await expect(page.locator('.plant-tag')).toHaveCount(0)
+    await expect(boot).toHaveCount(0)
+  } finally {
+    drip.close()
+  }
 })
+
+function dripModel(file: string, bytesPerSec: number) {
+  const body = fs.readFileSync(file)
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'model/gltf-binary',
+      'Content-Length': String(body.length),
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+    })
+    writeDrip(res, body, bytesPerSec)
+  })
+  return new Promise<{ url: string; close: () => void }>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      const port = typeof addr === 'object' && addr ? addr.port : 0
+      resolve({ url: `http://127.0.0.1:${port}/ymc2.glb`, close: () => server.close() })
+    })
+  })
+}
+
+function writeDrip(res: http.ServerResponse, body: Buffer, bytesPerSec: number) {
+  const chunk = Math.max(1024, Math.floor(bytesPerSec / 4))
+  let offset = 0
+  const timer = setInterval(() => {
+    if (offset >= body.length || res.destroyed) {
+      clearInterval(timer)
+      if (!res.destroyed) res.end()
+      return
+    }
+    const next = body.subarray(offset, Math.min(body.length, offset + chunk))
+    offset += next.length
+    res.write(next)
+  }, 250)
+  res.on('close', () => clearInterval(timer))
+}
 
 test('boot overlay fails when the scene chunk stalls', async ({ page }) => {
   test.setTimeout(20_000)
