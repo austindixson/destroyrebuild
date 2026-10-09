@@ -6,6 +6,14 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8S
+
+- A follow-up tier holds back the next budget only when the time left covers both budgets. Otherwise it uses the time left, up to its own budget.
+- A follow-up skips the last tier when less than 40 s remain.
+- A follow-up starts on claude when round 0 has used more than half of the 135 s window. Otherwise it starts on the tier that answered.
+- Round 1 sends the snapshot delta and the tool results. It does not send the passage set.
+- An emptied answer logs `ste-drop`, `label-only`, `quote-drop`, `number-drop`, `leak`, or `parse`. The log line does not include the model text.
+
 ### 2026-10-09 — YORK-8R
 
 - A follow-up round starts with the tier that answered the previous round. The tool response returns that tier. The trainer sends it back. The server accepts a known tier only, and that field cannot override the only-tier header.
@@ -105,7 +113,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - Codex runs only when `YORK_CODEX=1`.
 - The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
 - Round 0 gives grok 70 s, claude 15 s, and cursor 50 s. The last tier still runs when at least 40 s remain. Every round shares the time left on one 135 s window.
-- A follow-up round starts with the tier that answered. That round keeps time for the next tier. `YORK_DEBUG_RAW=1` logs the raw model text.
+- A follow-up starts on the tier that answered, or on claude when less than half the window remains. It holds the next budget only when both tiers fit. `YORK_DEBUG_RAW=1` logs the raw model text.
 - The server stops the request at 135 s.
 - The trainer stops at 145 s. Caddy waits 155 s.
 - Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.

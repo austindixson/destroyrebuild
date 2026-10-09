@@ -1,6 +1,6 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
 import { dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
-import { redactReason } from './leak.ts'
+import { containsSecretMaterial, redactReason } from './leak.ts'
 import { OPEN_DECLINE } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
@@ -63,6 +63,21 @@ function logRaw(raw: string): void {
   console.debug(`york-api finish raw=${redactReason(raw)}`)
 }
 
+type EmptyCode = 'ste-drop' | 'label-only' | 'quote-drop' | 'number-drop' | 'leak' | 'parse'
+
+function logEmpty(reason: EmptyCode): void {
+  console.log(`york-api finish empty reason=${reason}`)
+}
+
+function wipedReason(stripped: string, traced: string, quoted: string, ste: string, raw: string): EmptyCode {
+  if (containsSecretMaterial(raw)) return 'leak'
+  if (sentenceList(stripped).length === 0) return 'parse'
+  if (sentenceList(traced).length === 0) return 'number-drop'
+  if (sentenceList(quoted).length === 0) return 'quote-drop'
+  if (sentenceList(ste).length === 0) return 'ste-drop'
+  return 'label-only'
+}
+
 function withoutLabel(text: string): string {
   return text
     .split(/(?<=[.!?])\s+/)
@@ -78,7 +93,7 @@ export function polishAnswer(
   snapshot: unknown,
   results: ToolResultIn[] = [],
   extraCorpus = '',
-): { answer: string; sources: ChatSource[] } {
+): { answer: string; sources: ChatSource[]; empty?: EmptyCode } {
   const allowed = new Set(chunks.map((chunk) => chunk.id))
   const knownCites = citeIds.map((id) => matchedCite(id, allowed)).filter(Boolean)
   const stripped = stripMarkers(yorkFlaWording(raw), allowed)
@@ -87,12 +102,12 @@ export function polishAnswer(
     stripped.text,
     `${corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results))}\n${extraCorpus}`,
   )
-  const clear = restoreDecline(
-    labelLiveNumbers(dropSteSentences(dropUnmatchedQuotes(traced))),
-    raw,
-    caseOpen(snapshot),
-  )
-  if (!withoutLabel(clear)) return { answer: '', sources: [] }
+  const quoted = dropUnmatchedQuotes(traced)
+  const ste = dropSteSentences(quoted)
+  const clear = restoreDecline(labelLiveNumbers(ste), raw, caseOpen(snapshot))
+  if (!withoutLabel(clear)) {
+    return { answer: '', sources: [], empty: wipedReason(stripped.text, traced, quoted, ste, raw) }
+  }
   return { answer: clear, sources: sourcesFor(cites, chunks) }
 }
 
@@ -105,19 +120,37 @@ export async function finishAnswer(
   results: ToolResultIn[] = [],
   extraCorpus = '',
 ): Promise<{ answer: string; sources: ChatSource[] }> {
-  if (!raw.trim()) return { answer: NO_ANSWER, sources: [] }
+  if (!raw.trim()) {
+    logEmpty('parse')
+    return { answer: NO_ANSWER, sources: [] }
+  }
   logRaw(raw)
+  if (containsSecretMaterial(raw)) {
+    logEmpty('leak')
+    return { answer: NO_ANSWER, sources: [] }
+  }
   const first = polishAnswer(raw, citeIds, chunks, snapshot, results, extraCorpus)
   if (first.answer) return first
+  logEmpty(first.empty ?? 'parse')
   try {
     const secondText = await rewrite({
       system: 'Rewrite the answer in short active sentences. Do not use contractions. Keep trainer-model on live numbers. Reply with the answer text only.',
       user: raw,
     })
+    if (!secondText.trim()) {
+      logEmpty('parse')
+      return { answer: NO_ANSWER, sources: [] }
+    }
+    if (containsSecretMaterial(secondText)) {
+      logEmpty('leak')
+      return { answer: NO_ANSWER, sources: [] }
+    }
     const second = polishAnswer(secondText, citeIds, chunks, snapshot, results, extraCorpus)
     if (second.answer) return second
+    logEmpty(second.empty ?? 'parse')
     return { answer: NO_ANSWER, sources: [] }
   } catch {
+    logEmpty('parse')
     return { answer: NO_ANSWER, sources: [] }
   }
 }

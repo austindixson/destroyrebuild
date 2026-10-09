@@ -318,6 +318,42 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(follow.user, /"action":"setValve"/)
   assert.equal(follow.user.includes('Passages:'), false)
   assert.equal(follow.user.includes('long passage'), false)
+  const question = 'How many actions are in the action log?'
+  const snapshot = {
+    plant: {
+      itLoadMw: 4.2,
+      hallSupplyF: 70,
+      chwValvePct: 40,
+      runningCapacityMw: 5,
+      units: [
+        { id: 'CH-01', running: true, capacityMw: 5, mode: 'run' },
+        { id: 'CH-02', running: false, capacityMw: 5, mode: 'ready' },
+      ],
+    },
+  }
+  const found = searchChunks(index as Chunk[], question, 4)
+  const round0 = buildPrompt({ question, previousQuestions: [], history: [], snapshot, round: 0, toolResults: [] }, found)
+  const round1 = buildPrompt({
+    question,
+    previousQuestions: [],
+    history: [],
+    snapshot,
+    round: 1,
+    toolResults: [{
+      name: 'plant.getActionLog',
+      ok: true,
+      message: '1 rows.',
+      rows: [{ t: 12, actor: 'user', action: 'setValve', args: { loop: 'chw', pct: 40 } }],
+    }],
+  }, found)
+  const promptBytes = (prompt: { system: string; user: string }) => `${prompt.system}\n\n${prompt.user}`.length
+  assert.equal(round1.user.includes('Passages:'), false)
+  assert.match(round1.user, /Snapshot delta:/)
+  assert.match(round1.user, /Tool results:/)
+  assert.equal(promptBytes(round1), 1547)
+  assert.equal(promptBytes(round0), 3127)
+  assert.equal(round1.user.length, 422)
+  assert.equal(round0.user.length, 2002)
 })
 
 test('trouble symptoms are labeled examples in the index', () => {
@@ -549,6 +585,45 @@ test('the N+1 fleet sentence keeps prompt numbers the glossary chunk omits', () 
   assert.match(kept.answer, /17 times 5 MW is 85 MW/)
   const dropped = polishAnswer(fleet, [], [], {})
   assert.equal(dropped.answer.includes('85'), false)
+})
+
+test('an emptied answer logs a reason code and not the model text', async () => {
+  const notes: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    notes.push(String(msg))
+  }
+  try {
+    const passive = await finishAnswer('The valve is closed by the operator.', [], [], {}, async () => '')
+    assert.equal(passive.answer, NO_ANSWER)
+    const labeled = await finishAnswer(LIVE_LABEL, [], [], {}, async () => '')
+    assert.equal(labeled.answer, NO_ANSWER)
+    const quoted = await finishAnswer(STRAY_ROOT, [], [], {}, async () => '')
+    assert.equal(quoted.answer, NO_ANSWER)
+    const numbered = await finishAnswer('The count is 9.', [], [], {}, async () => '')
+    assert.equal(numbered.answer, NO_ANSWER)
+    let called = false
+    const leaked = await finishAnswer('sk-ant-abcdefghij is in the reply.', [], [], {}, async () => {
+      called = true
+      return 'The hall is stable.'
+    })
+    assert.equal(leaked.answer, NO_ANSWER)
+    assert.equal(called, false)
+    const blank = await finishAnswer('   ', [], [], {}, async () => 'The hall is stable.')
+    assert.equal(blank.answer, NO_ANSWER)
+  } finally {
+    console.log = log
+  }
+  const joined = notes.join('\n')
+  assert.match(joined, /york-api finish empty reason=ste-drop/)
+  assert.match(joined, /york-api finish empty reason=label-only/)
+  assert.match(joined, /york-api finish empty reason=quote-drop/)
+  assert.match(joined, /york-api finish empty reason=number-drop/)
+  assert.match(joined, /york-api finish empty reason=leak/)
+  assert.match(joined, /york-api finish empty reason=parse/)
+  assert.equal(joined.includes('sk-ant-'), false)
+  assert.equal(joined.includes('cooling tower'), false)
+  assert.equal(joined.includes('valve'), false)
 })
 
 test('unit ids are not live numbers and corpus checks use number tokens', () => {
