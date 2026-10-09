@@ -178,10 +178,10 @@ export function grokSmokeArgs(args: string[]): string[] {
   return [...args, '--output-format', 'streaming-json']
 }
 
-/** The grok smoke answer is the number 5 in a text event. A thought does not count. */
+/** The grok smoke answer is the number 5 alone. A final period is optional. */
 export function grokSmokeAnswerOk(stdout: string): boolean {
-  const text = grokStreamText(stdout).replace(/^[\s"'`.,:;!?()[\]{}]+|[\s"'`.,:;!?()[\]{}]+$/g, '')
-  return /(?<![\d.])5(?![\d.])/.test(text)
+  const text = grokStreamText(stdout).trim().replace(/\.$/, '')
+  return text === '5'
 }
 
 /** A missing smoke token is rechecked as the number 5. A timeout or a bad exit stays a failure. */
@@ -246,7 +246,7 @@ export const CLAUDE_REPROBE_STEPS_MS = [60_000, 120_000, 300_000, 600_000] as co
 const CLAUDE_AUTH_REPROBE_MS = 600_000
 
 export function claudeNeedsSignIn(reason: string): boolean {
-  return /oauth session expired|please run \/login|not logged in|invalid api key/i.test(reason)
+  return /oauth session expired|please run \/login|not logged in|invalid api key|authentication_error|\b401\b/i.test(reason)
 }
 
 /** One more try after a failed probe. A success returns on the first call. */

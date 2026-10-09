@@ -406,25 +406,65 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
-/** Fewer hashes sit above a sub-heading. A plain heading and a bold heading share one level. */
-function headingLevel(text: string): number {
-  const marks = /^(#{1,6})(?:\s|$)/.exec(text.trim())
-  return marks?.[1] ? marks[1].length : 7
+/** The next line is a child heading. A blank line ends the parent. */
+function directChild(part: Piece, next: Piece | undefined): boolean {
+  if (!next || !isHeading(next.text)) return false
+  return !/\n\s*\n/.test(part.sep)
 }
 
-/** Real content under this heading, before the next heading of the same or higher level. */
-function sectionHasBody(parts: Piece[], index: number): boolean {
-  const origin = parts[index]
-  if (!origin) return false
-  const level = headingLevel(origin.text)
-  for (let j = index + 1; j < parts.length; j += 1) {
-    const piece = parts[j]
-    if (!piece) continue
-    if (isHeading(piece.text) && headingLevel(piece.text) <= level) return false
-    if (isHeading(piece.text)) return sectionHasBody(parts, j)
-    return true
+function stackLast(raw: Piece[], index: number): number {
+  let j = index
+  while (j + 1 < raw.length) {
+    const part = raw[j]
+    const next = raw[j + 1]
+    if (!part || !directChild(part, next)) break
+    j += 1
+  }
+  return j
+}
+
+function bodyEnd(raw: Piece[], start: number): number {
+  let end = start
+  while (end < raw.length) {
+    const piece = raw[end]
+    if (!piece || isHeading(piece.text)) break
+    end += 1
+  }
+  return end
+}
+
+function bodyKeepsContent(raw: Piece[], kept: Set<Piece>, start: number, end: number): boolean {
+  for (let k = start; k < end; k += 1) {
+    const piece = raw[k]
+    if (piece && kept.has(piece)) return true
   }
   return false
+}
+
+function markStack(raw: Piece[], start: number, last: number, stay: Set<Piece>): void {
+  for (let j = start; j <= last; j += 1) {
+    const head = raw[j]
+    if (head) stay.add(head)
+  }
+}
+
+/** A parent heading stays when a later section under it keeps text. */
+function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
+  const kept = new Set(keptPieces)
+  const stay = new Set<Piece>()
+  let i = 0
+  while (i < raw.length) {
+    const part = raw[i]
+    if (!part || !isHeading(part.text)) {
+      i += 1
+      continue
+    }
+    const last = stackLast(raw, i)
+    const end = bodyEnd(raw, last + 1)
+    if (bodyKeepsContent(raw, kept, last + 1, end)) markStack(raw, i, last, stay)
+    i = end > last ? end : last + 1
+  }
+  return stay
 }
 
 function lineLabel(text: string): string {
@@ -474,13 +514,13 @@ function carriedLabel(steps: Piece[], index: number, label: string): string {
   return label
 }
 
-/** A heading with no step or bullet left under it is an empty label. */
-function dropEmptyHeadings(parts: Piece[]): Piece[] {
+/** Drop a heading when the guard removed the raw text in its section. */
+function dropEmptyHeadings(raw: Piece[], kept: Piece[]): Piece[] {
+  const stay = headingStaySet(raw, kept)
   const out: Piece[] = []
-  for (let i = 0; i < parts.length; i += 1) {
-    const part = parts[i]
+  for (const part of kept) {
     if (!part) continue
-    if (isHeading(part.text) && !sectionHasBody(parts, i)) continue
+    if (isHeading(part.text) && !stay.has(part)) continue
     out.push(part)
   }
   return out
@@ -556,7 +596,8 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: Dr
 
 /** Keep the separators, including a newline after a period. A dropped step takes its marker. */
 export function dropKeptPieces(text: string, keep: (sentence: string) => boolean, style: DropStyle = 'span'): string {
-  const kept = dropEmptyHeadings(selectPieces(joinedSteps(splitPieces(text)), keep, style))
+  const raw = joinedSteps(splitPieces(text))
+  const kept = dropEmptyHeadings(raw, selectPieces(raw, keep, style))
   return joinPieces(kept)
 }
 

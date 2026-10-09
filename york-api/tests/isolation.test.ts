@@ -436,6 +436,9 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.equal(grokStreamText(emptyTools).includes('15'), false)
   const fifteen = emptyTools.replace('"data":"5"', '"data":"15"')
   assert.equal(grokSmokeAnswerOk(fifteen), false)
+  assert.equal(grokSmokeAnswerOk(emptyTools.replace('"data":"5"', '"data":"5."')), true)
+  assert.equal(grokSmokeAnswerOk(emptyTools.replace('"data":"5"', '"data":"The answer is 5"')), false)
+  assert.equal(grokSmokeAnswerOk(emptyTools.replace('"data":"5"', '"data":"5.0"')), false)
   assert.equal(grokStartupVerdict(smokeVerdict(0, fifteen, '', false, 70_000), fifteen).ok, false)
   const thoughtFive = [
     '{"type":"available_commands","tools":[],"commands":[]}',
@@ -762,7 +765,12 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
   assert.equal(claudeNeedsSignIn('Please run /login'), true)
   assert.equal(claudeNeedsSignIn('Error: not logged in'), true)
   assert.equal(claudeNeedsSignIn('invalid api key'), true)
+  assert.equal(claudeNeedsSignIn('401'), true)
+  assert.equal(claudeNeedsSignIn('authentication_error'), true)
   assert.equal(claudeNeedsSignIn('exit=1 stderr='), false)
+  assert.equal(claudeNeedsSignIn('1401'), false)
+  assert.equal(claudeReprobeDelay(1, 'authentication_error'), 600_000)
+  assert.equal(claudeReprobeDelay(0, 'error 401'), 600_000)
   assert.equal(claudeReprobeDelay(0, 'Please run /login'), 600_000)
   assert.equal(claudeReprobeDelay(2, 'invalid api key'), 600_000)
   const timer = startClaudeReprobe({ YORK_CLAUDE_CLI: 'ready' })

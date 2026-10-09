@@ -6,6 +6,13 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z8
+
+- A heading drops only when the guard removed the raw text under it. A heading directly above another heading is a parent and stays when a later section keeps a step. "Eight-hour checklist" stays above "Shift start". "PUMPS" above "CHILLERS" stays when the step stays. "PUMPS" drops when its own sentence was removed. An empty "PUMPS" or "**Pumps**" still drops.
+- Grok startup accepts a reply that is the number 5 alone, with an optional final period.
+- "401" and "authentication_error" are sign-in errors, with the same 10 min wait.
+- A prose reply that quotes a JSON object stays prose. JSON is read only when the whole reply, or a fenced block, is the object.
+
 ### 2026-10-09 — YORK-8Z7
 
 - A heading has a body only when real content sits under it before the next heading of the same or higher level. "PUMPS" above "CHILLERS" is dropped. An empty "**Pumps**" is dropped. A "#" heading above a "##" heading that has a step stays.

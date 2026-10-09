@@ -459,6 +459,14 @@ test('bare string tool names become tool calls and unknown names are dropped', a
   const fenced = `\`\`\`json\n${BARE_TOOLS}\n\`\`\``
   assert.equal(parseModelPlan(fenced).validJson, true)
   assert.deepEqual(parseModelPlan(fenced).tools.map((tool) => tool.name), ['plant.getAlarms', 'plant.getActionLog'])
+  const quoted = 'The valve stays open. The shape is {"answer":"close it","cites":[],"tools":["plant.getAlarms"]}.'
+  const prose = parseModelPlan(quoted)
+  assert.equal(prose.validJson, false)
+  assert.equal(prose.answer, quoted)
+  assert.deepEqual(prose.tools, [])
+  const whole = '{"answer":"The hall is stable.","cites":["a"],"tools":[]}'
+  assert.equal(parseModelPlan(whole).validJson, true)
+  assert.equal(parseModelPlan(whole).answer, 'The hall is stable.')
   const result = await handleChat(
     { question: 'Read the alarms', snapshot: { blocksWrites: false }, round: 0 },
     deps(async () => llm(BARE_TOOLS)),
@@ -780,18 +788,20 @@ test('a computed number stays only with a correct equation in the same sentence'
   assert.equal(dropUntracedNumbers('1. The count is 99. Reason: the hall is warm. 2. Stay.', ''), '2. Stay.')
 })
 
-test('a same-level heading is not a body, and a deeper heading is', () => {
+test('stacked headings and a heading above a blank line stay', () => {
   const stacked = 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'
   assert.equal(dropUntracedNumbers(stacked, ''), stacked)
-  assert.equal(
-    dropUntracedNumbers('Eight-hour checklist\nShift start\n1. Open the valve.', ''),
-    'Shift start\n1. Open the valve.',
-  )
+  const parent = 'Eight-hour checklist\nShift start\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(parent, ''), parent)
   const nested = '# Eight-hour checklist\n## Shift start\n1. Open the valve.'
   assert.equal(dropUntracedNumbers(nested, ''), nested)
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
     'Eight-hour checklist\n\n1. Open the valve.',
+  )
+  assert.equal(
+    dropUntracedNumbers('Eight-hour checklist\nShift start\nThe count is 99.', ''),
+    '',
   )
 })
 
@@ -907,15 +917,23 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
 
 const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 
-test('an empty heading stops at the next heading of the same level', () => {
+test('an empty heading drops when its section lost its text', () => {
   assert.equal(dropUntracedNumbers('PUMPS', ''), '')
   assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
+  const pumps = 'PUMPS\nFANS\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(pumps, ''), pumps)
+  const chillers = 'PUMPS\nCHILLERS\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(chillers, ''), chillers)
+  assert.equal(
+    dropUntracedNumbers('PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', ''),
+    'CHILLERS\n1. Open the valve.',
+  )
   assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), '')
   assert.equal(dropUntracedNumbers('**Pumps**', ''), '')
   assert.equal(dropUntracedNumbers('**Pumps**\n1. Open the valve.', ''), '**Pumps**\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('**Pumps**\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('**Pumps**\nThe count is 99.', ''), '')
+  const bold = '**Pumps**\nCHILLERS\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(bold, ''), bold)
 })
 
 test('a heading or label is exempt from the STE passive check', () => {

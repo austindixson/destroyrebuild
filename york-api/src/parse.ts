@@ -38,9 +38,23 @@ export function announcesToolUse(text: string): boolean {
   return /\bi will (?:read|call|check)\b/i.test(text)
 }
 
-function unfence(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  return fenced?.[1] ?? text
+function replyBody(text: string): string {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
+  const inner = fenced?.[1]
+  if (inner) return inner.trim()
+  return text.trim()
+}
+
+function wholeObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 function quotedAnswer(text: string): string {
@@ -64,17 +78,14 @@ function prosePlan(answer: string): ModelPlan {
 }
 
 export function parseModelPlan(text: string): ModelPlan {
-  const body = unfence(text).trim()
-  const start = body.indexOf('{')
-  const end = body.lastIndexOf('}')
-  if (start < 0 || end <= start) return prosePlan(body)
-  try {
-    return planFromJson(JSON.parse(body.slice(start, end + 1)) as Record<string, unknown>)
-  } catch {
+  const body = replyBody(text)
+  const json = wholeObject(body)
+  if (json) return planFromJson(json)
+  if (body.startsWith('{')) {
     const answer = quotedAnswer(body)
     if (answer) return prosePlan(answer)
-    return prosePlan(body)
   }
+  return prosePlan(body)
 }
 
 export function usableModelText(text: string): boolean {
