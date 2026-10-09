@@ -512,9 +512,11 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
         }, true, GROK_BUDGET_MS),
         adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
           cursorCalls.push('claude')
-          assert.equal(roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude'), FOLLOW_CLAUDE_MS)
+          const budget = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude')
+          assert.ok(budget > 80_000)
+          assert.ok(budget <= 81_000)
           stampDeadline(signal, Date.now() + 52_000)
-          throw new Error('timeout budget=30000')
+          throw new Error(`timeout budget=${budget}`)
         }, true, CLAUDE_BUDGET_MS),
         adapter('cursor', 'auto', async () => {
           cursorCalls.push('cursor')
@@ -658,6 +660,37 @@ test('run 18 gives a follow-up claude the time left when the 30 s cap leaves no 
   assert.ok(lead > 63_000)
   assert.ok(lead <= 64_000)
   assert.deepEqual(calls, ['claude'])
+})
+
+test('hh-2 gives claude the spare time in front of cursor when 88 s remain', async () => {
+  const calls: string[] = []
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 88_000)
+  let lead = 0
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls.push('grok')
+        return 'The hall is stable.'
+      }, true, GROK_BUDGET_MS),
+      adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
+        calls.push('claude')
+        lead = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude')
+        stampDeadline(signal, Date.now() + 51_000)
+        throw new Error(`timeout budget=${lead}`)
+      }, true, CLAUDE_BUDGET_MS),
+      adapter('cursor', 'auto', async () => {
+        calls.push('cursor')
+        return 'The hall is stable.'
+      }, true, CURSOR_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 1 },
+    controller.signal,
+  )
+  assert.ok(lead > 36_000)
+  assert.ok(lead <= 37_000)
+  assert.equal(result.provider, 'cursor')
+  assert.deepEqual(calls, ['claude', 'cursor'])
 })
 
 test('a follow-up tier must be known and cannot override the only-tier header', () => {

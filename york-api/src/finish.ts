@@ -118,11 +118,21 @@ function findFrom(sentences: string[], sentence: string, start: number): number 
   return -1
 }
 
+function ownsStep(owner: string, kept: Set<string>): boolean {
+  if (kept.has(owner)) return true
+  const tail = ` ${owner}`
+  for (const sentence of kept) {
+    if (!sentence.endsWith(tail)) continue
+    if (/^\d+\.$/.test(sentence.slice(0, sentence.length - tail.length))) return true
+  }
+  return false
+}
+
 function reasonKept(sentences: string[], index: number, kept: Set<string>): boolean {
   if (index <= 0) return false
   const owner = sentences[index - 1] ?? ''
   if (!owner || isReason(owner)) return false
-  return kept.has(owner)
+  return ownsStep(owner, kept)
 }
 
 /** A Reason sentence stays only when the step before it is still in the answer. */

@@ -372,7 +372,9 @@ test('the example shows one tool object and says to leave tools empty', () => {
 test('a follow-up prompt keeps the chiller row, differential pressure, hall return, and LCHLT setpoint', () => {
   const snapshot = {
     view: 'home',
-    units: [{ id: 'CH-01', mode: 'run', rla: 34, running: true }],
+    blocksWrites: true,
+    incident: 'hall-hot',
+    units: [{ id: 'CH-01', mode: 'run', rla: 34, running: true, condPsig: 71 }],
     plant: {
       hallReturnF: 85,
       lchltSet: 44,
@@ -400,6 +402,9 @@ test('a follow-up prompt keeps the chiller row, differential pressure, hall retu
   assert.match(prompt.user, /"hallReturnF":85/)
   assert.match(prompt.user, /"lchltSet":44/)
   assert.match(prompt.user, /34%/)
+  assert.match(prompt.user, /"blocksWrites":true/)
+  assert.match(prompt.user, /"incident":"hall-hot"/)
+  assert.match(prompt.user, /"condPsig":71/)
   assert.equal(prompt.user.includes('Snapshot delta:'), false)
   assert.equal(prompt.user.includes('kpi.ch01Fla'), false)
   assert.equal(prompt.user.includes('pinched'), false)
@@ -742,7 +747,8 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
   assert.equal(dropUntracedNumbers('The count is 2.', '12 rows'), '')
   const list = '1. Open the valve. 2. Start the spare. 3. Read the hall.'
   assert.equal(dropUntracedNumbers(list, ''), list)
-  assert.equal(dropUntracedNumbers('3. The count is 9.', ''), '3.')
-  assert.equal(dropUntracedNumbers('3. The count is 9.', '9 rows'), '3. The count is 9.')
+  assert.equal(dropUntracedNumbers('3. The count is 9.', ''), '')
+  assert.equal(dropUntracedNumbers('3. The count is 9.', '9 rows'), '1. The count is 9.')
   assert.equal(dropUntracedNumbers('The reading is 9.5 psi.', ''), '')
+  assert.equal(dropUntracedNumbers('4. A. 5. B 1.8 psi. Reason: C. 6. D.', ''), '1. A. 2. D.')
 })

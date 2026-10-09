@@ -81,6 +81,7 @@ function chillerRow(unit: Record<string, unknown>, plant: Record<string, unknown
     row.rla = unit.rla
     row.fla = `${unit.rla}%`
   }
+  if (typeof unit.condPsig === 'number') row.condPsig = unit.condPsig
   if (typeof plant.lchltAct === 'number') row.lchltAct = plant.lchltAct
   if (typeof plant.lchltSet === 'number') row.lchltSet = plant.lchltSet
   return row
@@ -96,6 +97,8 @@ function chillerRows(snapshot: Record<string, unknown>, plant: Record<string, un
 function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
   const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
   const readings: Record<string, unknown> = { units: chillerRows(snapshot, plant), ...numericReadings(plant) }
+  if (typeof snapshot.blocksWrites === 'boolean') readings.blocksWrites = snapshot.blocksWrites
+  if (typeof snapshot.incident === 'string' || snapshot.incident === null) readings.incident = snapshot.incident
   if (typeof plant.alarm === 'string' && plant.alarm.length > 0) readings.alarm = plant.alarm
   return readings
 }

@@ -54,26 +54,31 @@ function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
 /** A last tier starts on the time left when at least this much remains. */
 export const LAST_TIER_FLOOR_MS = 40_000
 
-/** Follow-up cap for claude when a later tier can still take its full budget. */
-export const FOLLOW_CLAUDE_MS = 30_000
+/** Follow-up floor for claude. Spare time in front of the next tier is added on top. */
+export const FOLLOW_CLAUDE_MS = 36_000
 
 const FOLLOW_SLACK_MS = 1_000
 
-/** True when this follow-up or round-0 claude turn should take the time left minus 1 s. */
+/** True when this round-0 claude turn should take the time left minus 1 s. */
 const claudeRest = new WeakMap<AbortSignal, boolean>()
+
+/** Follow-up: full budget reserved for the next tier. Zero means no later tier fits. */
+const followLaterMs = new WeakMap<AbortSignal, number>()
 
 function slackRoom(left: number): number {
   return Math.max(0, Math.floor(left) - FOLLOW_SLACK_MS)
 }
 
-function laterFullFits(later: Adapter[], left: number, leadMs: number): boolean {
-  if (!Number.isFinite(left)) return true
+/** Full budget of the next later tier that still fits after the claude floor. Zero when none can. */
+function nextLaterBudget(later: Adapter[], left: number): number {
+  if (!Number.isFinite(left)) return 0
+  const afterFloor = left - FOLLOW_CLAUDE_MS
   for (const item of later) {
     const budget = item.budgetMs
     if (!item.enabled() || !budget) continue
-    if (left - leadMs >= budget) return true
+    if (afterFloor >= budget) return budget
   }
-  return false
+  return 0
 }
 
 function openLater(later: Adapter[], round: number, skip: readonly string[]): Adapter[] {
@@ -85,8 +90,11 @@ function followClaudeMs(signal: AbortSignal): number {
   const left = remainingMs(signal)
   if (!Number.isFinite(left)) return FOLLOW_CLAUDE_MS
   const room = slackRoom(left)
-  if (claudeRest.get(signal) === true) return room
-  return Math.min(FOLLOW_CLAUDE_MS, room)
+  const later = followLaterMs.get(signal)
+  if (later === undefined) return Math.min(FOLLOW_CLAUDE_MS, room)
+  if (later === 0) return room
+  const share = Math.floor(left) - later - FOLLOW_SLACK_MS
+  return Math.min(room, Math.max(FOLLOW_CLAUDE_MS, share))
 }
 
 function claudeBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined): number {
@@ -97,7 +105,7 @@ function claudeBudgetMs(signal: AbortSignal, tierMs: number, round: number | und
   return slackRoom(left)
 }
 
-/** Round 0 uses the tier budget. A follow-up claude takes 30 s when a later tier fits after that cap, and the time left minus 1 s when none does. */
+/** Round 0 uses the tier budget. A follow-up claude takes at least 36 s, plus spare time in front of the next tier. */
 export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, tierId = ''): number {
   if (tierId === 'claude') return claudeBudgetMs(signal, tierMs, round)
   if (!round || round < 1) return tierMs
@@ -112,7 +120,7 @@ function armClaude(signal: AbortSignal, adapter: Adapter, later: Adapter[], roun
   const step = round ?? 0
   const left = remainingMs(signal)
   if (step >= 1) {
-    claudeRest.set(signal, !laterFullFits(openLater(later, step, skip), left, FOLLOW_CLAUDE_MS))
+    followLaterMs.set(signal, nextLaterBudget(openLater(later, step, skip), left))
     return false
   }
   const cursor = later.find((item) => item.id === 'cursor' && item.enabled())

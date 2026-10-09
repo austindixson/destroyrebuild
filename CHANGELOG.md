@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8X
+
+- A checklist marker stays with its step. A dropped step takes that marker and the Reason after it. The steps that remain are numbered from 1.
+- A follow-up gives claude at least 36 s. When a later tier can still run, claude also receives the spare time in front of that tier.
+- A follow-up snapshot includes blocksWrites, the incident, and condenser pressure on each chiller row.
+
 ### 2026-10-09 — YORK-8W
 
 - A follow-up sends chiller rows, numeric plant readings, and the active alarm. The OptiView log, the reason text, the shown strings, and the duplicate chiller blocks stay off that prompt.

@@ -39,10 +39,53 @@ function numberTokens(text: string): string[] {
   return text.match(NUMBER_TOKEN) ?? []
 }
 
+const BARE_STEP = /^\d+\.$/
+
 /** A leading "3." or "3. " is a checklist marker, not a live reading. */
 function checkedNumbers(sentence: string): string[] {
-  if (/^\d+\.$/.test(sentence)) return []
+  if (BARE_STEP.test(sentence)) return []
   return numberTokens(sentence.replace(/^\d+\.\s/, ''))
+}
+
+/** A bare "5." belongs to the next sentence. They stay or go together. */
+function joinedSteps(parts: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]
+    if (!part) continue
+    const next = parts[i + 1]
+    if (BARE_STEP.test(part) && next && !BARE_STEP.test(next)) {
+      out.push(`${part} ${next}`)
+      i += 1
+      continue
+    }
+    out.push(part)
+  }
+  return out
+}
+
+function withoutUntraced(steps: string[], known: Set<string>): string[] {
+  const kept: string[] = []
+  for (let i = 0; i < steps.length; i += 1) {
+    const sentence = steps[i]
+    if (!sentence) continue
+    if (checkedNumbers(sentence).every((num) => known.has(num))) {
+      kept.push(sentence)
+      continue
+    }
+    const next = steps[i + 1]
+    if (/^\d+\./.test(sentence) && next?.startsWith('Reason:')) i += 1
+  }
+  return kept
+}
+
+function renumberSteps(kept: string[]): string[] {
+  let n = 0
+  return kept.map((sentence) => {
+    if (!/^\d+\./.test(sentence)) return sentence
+    n += 1
+    return sentence.replace(/^\d+\./, `${n}.`)
+  })
 }
 
 function oddQuotes(sentence: string): boolean {
@@ -60,8 +103,8 @@ export function dropUnmatchedQuotes(text: string): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  const kept = sentences(text).filter((sentence) => checkedNumbers(sentence).every((num) => known.has(num)))
-  return kept.join(' ')
+  const kept = withoutUntraced(joinedSteps(sentences(text)), known)
+  return renumberSteps(kept).join(' ')
 }
 
 export function labelLiveNumbers(text: string): string {
