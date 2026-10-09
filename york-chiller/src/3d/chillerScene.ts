@@ -25,11 +25,11 @@ const MB = 1_048_576
 const MAX_PIXEL_RATIO = 1.5
 
 /**
- * Far LOD is only for a unit smaller than about 120 canvas pixels.
- * Below the inner size it becomes far. Above the outer size it returns to the near mesh.
+ * Far LOD is only for a unit that is too small to read.
+ * Below 45 CSS pixels it becomes far. Above 65 CSS pixels it returns to the near mesh.
  */
-const LOD_FAR_IN_PX = 100
-const LOD_FAR_OUT_PX = 140
+const LOD_FAR_IN_PX = 45
+const LOD_FAR_OUT_PX = 65
 
 /** 0 = full mesh (focused unit), 1 = near, 2 = far. */
 const LOD_FULL = 0
@@ -103,7 +103,7 @@ type PlantTag = 'CHWS' | 'CHWR' | 'CWS' | 'CWR' | 'GLS' | 'GLR' | 'TOWER · WATE
 const TAG_OFFSET: Record<PlantTag, { x: number; y: number }> = {
   CHWS: { x: 28, y: -112 },
   CHWR: { x: 28, y: -56 },
-  CWS: { x: 28, y: 4 },
+  CWS: { x: 112, y: 4 },
   CWR: { x: 28, y: 62 },
   GLS: { x: -72, y: -24 },
   GLR: { x: -72, y: 52 },

@@ -4,14 +4,15 @@ Newest entries are first. Add a new heading. Do not change old entries.
 
 ## 2026-10-09 — PR #25 — YORK-12
 
-- The lead package is the original 119,514-triangle mesh, meshopt compressed. The file is 6.2 MB. It was 13.6 MB.
+- The lead package is the original 119,514-triangle mesh, meshopt compressed. The file is 6.5 MB. It was 13.6 MB.
 - The nameplate and OptiView base color stay at 2048. The normal map and the metal-rough map are 1024.
-- A selected fleet unit uses that full mesh. Other units use a seam-locked 51,080-triangle mesh while they cover at least about 120 canvas pixels, and a 17,975-triangle mesh when they are smaller.
-- The far mesh locks borders and weights normals and texture coordinates. It does not use Permissive mode. Vertices that already share a position are welded first, because a locked simplify of the split mesh stops near 51,080 triangles.
-- The far mesh turns on below 100 canvas pixels and turns off above 140. Each level is one instanced draw.
-- A desktop sample of the live trainer draws 126,212 triangles in 103 calls. Three frame-time samples were 340 ms, 358 ms, and 433 ms. The pixel ratio stops at 1.5.
-- A real fleet of 18 units draws 431,787 triangles in 104 calls. Three frame-time samples were 525 ms, 642 ms, and 911 ms. All 17 extra units are on the far mesh.
-- A real fleet of 36 units draws 755,337 triangles in 104 calls. Three frame-time samples were 821 ms, 917 ms, and 1,130 ms. All 35 extra units are on the far mesh.
+- A selected fleet unit uses that full mesh. Other units use a seam-locked 51,080-triangle mesh above about 65 CSS pixels, and a 26,980-triangle mesh when they are smaller.
+- The far mesh welds a vertex only when position, normal, and UV are the same. Borders stay locked. Painted vertices on the nameplate, OptiView, JCI mark, and panel stay locked. Flat shell seams may collapse. It does not weld on position alone. `york-chiller/scripts/build-ymc2-lod.mjs` rebuilds the file from the original float mesh.
+- The far mesh turns on below 45 CSS pixels and turns off above 65. Each level is one instanced draw.
+- A desktop sample of the live trainer draws 126,212 triangles in 103 calls. The median frame time was 250 ms. The pixel ratio stops at 1.5.
+- A real fleet of 18 units draws 825,872 triangles in 105 calls. The median frame time was 833 ms. Ten extra units are on the near mesh and seven are on the far mesh (about 61–74 CSS pixels).
+- A real fleet of 36 units draws 1,070,512 triangles in 104 calls. The median frame time was 983 ms. All 35 extra units are on the far mesh (about 41–50 CSS pixels).
+- The CWS tag sits further right than the chilled-water stack, so it does not cover the ends of the CHWR, CHWS, and CWR leaders.
 - Pipe runs merge to one mesh per loop colour. Valves, flanges, gauges, and fans share shapes and materials.
 - The desktop shadow map is 1024 and uses PCF. The package mesh receives that shadow. This Three.js release folded the old PCFSoft type into PCF.
 - Fog density starts at 0.035 and falls with the fleet span (0.011 at 18 units, 0.0076 at 36).
