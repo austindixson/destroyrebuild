@@ -384,7 +384,7 @@ function followsStep(text: string): boolean {
 /** A blank line, a new list item, or a standalone next line ends the span. */
 function endsSpan(prev: Piece, next: Piece, bullet: boolean): boolean {
   if (isListMarker(next.text)) return true
-  if (isHeading(next.text)) return true
+  if (isHeading(next.text) || isHourLabel(next.text)) return true
   if (/\n\s*\n/.test(prev.sep)) return true
   if (!prev.sep.includes('\n')) return false
   if (bullet) return false
@@ -406,22 +406,86 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
+function hashLevel(text: string): number | null {
+  const marks = /^(#{1,6})(?:\s|$)/.exec(text.trim())
+  if (!marks?.[1]) return null
+  return marks[1].length
+}
+
+/** An hour line such as "Hour 0 to 1" is a sub-heading when it sits under a heading. */
+function isHourLabel(text: string): boolean {
+  if (/[.!?]$/.test(text) || /:\s*\S/.test(text)) return false
+  if (wordCount(text) > HEADING_LIMIT) return false
+  return /^(?:hours?\b|after\b|every\b|at hour\b|within\b)/i.test(text) && /\d/.test(text)
+}
+
+function pieceIsHeading(raw: Piece[], index: number): boolean {
+  const part = raw[index]
+  if (!part) return false
+  if (isHeading(part.text)) return true
+  if (!isHourLabel(part.text)) return false
+  const prev = raw[index - 1]
+  return !!prev && (isHeading(prev.text) || isHourLabel(prev.text))
+}
+
+/** A plain heading sits under every markdown level. */
+const PLAIN_LEVEL = 8
+
+function headingLevels(raw: Piece[]): number[] {
+  const levels = new Array<number>(raw.length).fill(0)
+  for (let i = raw.length - 1; i >= 0; i -= 1) {
+    const part = raw[i]
+    if (!part || !pieceIsHeading(raw, i)) continue
+    const hash = hashLevel(part.text)
+    if (hash !== null) {
+      levels[i] = hash
+      continue
+    }
+    const nextLevel = pieceIsHeading(raw, i + 1) ? levels[i + 1] ?? PLAIN_LEVEL : null
+    levels[i] = nextLevel === null ? PLAIN_LEVEL : nextLevel - 1
+  }
+  return levels
+}
+
+function capsHeading(text: string): boolean {
+  const words = text.replace(/[^A-Za-z\s]/g, ' ').trim()
+  return words.length > 0 && words === words.toUpperCase() && /[A-Z]/.test(words)
+}
+
+function blankBefore(raw: Piece[], index: number): boolean {
+  const prev = raw[index - 1]
+  return !!prev && /\n\s*\n/.test(prev.sep)
+}
+
+/** A plain, bold, or CAPS scope ends at a blank-line heading or a CAPS heading after content. */
+function plainBoundary(raw: Piece[], index: number, seenContent: boolean): boolean {
+  const part = raw[index]
+  if (!part || !seenContent) return false
+  if (blankBefore(raw, index)) return true
+  return capsHeading(part.text)
+}
+
 /**
- * A parent covers the consecutive headings that follow it before any content.
- * Blank lines are separators, so they stay inside that group.
- * The next heading after content ends the scope: a later plain heading,
- * a blank-line heading, or a CAPS heading.
+ * A # heading runs until the next heading at that level or higher.
+ * A plain heading keeps later subsections in its group until a blank line or a CAPS heading.
  */
-function scopeEnd(raw: Piece[], index: number): number {
+function scopeEnd(raw: Piece[], levels: number[], index: number): number {
+  const own = levels[index] ?? 0
+  const hashed = hashLevel(raw[index]?.text ?? '') !== null
   let seenContent = false
   for (let j = index + 1; j < raw.length; j += 1) {
     const part = raw[j]
     if (!part) continue
-    if (!isHeading(part.text)) {
+    if (!pieceIsHeading(raw, j)) {
       seenContent = true
       continue
     }
-    if (seenContent) return j
+    const deeper = (levels[j] ?? 0) > own
+    if (hashed) {
+      if (!deeper) return j
+      continue
+    }
+    if (!deeper || plainBoundary(raw, j, seenContent)) return j
   }
   return raw.length
 }
@@ -433,7 +497,7 @@ function scopeFacts(raw: Piece[], kept: Set<Piece>, start: number, end: number):
   for (let k = start; k < end; k += 1) {
     const piece = raw[k]
     if (!piece) continue
-    if (isHeading(piece.text)) {
+    if (pieceIsHeading(raw, k)) {
       facts.child = true
       continue
     }
@@ -450,12 +514,13 @@ function headingStays(facts: ScopeFacts): boolean {
 }
 
 function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
+  const levels = headingLevels(raw)
   const kept = new Set(keptPieces)
   const stay = new Set<Piece>()
   for (let i = 0; i < raw.length; i += 1) {
     const part = raw[i]
-    if (!part || !isHeading(part.text)) continue
-    if (headingStays(scopeFacts(raw, kept, i + 1, scopeEnd(raw, i)))) stay.add(part)
+    if (!part || !pieceIsHeading(raw, i)) continue
+    if (headingStays(scopeFacts(raw, kept, i + 1, scopeEnd(raw, levels, i)))) stay.add(part)
   }
   return stay
 }
@@ -513,7 +578,7 @@ function dropEmptyHeadings(raw: Piece[], kept: Piece[]): Piece[] {
   const out: Piece[] = []
   for (const part of kept) {
     if (!part) continue
-    if (isHeading(part.text) && !stay.has(part)) continue
+    if (pieceIsHeading(raw, raw.indexOf(part)) && !stay.has(part)) continue
     out.push(part)
   }
   return out
@@ -590,7 +655,8 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: Dr
 /** Keep the separators, including a newline after a period. A dropped step takes its marker. */
 export function dropKeptPieces(text: string, keep: (sentence: string) => boolean, style: DropStyle = 'span'): string {
   const raw = joinedSteps(splitPieces(text))
-  const kept = dropEmptyHeadings(raw, selectPieces(raw, keep, style))
+  const selected = selectPieces(raw, keep, style)
+  const kept = style === 'bullet-sentence' ? dropEmptyHeadings(raw, selected) : selected
   return joinPieces(kept)
 }
 

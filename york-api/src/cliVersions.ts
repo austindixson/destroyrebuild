@@ -250,10 +250,18 @@ export function claudeNeedsSignIn(reason: string): boolean {
   return /oauth session expired|please run \/login|not logged in|invalid api key|authentication_error|\b401\b/i.test(reason)
 }
 
-/** One more try after a failed probe. A success returns on the first call. */
+let smokeStopped = false
+
+/** Tests keep going in one process. A real stop exits. */
+export function resetSmokeShutdown(): void {
+  smokeStopped = false
+}
+
+/** One more try after a failed probe. A shutdown does not start the next try. */
 export async function retryOnce(probe: () => Promise<SmokeVerdict>): Promise<SmokeVerdict> {
+  if (smokeStopped) return { ok: false, reason: 'shutdown' }
   const first = await probe()
-  if (first.ok) return first
+  if (first.ok || smokeStopped) return first
   return probe()
 }
 
@@ -420,6 +428,7 @@ function forgetSmokeDir(dir: string): void {
 
 /** Clears every smoke directory still open when a restart arrives. */
 export async function stopOpenSmokes(): Promise<void> {
+  smokeStopped = true
   const jobs = [...openSmokes]
   openSmokes.clear()
   for (const job of jobs) await releaseSmokeDir(job.dir, job.pgid)
@@ -433,11 +442,17 @@ async function smokeOne(
   prepare: (dir: string) => Promise<Awaited<ReturnType<typeof prepareGrokLaunch>>>,
   force = false,
 ): Promise<SmokeVerdict | null> {
+  if (smokeStopped) return { ok: false, reason: 'shutdown' }
   if (!force && env[flag] === 'unavailable') return null
   const limits = tierBudgetMs(env)
   const budgetMs = limits[name as keyof typeof limits]
   const dir = await mkdtemp(join(tmpdir(), `york-smoke-${name}-`))
   holdSmokeDir(dir)
+  if (smokeStopped) {
+    await releaseSmokeDir(dir, smokeJob(dir)?.pgid)
+    forgetSmokeDir(dir)
+    return { ok: false, reason: 'shutdown' }
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(timeoutReason(budgetMs)), budgetMs)
   try {

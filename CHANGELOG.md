@@ -6,9 +6,17 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z12
+
+- A plan object with lead-in or trailing text is read only when that object starts at the beginning of a line and ends at the end of a line, or when it is fenced. "The model replied {"answer":"x"} last time. CH-01 runs at 34% FLA." stays prose. "To read alarms, send {"tools":[...]} to the tool." stays prose and runs no tool. "Here is my reply:" and "Sure." before an object on the next line still parse. "Thanks." on the next line still parses.
+- A # heading uses its # level for scope. "# Plant" stays above "## Pumps" and "## Chillers". "# Eight-hour checklist" stays when "## Shift start" is emptied and "## Mid shift" keeps its step, with or without blank lines.
+- A plain title stays when a later subsection in its group keeps text. "Eight-hour checklist" stays when "Mid shift" keeps "2. Log it". "Shift start" stays when "Mid shift" keeps "2. ok". A blank line before "CHILLERS" still ends that group. The prompt tells the model to use a # heading for a section and a ## heading for a subsection.
+- "Hour 0 to 1" directly under a heading is a sub-heading. It does not count as content.
+- Once a shutdown starts, a flag blocks retryOnce and any new smoke check. Each retry's temp directory and process group stay tracked until the group exits.
+
 ### 2026-10-09 — YORK-8Z11
 
-- A parent heading covers only the consecutive sub-headings that follow it before any content. A blank line between those headings still keeps the group. The scope ends at the next heading after content, including a later plain heading, a blank-line heading, or a CAPS heading. "Eight-hour checklist" and "Shift start" drop when the step is untraced and "CHILLERS" keeps "- CH-01". "Shift start" and "First hour" drop when "Mid shift" keeps "2. ok". An emptied "## Pumps" drops when "CHILLERS" follows the removed sentence. "CHECKLIST" above "SHIFT START" still stays. "PUMPS" above "CHILLERS" still stays when the bullet stays.
+- A parent heading covers the consecutive sub-headings that follow it before any content. A blank line between those headings still keeps the group. A blank line before a later heading, or a CAPS heading after content, ends that group. "Eight-hour checklist" and "Shift start" drop when the step is untraced and a blank line before "CHILLERS" keeps "- CH-01". "CHECKLIST" above "SHIFT START" stays. "PUMPS" above "CHILLERS" stays when the bullet stays.
 - One plan object may have 40 characters of lead-in and 80 characters of trailing text when that trail starts with whitespace. A tools object followed by "I will wait for the result." is a tool call. "Sure." before an answer object and "Thanks." after it is the answer. "It said {"answer":"x"}." stays prose. A trail of 81 characters stays prose.
 - "Use the { key. The "answer": is on screen." does not ask for JSON again. An unclosed `{"` after a short lead-in still does.
 - Smoke helpers are found with `pgrep -P` and `ps`. Each helper starts in its own process group. A stop sends SIGTERM, then SIGKILL after 2 seconds, on SIGTERM, SIGINT, and a restart. The temp directory is removed after the group exits.

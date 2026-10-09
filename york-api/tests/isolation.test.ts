@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverGrok, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -855,6 +855,7 @@ test('a restart clears helpers found by ps and the smoke directory', async () =>
     assert.ok(Date.now() - started < 1_500)
   } finally {
     await stopOpenSmokes()
+    resetSmokeShutdown()
     try { process.kill(-pid, 'SIGKILL') } catch { /* group already gone */ }
     if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
   }
@@ -900,6 +901,7 @@ test('a helper that ignores SIGTERM is killed with its setsid child after 2 s', 
       try { process.kill(stray, 'SIGKILL') } catch { /* already gone */ }
     }
     if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
+    resetSmokeShutdown()
   }
 })
 
@@ -922,10 +924,47 @@ test('a tracked process group stops when the command line omits the directory', 
     await stopOpenSmokes()
     try { process.kill(-pid, 'SIGKILL') } catch { /* group already gone */ }
     if (existsSync(dir)) await rm(dir, { recursive: true, force: true })
+    resetSmokeShutdown()
+  }
+})
+
+test('a shutdown blocks the next smoke retry and keeps every open directory', async () => {
+  const first = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
+  const second = await mkdtemp(join(tmpdir(), 'york-smoke-cursor-'))
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);', first], { detached: true, stdio: 'ignore' })
+  const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);', second], { detached: true, stdio: 'ignore' })
+  child.on('exit', () => {})
+  other.on('exit', () => {})
+  child.unref()
+  other.unref()
+  const firstPid = child.pid ?? 0
+  const secondPid = other.pid ?? 0
+  try {
+    holdSmokeDir(first, firstPid)
+    holdSmokeDir(second, secondPid)
+    let calls = 0
+    const verdict = await retryOnce(async () => {
+      calls += 1
+      if (calls === 1) await stopOpenSmokes()
+      return { ok: false, reason: 'smoke-mismatch' }
+    })
+    assert.equal(calls, 1)
+    assert.equal(verdict.reason, 'smoke-mismatch')
+    assert.equal(existsSync(first), false)
+    assert.equal(existsSync(second), false)
+    assert.equal(processAlive(firstPid), false)
+    assert.equal(processAlive(secondPid), false)
+  } finally {
+    resetSmokeShutdown()
+    try { process.kill(-firstPid, 'SIGKILL') } catch { /* group already gone */ }
+    try { process.kill(-secondPid, 'SIGKILL') } catch { /* group already gone */ }
+    if (existsSync(first)) await rm(first, { recursive: true, force: true })
+    if (existsSync(second)) await rm(second, { recursive: true, force: true })
   }
 })
 
 test('grok smoke retries once and reprobes on the claude backoff', async () => {
+  resetSmokeShutdown()
   let calls = 0
   const retried = await retryOnce(async () => {
     calls += 1

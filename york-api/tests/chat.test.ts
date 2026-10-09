@@ -369,8 +369,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round1.system, /State only a target that the data shows/)
   assert.match(round0.system, /computed number may appear only with its work shown/)
   assert.match(round0.system, /17 - 9\.5 = 7\.5/)
-  assert.equal(promptBytes(round1), 2442)
-  assert.equal(promptBytes(round0), 3667)
+  assert.equal(promptBytes(round1), 2546)
+  assert.equal(promptBytes(round0), 3771)
   assert.equal(round1.user.length, 569)
   assert.equal(round0.user.length, 2020)
 })
@@ -495,10 +495,13 @@ test('a short lead-in before one JSON object is that object', () => {
   assert.deepEqual(answerPlan.cites, ['a'])
   assert.equal(planTurn(answer, false).kind, 'answer')
   const object = '{"answer":"The hall is stable.","cites":[],"tools":[]}'
-  assert.equal(parseModelPlan(`${'x'.repeat(40)}${object}`).validJson, true)
-  const longer = `${'x'.repeat(41)}${object}`
+  assert.equal(parseModelPlan(`${'x'.repeat(40)}\n${object}`).validJson, true)
+  const longer = `${'x'.repeat(41)}\n${object}`
   assert.equal(parseModelPlan(longer).validJson, false)
   assert.equal(parseModelPlan(longer).answer, longer)
+  const glued = `${'x'.repeat(40)}${object}`
+  assert.equal(parseModelPlan(glued).validJson, false)
+  assert.equal(jsonRetryNeeded(glued), false)
   const broken = 'Sure.\n{"answer":"The hall is stable.",}'
   assert.equal(parseModelPlan(broken).validJson, false)
   assert.equal(jsonRetryNeeded(broken), true)
@@ -846,7 +849,7 @@ test('stacked headings and a heading above a blank line stay', () => {
     '',
   )
   const later = 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it'
-  assert.equal(dropUntracedNumbers(later, ''), 'Mid shift\n2. Log it')
+  assert.equal(dropUntracedNumbers(later, ''), 'Eight-hour checklist\nMid shift\n2. Log it')
 })
 
 test('schedule words do not empty an answer', () => {
@@ -970,10 +973,10 @@ test('heading scope follows one level rule', () => {
     ['hash-nest', '# Eight-hour checklist\n## Shift start\n1. Open the valve.', '# Eight-hour checklist\n## Shift start\n1. Open the valve.'],
     ['pumps-empty-above-chillers', 'PUMPS\nCHILLERS\n- Open the valve.', 'PUMPS\nCHILLERS\n- Open the valve.'],
     ['emptied-bold', '**Pumps**\nThe count is 99.\n**Alarms**\nThe count is 88.', ''],
-    ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Mid shift\n2. Log it'],
+    ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Eight-hour checklist\nMid shift\n2. Log it'],
     ['d24-chillers-after-blank', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\n\nCHILLERS\n- CH-01', 'CHILLERS\n- CH-01'],
-    ['d24-mid-after-content', 'Shift start\nFirst hour\n1. Check pump 3 (untraced)\nMid shift\n2. ok', 'Mid shift\n2. ok'],
-    ['d24-emptied-hash', '## Pumps\nThe count is 99.\nCHILLERS\n- Open the valve.', 'CHILLERS\n- Open the valve.'],
+    ['d24-mid-after-content', 'Shift start\nFirst hour\n1. Check pump 3 (untraced)\nMid shift\n2. ok', 'Shift start\nMid shift\n2. ok'],
+    ['d24-emptied-hash', '## Pumps\nThe count is 99.\nCHILLERS\n- Open the valve.', '## Pumps\nCHILLERS\n- Open the valve.'],
     ['d16-shift-start', 'Eight-hour checklist\nShift start\n1. Open the valve.', 'Eight-hour checklist\nShift start\n1. Open the valve.'],
     ['d8-sibling-removed', 'PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', 'CHILLERS\n1. Open the valve.'],
     ['d8-empty-leaf', 'PUMPS', ''],

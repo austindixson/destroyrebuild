@@ -136,8 +136,17 @@ function trailOk(text: string, span: Brace): boolean {
   return tail.trim().length <= TRAIL_LIMIT
 }
 
+/** The object occupies its own line. Lead-in and trailing text sit on other lines. */
+function ownLine(text: string, span: Brace): boolean {
+  const before = text.slice(0, span.start)
+  const after = text.slice(span.end)
+  const startOk = before.length === 0 || /(?:^|\n)[ \t]*$/.test(before)
+  const endOk = after.length === 0 || /^[ \t]*(?:\n|$)/.test(after)
+  return startOk && endOk
+}
+
 function frameOk(text: string, span: Brace): boolean {
-  return leadText(text, span).length <= LEAD_LIMIT && trailOk(text, span)
+  return ownLine(text, span) && leadText(text, span).length <= LEAD_LIMIT && trailOk(text, span)
 }
 
 /** `{` starts a plan object only when the next non-space character is `"`. */
@@ -195,7 +204,13 @@ function unclosedPlan(text: string): Brace | null {
   return { start, end: text.length }
 }
 
-/** One plan object with a short lead-in and a short separated trail. A glued quote stays prose. */
+function unclosedAtLine(text: string): Brace | null {
+  const open = unclosedPlan(text)
+  if (!open || !ownLine(text, { start: open.start, end: text.length })) return null
+  return open
+}
+
+/** One plan object on its own line, with a short lead-in and a short separated trail. */
 function ledPlan(text: string): Record<string, unknown> | null {
   const spans = planSpans(text)
   if (spans.length !== 1) return null
@@ -210,7 +225,7 @@ function ledPlan(text: string): Record<string, unknown> | null {
 export function jsonRetryNeeded(text: string): boolean {
   const body = replyBody(text)
   if (wholeObject(body)) return false
-  const open = unclosedPlan(body)
+  const open = unclosedAtLine(body)
   const closed = planSpans(body)
   if (closed.length > 1) return true
   if (open && closed.length > 0) return true

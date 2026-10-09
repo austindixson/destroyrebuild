@@ -41,7 +41,7 @@ const rows: ParseExpect[] = [
   },
   {
     name: 'd20-lead-40',
-    text: `${'x'.repeat(40)}${HALL_BARE}`,
+    text: `${'x'.repeat(40)}\n${HALL_BARE}`,
     valid: true,
     retry: false,
     usable: true,
@@ -50,7 +50,14 @@ const rows: ParseExpect[] = [
   },
   {
     name: 'd20-lead-41',
-    text: `${'x'.repeat(41)}${HALL_BARE}`,
+    text: `${'x'.repeat(41)}\n${HALL_BARE}`,
+    valid: false,
+    retry: false,
+    usable: true,
+  },
+  {
+    name: 'd26-glued-lead',
+    text: `${'x'.repeat(40)}${HALL_BARE}`,
     valid: false,
     retry: false,
     usable: true,
@@ -134,6 +141,33 @@ const rows: ParseExpect[] = [
     answer: 'Use the { key. The "answer": is on screen.',
   },
   {
+    name: 'd26-inline-answer',
+    text: 'The model replied {"answer":"x"} last time. CH-01 runs at 34% FLA.',
+    valid: false,
+    retry: false,
+    usable: true,
+    answer: 'The model replied {"answer":"x"} last time. CH-01 runs at 34% FLA.',
+    kind: 'answer',
+  },
+  {
+    name: 'd26-inline-tools',
+    text: 'To read alarms, send {"answer":"","cites":[],"tools":["plant.getAlarms"]} to the tool.',
+    valid: false,
+    retry: false,
+    usable: true,
+    tools: [],
+    kind: 'answer',
+  },
+  {
+    name: 'd20-fenced-block',
+    text: `The model wrote this.\n\`\`\`json\n${HALL}\n\`\`\`\nThanks.`,
+    valid: true,
+    retry: false,
+    usable: true,
+    answer: 'The hall is stable.',
+    kind: 'answer',
+  },
+  {
     name: 'd17-fenced-tools',
     text: `\`\`\`json\n${BARE_TOOLS}\n\`\`\``,
     valid: true,
@@ -158,6 +192,9 @@ const smokeRows = [
   ['d19-sentence', 'The answer is 5', false],
   ['d19-decimal', '5.0', false],
   ['d19-fifteen', '15', false],
+  ['d19-equation', '2 + 3 = 5', false],
+  ['d19-bold-five', '**5**', false],
+  ['d19-rules', 'I follow 5 rules', false],
 ] as const
 
 test('parse table keeps every D17 to D25 example', () => {
