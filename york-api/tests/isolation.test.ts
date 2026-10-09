@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, smokeVerdict } from '../src/cliVersions.ts'
+import { claudeReprobeDelay, cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, smokeVerdict, startClaudeReprobe } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -15,6 +15,7 @@ import { proxySecretConfigured } from '../src/ip.ts'
 import {
   CURSOR_READ_DENY,
   completeClaude,
+  completeGrok,
   prepareClaudeLaunch,
   prepareCursorLaunch,
   GROK_DISALLOWED_TOOLS,
@@ -411,13 +412,33 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   const followed = serverChatClock('127.0.0.1', { question: 'server clock', round: 1, elapsedMs: 0, timedOut: ['cursor'] }, 81_000)
   assert.equal(followed.elapsedMs, 80_000)
   assert.deepEqual(followed.timedOut, ['grok'])
-  const answered = smokeVerdict(0, 'YORKOK. {"tools":[]}', '', false, 70_000)
-  assert.deepEqual(grokStartupVerdict(answered, 'YORKOK. {"tools":[]}'), { ok: true, reason: 'answered' })
-  assert.equal(grokToolsEmpty('{"tools":[{"name":"bash"}]}'), false)
-  assert.equal(grokToolsEmpty('{"tools":[]}\n{"tools":[{"name":"bash"}]}'), false)
-  assert.equal(grokToolsEmpty('{"tools":[{"name":"bash"}]}\n{"result":"YORKOK","tools":[]}'), true)
-  assert.equal(replyText('{"text":"YORKOK"}\n{"result":"no","tools":[]}').includes('YORKOK'), false)
-  assert.equal(smokeVerdict(0, '{"text":"YORKOK"}\n{"result":"no","tools":[]}', '', false, 1_000).ok, false)
+  const emptyTools = [
+    '{"type":"available_commands","tools":[],"commands":[]}',
+    '{"type":"text","data":"YORK"}',
+    '{"type":"text","data":"OK"}',
+    '{"type":"thought","data":"Analyzing the directory structure..."}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
+  ].join('\n')
+  const offeredTools = [
+    '{"type":"available_commands","tools":["read_file"],"commands":[]}',
+    '{"type":"text","data":"YORKOK"}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
+  ].join('\n')
+  const answered = smokeVerdict(0, emptyTools, '', false, 70_000)
+  assert.deepEqual(grokStartupVerdict(answered, emptyTools), { ok: true, reason: 'answered' })
+  assert.equal(grokToolsEmpty(offeredTools), false)
+  assert.equal(grokToolsEmpty('{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}'), false)
+  assert.equal(replyText(emptyTools), 'YORKOK')
+  assert.equal(replyText(emptyTools).includes('Analyzing'), false)
+  const resultStream = [
+    '{"type":"text","data":"YORK"}',
+    '{"type":"text","data":"OK"}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"The hall is stable.","stop_reason":"end_turn"}',
+  ].join('\n')
+  assert.equal(replyText(resultStream), 'The hall is stable.')
+  const plainLines = '{"answer":"The hall is stable.","cites":[],"tools":[]}\n{"answer":"Supply is 42.5 psig.","cites":[],"tools":[]}'
+  assert.equal(replyText(plainLines), plainLines)
+  assert.equal(smokeVerdict(0, '{"type":"thought","data":"YORKOK"}\n{"type":"text","data":"no"}\n{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}', '', false, 1_000).ok, false)
   assert.equal(failureReason(1, '', 'Error: not logged in'), 'exit=1 stderr= stdout=Error: not logged in')
   assert.deepEqual(grokStartupVerdict(answered, 'YORKOK.'), { ok: false, reason: 'tools' })
   assert.deepEqual(grokStartupVerdict({ ok: false, reason: 'exit=1 stderr=' }, ''), { ok: false, reason: 'exit=1 stderr=' })
@@ -688,12 +709,59 @@ test('claude exit 1 with empty stderr logs stdout, and a later probe marks claud
   assert.match(joined, /exit=1/)
   assert.match(joined, /stdout=Error: not logged in/)
   const env: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
-  const still = await recoverClaude(env, async () => ({ ok: false, reason: 'exit=1 stderr= stdout=Error: not logged in' }))
-  assert.equal(still, false)
+  let during = ''
+  const still = await recoverClaude(env, async () => {
+    during = env.YORK_CLAUDE_CLI ?? 'cleared'
+    return { ok: false, reason: 'exit=1 stderr= stdout=Error: not logged in' }
+  })
+  assert.equal(still?.ok, false)
+  assert.equal(during, 'unavailable')
   assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
   const back = await recoverClaude(env, async () => ({ ok: true, reason: 'answered' }))
-  assert.equal(back, true)
+  assert.equal(back?.ok, true)
   assert.equal(env.YORK_CLAUDE_CLI, 'ready')
+  const ready: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'ready' }
+  const skipped = await recoverClaude(ready, async () => ({ ok: false, reason: 'OAuth session expired' }))
+  assert.equal(skipped, null)
+  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
+})
+
+test('claude reprobe backs off, and an expired OAuth session asks for sign-in', async () => {
+  assert.equal(claudeReprobeDelay(0, ''), 60_000)
+  assert.equal(claudeReprobeDelay(1, 'exit=1 stderr='), 120_000)
+  assert.equal(claudeReprobeDelay(2, ''), 300_000)
+  assert.equal(claudeReprobeDelay(3, ''), 600_000)
+  assert.equal(claudeReprobeDelay(9, ''), 600_000)
+  assert.equal(claudeReprobeDelay(1, 'exit=1 stderr=OAuth session expired'), 600_000)
+  const timer = startClaudeReprobe({ YORK_CLAUDE_CLI: 'ready' })
+  clearTimeout(timer)
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const env: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
+    const verdict = await recoverClaude(env, async () => {
+      assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
+      return { ok: false, reason: 'exit=1 stderr=OAuth session expired' }
+    })
+    assert.equal(verdict?.ok, false)
+    assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
+  } finally {
+    console.log = log
+  }
+  assert.match(lines.join('\n'), /claude needs sign-in/)
+})
+
+test('a grok chat reply keeps every plain JSON line', async () => {
+  const plain = '{"answer":"The hall is stable.","cites":[],"tools":[]}\n{"answer":"Supply is 42.5 psig.","cites":[],"tools":[]}'
+  const text = await completeGrok(req, new AbortController().signal, {
+    async run() {
+      return { code: 0, stdout: plain, stderr: '' }
+    },
+  }, { PATH: process.env.PATH, HOME: '/tmp' })
+  assert.equal(text, plain)
 })
 
 test('fast guard: a client abort logs aborted, not exit=1', async () => {

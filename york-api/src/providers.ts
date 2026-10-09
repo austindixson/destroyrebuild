@@ -385,27 +385,76 @@ function lineObject(line: string): Record<string, unknown> | null {
   return null
 }
 
-/** The last JSON object in a stream. Earlier events stay out of the check. */
-export function finalReplyObject(text: string): Record<string, unknown> | null {
-  const lines = text.split(/\r?\n/)
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const parsed = lineObject(lines[i] ?? '')
-    if (parsed) return parsed
+const GROK_STREAM = new Set([
+  'text',
+  'thought',
+  'tool_call',
+  'tool_call_update',
+  'usage',
+  'plan',
+  'available_commands',
+  'end',
+  'error',
+  'result',
+])
+
+function eventKind(row: Record<string, unknown>): string {
+  return typeof row.type === 'string' ? row.type : ''
+}
+
+function streamEvents(text: string): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const parsed = lineObject(line)
+    if (parsed) events.push(parsed)
+  }
+  return events
+}
+
+function isGrokStream(events: Record<string, unknown>[]): boolean {
+  for (const row of events) {
+    if (GROK_STREAM.has(eventKind(row))) return true
+  }
+  return false
+}
+
+/** The tools list is the available_commands event. The end event does not carry it. */
+export function grokAdvertisedTools(text: string): unknown[] | null {
+  const events = streamEvents(text)
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const row = events[i]
+    if (!row || eventKind(row) !== 'available_commands') continue
+    return Array.isArray(row.tools) ? row.tools : null
   }
   return null
 }
 
-function streamReply(text: string): string | null {
-  const objects: Record<string, unknown>[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const parsed = lineObject(line)
-    if (parsed) objects.push(parsed)
+function resultEventText(events: Record<string, unknown>[]): string | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const row = events[i]
+    if (!row || eventKind(row) !== 'result') continue
+    return typeof row.result === 'string' ? row.result : null
   }
-  const last = objects.length >= 2 ? objects[objects.length - 1] : null
-  return last ? JSON.stringify(last) : null
+  return null
 }
 
-/** A reply that is only reasoning_effort tags is an empty failure. A stream uses its final JSON object. */
+function joinedTextEvents(events: Record<string, unknown>[]): string {
+  let out = ''
+  for (const row of events) {
+    if (eventKind(row) === 'text' && typeof row.data === 'string') out += row.data
+  }
+  return out
+}
+
+function streamReply(text: string): string | null {
+  const events = streamEvents(text)
+  if (!isGrokStream(events)) return null
+  const result = resultEventText(events)
+  if (result !== null) return result
+  return joinedTextEvents(events)
+}
+
+/** A reply that is only reasoning_effort tags is an empty failure. A grok stream joins its text events. */
 export function replyText(stdout: string): string {
   const text = stdout.trim()
   if (!text) return ''

@@ -125,10 +125,11 @@ function shown(value: number, places: number): string {
 }
 
 const NUM = String.raw`[-\u2212]?\d+(?:\.\d+)?`
-const EQUATION_SOURCE = String.raw`(?<![\d.])(${NUM})\s*([+\-\u2212*\u00d7/\u00f7])\s*(${NUM})\s*=\s*(${NUM})`
+const OP_SOURCE = String.raw`[+\-\u2212*\u00d7/\u00f7]`
+const EQUATION_SOURCE = String.raw`(?<![\d.])(${NUM}(?:\s*${OP_SOURCE}\s*${NUM})+)\s*=\s*(${NUM})`
 
 type Op = '+' | '-' | '*' | '/'
-type Work = { left: string; op: Op; right: string; result: string }
+type Chain = { nums: string[]; ops: Op[]; result: string }
 
 function canonNum(token: string): string {
   return token.replaceAll('\u2212', '-')
@@ -152,20 +153,8 @@ function asOp(op: string | undefined): Op | null {
   }
 }
 
-function readWork(match: RegExpMatchArray): Work | null {
-  const left = match[1]
-  const op = asOp(match[2])
-  const right = match[3]
-  const result = match[4]
-  if (!left || !op || !right || !result) return null
-  return { left, op, right, result }
-}
-
-function workValue(row: Work): number | null {
-  const left = Number(canonNum(row.left))
-  const right = Number(canonNum(row.right))
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
-  switch (row.op) {
+function applyOp(op: Op, left: number, right: number): number | null {
+  switch (op) {
     case '+':
       return left + right
     case '-':
@@ -176,20 +165,72 @@ function workValue(row: Work): number | null {
       if (right === 0) return null
       return left / right
     default: {
-      const unexpected: never = row.op
+      const unexpected: never = op
       return unexpected
     }
   }
 }
 
-/** The result keeps at least as many decimal places as either input. */
-function workIsRight(row: Work, known: Set<string>): number | null {
-  if (!known.has(canonNum(row.left)) || !known.has(canonNum(row.right))) return null
-  const value = workValue(row)
+function readChain(match: RegExpMatchArray): Chain | null {
+  const left = match[1]
+  const result = match[2]
+  if (!left || !result) return null
+  const parts = left.split(new RegExp(String.raw`\s*(${OP_SOURCE})\s*`)).filter((part) => part.length > 0)
+  if (parts.length < 3 || parts.length % 2 === 0) return null
+  const nums: string[] = []
+  const ops: Op[] = []
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i] ?? ''
+    if (i % 2 === 0) {
+      nums.push(part)
+      continue
+    }
+    const op = asOp(part)
+    if (!op) return null
+    ops.push(op)
+  }
+  return { nums, ops, result }
+}
+
+function chainValue(chain: Chain): number | null {
+  const first = chain.nums[0]
+  if (!first) return null
+  let value = Number(canonNum(first))
+  if (!Number.isFinite(value)) return null
+  for (let i = 0; i < chain.ops.length; i += 1) {
+    const op = chain.ops[i]
+    const raw = chain.nums[i + 1]
+    if (!op || !raw) return null
+    const right = Number(canonNum(raw))
+    if (!Number.isFinite(right)) return null
+    const next = applyOp(op, value, right)
+    if (next === null) return null
+    value = next
+  }
+  return value
+}
+
+function chainPlaces(nums: string[]): number {
+  let places = 0
+  for (const num of nums) places = Math.max(places, decimalPlaces(num))
+  return places
+}
+
+function inputsKnown(chain: Chain, known: Set<string>): boolean {
+  for (const num of chain.nums) {
+    if (!known.has(canonNum(num))) return false
+  }
+  return true
+}
+
+/** The result keeps at least as many decimal places as any input. */
+function workIsRight(chain: Chain, known: Set<string>): number | null {
+  if (!inputsKnown(chain, known)) return null
+  const value = chainValue(chain)
   if (value === null) return null
-  const places = decimalPlaces(row.result)
-  if (places < decimalPlaces(row.left) || places < decimalPlaces(row.right)) return null
-  if (canonNum(row.result) !== shown(value, places)) return null
+  const places = decimalPlaces(chain.result)
+  if (places < chainPlaces(chain.nums)) return null
+  if (canonNum(chain.result) !== shown(value, places)) return null
   return value
 }
 
@@ -205,22 +246,22 @@ function equationMatches(text: string): RegExpMatchArray[] {
   return [...text.matchAll(new RegExp(EQUATION_SOURCE, 'g'))]
 }
 
-/** A sum or difference stays only when this sentence shows that equation. */
+/** A computed number stays only when this sentence shows that equation. */
 function equationAllows(text: string, token: string, known: Set<string>): boolean {
   for (const match of equationMatches(text)) {
-    const row = readWork(match)
-    if (!row) continue
-    const value = workIsRight(row, known)
+    const chain = readChain(match)
+    if (!chain) continue
+    const value = workIsRight(chain, known)
     if (value === null) continue
-    if (coversToken(token, row.result, value)) return true
+    if (coversToken(token, chain.result, value)) return true
   }
   return false
 }
 
 function badEquation(text: string, known: Set<string>): boolean {
   for (const match of equationMatches(text)) {
-    const row = readWork(match)
-    if (row && workIsRight(row, known) === null) return true
+    const chain = readChain(match)
+    if (chain && workIsRight(chain, known) === null) return true
   }
   return false
 }
@@ -286,12 +327,12 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
-/** Body is the text before the next heading. A later section does not count. */
+/** A heading has a body when the next section does, including a sub-heading that has one. */
 function sectionHasBody(parts: Piece[], index: number): boolean {
   for (let j = index + 1; j < parts.length; j += 1) {
     const piece = parts[j]
     if (!piece) continue
-    if (isHeading(piece.text)) return false
+    if (isHeading(piece.text)) return sectionHasBody(parts, j)
     return true
   }
   return false
@@ -350,17 +391,29 @@ function resumeAt(steps: Piece[], index: number, style: DropStyle): number {
   return skipDroppedStep(steps, index)
 }
 
-/** The next kept sentence in a bullet keeps the marker when the first sentence drops. */
-function graftBullet(steps: Piece[], index: number, keep: (text: string) => boolean): void {
+function bulletLabel(text: string): string {
+  return lineLabel(text.replace(/^-\s+/, ''))
+}
+
+function withBullet(text: string, label: string): string {
+  const body = text.replace(/^-\s+/, '')
+  const labeled = label && !body.startsWith(`${label} `) ? `${label} ${body}` : body
+  return `- ${labeled}`
+}
+
+/** The next kept sentence in a bullet keeps the marker and the bullet's label. */
+function graftBullet(steps: Piece[], index: number, keep: (text: string) => boolean): number {
   const origin = steps[index]
-  if (!origin || !BULLET.test(origin.text)) return
+  if (!origin || !BULLET.test(origin.text)) return -1
+  const label = bulletLabel(origin.text)
   const end = skipDroppedStep(steps, index)
   for (let j = index + 1; j < end; j += 1) {
     const piece = steps[j]
     if (!piece || isListMarker(piece.text) || !keep(piece.text)) continue
-    if (!piece.text.startsWith('- ')) piece.text = `- ${piece.text}`
-    return
+    piece.text = withBullet(piece.text, label)
+    return j
   }
+  return -1
 }
 
 function carryBreak(kept: Piece[], steps: Piece[], resume: number): void {
@@ -373,6 +426,7 @@ function carryBreak(kept: Piece[], steps: Piece[], resume: number): void {
 
 function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: DropStyle): Piece[] {
   const kept: Piece[] = []
+  const held = new Set<number>()
   let i = 0
   while (i < steps.length) {
     const sentence = steps[i]
@@ -380,13 +434,16 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: Dr
       i += 1
       continue
     }
-    if (keep(sentence.text)) {
+    if (held.has(i) || keep(sentence.text)) {
       kept.push(sentence)
       i += 1
       continue
     }
     if (!isListMarker(sentence.text)) graftLineLabel(steps, i, keep)
-    if (style === 'bullet-sentence') graftBullet(steps, i, keep)
+    if (style === 'bullet-sentence') {
+      const labeled = graftBullet(steps, i, keep)
+      if (labeled >= 0) held.add(labeled)
+    }
     const resume = resumeAt(steps, i, style)
     carryBreak(kept, steps, resume)
     i = resume

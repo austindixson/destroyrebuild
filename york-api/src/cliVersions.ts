@@ -15,7 +15,7 @@ import {
   prepareCursorLaunch,
   prepareGrokLaunch,
   failureReason,
-  finalReplyObject,
+  grokAdvertisedTools,
   replyText,
   timeoutReason,
 } from './providers.ts'
@@ -161,11 +161,9 @@ export async function probeAndLogClis(
   if (platform === 'darwin') await smokeClis(env)
 }
 
-/** The final reply JSON must report an empty tool list. Earlier stream events do not count. */
+/** The available_commands event must report an empty tool list. The end event does not. */
 export function grokToolsEmpty(text: string): boolean {
-  const reply = finalReplyObject(text)
-  if (!reply) return false
-  const tools = reply.tools
+  const tools = grokAdvertisedTools(text)
   return Array.isArray(tools) && tools.length === 0
 }
 
@@ -228,13 +226,29 @@ function noteSmoke(env: NodeJS.ProcessEnv, name: string, flag: CliFlag, verdict:
   env[flag] = 'unavailable'
 }
 
+/** Waits after a failed claude probe: 60 s, 2 min, 5 min, then every 10 min. */
+export const CLAUDE_REPROBE_STEPS_MS = [60_000, 120_000, 300_000, 600_000] as const
+
+const CLAUDE_AUTH_REPROBE_MS = 600_000
+
+export function claudeNeedsSignIn(reason: string): boolean {
+  return reason.includes('OAuth session expired')
+}
+
+export function claudeReprobeDelay(attempt: number, reason: string): number {
+  if (claudeNeedsSignIn(reason)) return CLAUDE_AUTH_REPROBE_MS
+  const index = Math.min(Math.max(attempt, 0), CLAUDE_REPROBE_STEPS_MS.length - 1)
+  return CLAUDE_REPROBE_STEPS_MS[index] ?? CLAUDE_AUTH_REPROBE_MS
+}
+
 async function smokeOne(
   env: NodeJS.ProcessEnv,
   name: string,
   flag: CliFlag,
   prepare: (dir: string) => Promise<Awaited<ReturnType<typeof prepareGrokLaunch>>>,
-): Promise<void> {
-  if (env[flag] === 'unavailable') return
+  force = false,
+): Promise<SmokeVerdict | null> {
+  if (!force && env[flag] === 'unavailable') return null
   const limits = tierBudgetMs(env)
   const budgetMs = limits[name as keyof typeof limits]
   const dir = await mkdtemp(join(tmpdir(), `york-smoke-${name}-`))
@@ -246,45 +260,65 @@ async function smokeOne(
     clearTimeout(timer)
     const timedOut = controller.signal.aborted
     const verdict = smokeVerdict(result.code, result.stdout, result.stderr, timedOut, budgetMs)
-    noteSmoke(env, name, flag, name === 'grok' ? grokStartupVerdict(verdict, result.stdout) : verdict)
+    const reported = name === 'grok' ? grokStartupVerdict(verdict, result.stdout) : verdict
+    noteSmoke(env, name, flag, reported)
+    return reported
   } catch (err) {
     const message = err instanceof Error ? err.message : 'error'
-    noteSmoke(env, name, flag, { ok: false, reason: redactReason(message) })
+    const verdict = { ok: false, reason: redactReason(message) }
+    noteSmoke(env, name, flag, verdict)
+    return verdict
   } finally {
     clearTimeout(timer)
     await rm(dir, { recursive: true, force: true })
   }
 }
 
-/** A failed claude smoke is tried again on this interval. */
-export const CLAUDE_REPROBE_MS = 60_000
-
+/** Probe claude without clearing YORK_CLAUDE_CLI. A failure leaves the saved flag. */
 async function claudeSmoke(env: NodeJS.ProcessEnv): Promise<SmokeVerdict> {
-  delete env.YORK_CLAUDE_CLI
-  await smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env))
-  if (env.YORK_CLAUDE_CLI === 'unavailable') return { ok: false, reason: 'unavailable' }
-  return { ok: true, reason: 'answered' }
+  const saved = env.YORK_CLAUDE_CLI
+  const verdict = await smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env), true)
+  if (!verdict?.ok) {
+    env.YORK_CLAUDE_CLI = saved ?? 'unavailable'
+    return verdict ?? { ok: false, reason: 'unavailable' }
+  }
+  return verdict
 }
 
 /** When claude was unavailable, a later success marks it ready. */
 export async function recoverClaude(
   env: NodeJS.ProcessEnv,
   probe?: () => Promise<SmokeVerdict>,
-): Promise<boolean> {
-  if (env.YORK_CLAUDE_CLI !== 'unavailable') return false
+): Promise<SmokeVerdict | null> {
+  if (env.YORK_CLAUDE_CLI !== 'unavailable') return null
   const verdict = probe ? await probe() : await claudeSmoke(env)
-  if (!verdict.ok) return false
+  if (!verdict.ok) {
+    env.YORK_CLAUDE_CLI = 'unavailable'
+    if (claudeNeedsSignIn(verdict.reason)) console.log('york-api cli claude needs sign-in')
+    return verdict
+  }
   env.YORK_CLAUDE_CLI = 'ready'
   console.log('york-api cli claude status=ready reason=recovered')
-  return true
+  return verdict
 }
 
-export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setInterval> {
-  const timer = setInterval(() => {
-    void recoverClaude(env)
-  }, CLAUDE_REPROBE_MS)
-  timer.unref()
-  return timer
+export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
+  let attempt = 0
+  const arm = (delay: number): ReturnType<typeof setTimeout> => {
+    const timer = setTimeout(() => {
+      void recoverClaude(env).then((verdict) => {
+        if (!verdict || verdict.ok) {
+          attempt = 0
+          return
+        }
+        attempt += 1
+        arm(claudeReprobeDelay(attempt, verdict.reason))
+      })
+    }, delay)
+    timer.unref()
+    return timer
+  }
+  return arm(claudeReprobeDelay(0, ''))
 }
 
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {

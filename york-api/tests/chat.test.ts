@@ -785,7 +785,7 @@ test('stacked headings and a heading above a blank line stay', () => {
   assert.equal(dropUntracedNumbers(stacked, ''), stacked)
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\nShift start\n1. Open the valve.', ''),
-    'Shift start\n1. Open the valve.',
+    'Eight-hour checklist\nShift start\n1. Open the valve.',
   )
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
@@ -908,7 +908,8 @@ const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 test('an empty heading stops at the next heading', () => {
   assert.equal(dropUntracedNumbers('PUMPS', ''), '')
   assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'PUMPS\nFANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), '')
 })
 
 test('a heading or label is exempt from the STE passive check', () => {
@@ -934,6 +935,28 @@ test('a quoted alarm that spans sentences on one line or bullet stays', () => {
 test('an untraced number drops its bullet sentence and leaves the rest', () => {
   assert.equal(dropUntracedNumbers('- The count is 99. Open the valve.', ''), '- Open the valve.')
   assert.equal(dropUntracedNumbers('- Open the valve. The count is 99.', ''), '- Open the valve.')
+})
+
+test('a dropped bullet sentence keeps its label on the next sentence', () => {
+  assert.equal(
+    dropUntracedNumbers('- Chilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig.', '42.5'),
+    '- Chilled-water loop: Supply 42.5 psig.',
+  )
+  assert.equal(
+    dropUntracedNumbers('- 0 to 1 h: The count is 99. Open the valve.', ''),
+    '- 0 to 1 h: Open the valve.',
+  )
+})
+
+test('an equation is the whole left side, evaluated left to right', () => {
+  const chain = 'The balance is 5 (5 + 5 - 5 = 5).'
+  assert.equal(dropUntracedNumbers(chain, '5'), chain)
+  assert.equal(dropUntracedNumbers('The balance is 6 (5 + 5 - 5 = 6).', '5'), '')
+  const product = 'The product is 10 (2 * 3 + 4 = 10).'
+  assert.equal(dropUntracedNumbers(product, '2 3 4'), product)
+  assert.equal(dropUntracedNumbers('The product is 14 (2 * 3 + 4 = 14).', '2 3 4'), '')
+  const carried = 'CHW dP is 7.5 psi below target (17 - 9.5 + 0 = 7.5).'
+  assert.equal(dropUntracedNumbers(carried, '17 9.5 0'), carried)
 })
 
 test('unicode math symbols count in an equation', () => {
