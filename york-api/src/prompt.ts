@@ -20,7 +20,7 @@ const SYSTEM = [
   'Do not request a plant change while blocksWrites is true.',
 ].join(' ')
 
-const OPEN_CASE = 'Do not give the trouble answer while this case is open.'
+const OPEN_CASE = 'Case is open. If asked for the answer or the root cause, decline in one sentence. Point to the on-screen readings and the pick.'
 
 function toolLines(): string {
   return Object.keys(TOOL_GATES)
@@ -33,6 +33,7 @@ const N_PLUS_ONE_LINE = [
   'Count every available chiller: running units plus standby units that can start.',
   'Subtract the largest unit.',
   'N+1 holds when that remainder still covers itLoadMw.',
+  'State the verdict as "N+1 holds." or "N+1 does not hold."',
   'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1, because 17 times 5 MW is 85 MW and 85 MW covers 80 MW.',
 ].join(' ')
 
@@ -118,8 +119,9 @@ function firstUser(req: ChatRequest, chunks: Chunk[]): string {
     .join('\n\n')
 }
 
-export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string; round: number } {
-  const open = req.snapshot.blocksWrites === true ? ` ${OPEN_CASE}` : ''
+export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string; round: number; openCase: boolean } {
+  const openCase = req.snapshot.blocksWrites === true
+  const open = openCase ? ` ${OPEN_CASE}` : ''
   const user = req.round >= 1 ? followUpUser(req) : firstUser(req, chunks)
-  return { system: `${SYSTEM}${open}`, user, round: req.round }
+  return { system: `${SYSTEM}${open}`, user, round: req.round, openCase }
 }

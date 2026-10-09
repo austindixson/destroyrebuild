@@ -236,13 +236,18 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
   assert.match(prompt.user, /standby units that can start/)
   assert.match(prompt.user, /Subtract the largest unit/)
+  assert.match(prompt.user, /N\+1 holds\./)
+  assert.match(prompt.user, /N\+1 does not hold\./)
   assert.match(prompt.user, /17 times 5 MW is 85 MW/)
   assert.match(prompt.user, /itLoadMw/)
+  assert.equal(prompt.openCase, false)
   const openCase = buildPrompt(
     { question: 'q', previousQuestions: [], history: [], snapshot: { blocksWrites: true }, round: 0, toolResults: [] },
     [],
   )
-  assert.match(openCase.system, /Do not give the trouble answer while this case is open/)
+  assert.match(openCase.system, /decline in one sentence/)
+  assert.match(openCase.system, /on-screen readings and the pick/)
+  assert.equal(openCase.openCase, true)
   assert.equal(prompt.system.includes('"tools":[]'), false)
   const follow = buildPrompt(
     {

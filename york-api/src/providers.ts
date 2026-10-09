@@ -239,19 +239,9 @@ export interface CliLaunch {
 }
 
 /**
- * Empty allowlist. York needs no grok built-in tool.
- * Source: grok-build user-guide 14-headless-mode.md. `--tools` is a
- * comma-separated allowlist and is headless-only. `--prompt-file` enters
- * headless mode. An empty list leaves no built-in tool. MCP meta-tools stay
- * unless `--disallowed-tools` removes them. The denylist runs after the allowlist.
- */
-export const GROK_TOOLS = ''
-
-/**
- * Second layer. Run 10 showed grok 1.0.50 ignores an unknown denylist id.
- * `use_tool` and `search_tool` stayed offered, with `todo_write`, plan mode,
- * `ask_user_question`, and `send_feedback`.
- * Ids: the headless tool table, grok-build tool_taxonomy.rs, and that live list.
+ * Run 11 on grok 1.0.50: an empty `--tools` value is ignored, and a non-empty
+ * list only removes about six subagent and scheduler tools. `--disallowed-tools`
+ * is the list that leaves the offered set empty. York does not pass `--tools`.
  */
 export const GROK_DISALLOWED_TOOLS = [
   'read_file',
@@ -276,6 +266,8 @@ export const GROK_DISALLOWED_TOOLS = [
   'Agent',
   'kill_task',
   'get_task_output',
+  'kill_command_or_subagent',
+  'get_command_or_subagent_output',
   'spawn_subagent',
   'scheduler_create',
   'scheduler_delete',
@@ -307,8 +299,6 @@ export function grokArgs(promptFile: string): string[] {
     '--no-memory',
     '--sandbox',
     GROK_SANDBOX_PROFILE,
-    '--tools',
-    GROK_TOOLS,
     '--disallowed-tools',
     GROK_DISALLOWED_TOOLS,
   ]
@@ -317,7 +307,6 @@ export function grokArgs(promptFile: string): string[] {
 export function grokLaunchArgsOk(args: string[]): boolean {
   const mode = args.indexOf('--permission-mode')
   const sandbox = args.indexOf('--sandbox')
-  const tools = args.indexOf('--tools')
   const blocked = args.indexOf('--disallowed-tools')
   const denied = blocked >= 0 ? args[blocked + 1] ?? '' : ''
   return mode >= 0
@@ -325,8 +314,7 @@ export function grokLaunchArgsOk(args: string[]): boolean {
     && args.includes('--prompt-file')
     && sandbox >= 0
     && args[sandbox + 1] === GROK_SANDBOX_PROFILE
-    && tools >= 0
-    && args[tools + 1] === GROK_TOOLS
+    && !args.includes('--tools')
     && denied === GROK_DISALLOWED_TOOLS
     && denied.includes('use_tool')
     && denied.includes('search_tool')

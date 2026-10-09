@@ -6,15 +6,22 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8P
+
+- Round 0 skips claude only when the time left is under claude's budget. A full cursor slot does not skip claude.
+- The prompt tells the model to write "N+1 holds." or "N+1 does not hold."
+- An open case uses a short decline and calls claude first. The reply still comes from the model.
+- Grok does not pass `--tools`. `--disallowed-tools` is the removal list and includes `kill_command_or_subagent` and `get_command_or_subagent_output`.
+
 ### 2026-10-09 — YORK-8O
 
 - The sandbox profile leaves the temp GROK_HOME off the deny list. A deny of that path stops grok from loading config.
 - Grok keeps `--deny` `Read(<temp GROK_HOME>/**)`.
-- Grok passes `--tools` with an empty value. `--disallowed-tools` stays as a second layer and includes `use_tool` and `search_tool`.
+- Grok passes `--disallowed-tools`, and that list includes `use_tool` and `search_tool`.
 - N+1 counts running chillers and standby chillers that can start, then subtracts the largest unit.
 - The prompt gives a fleet example: 18 units at 5 MW and an 80 MW load, so 17 times 5 MW is 85 MW.
 - An open case also drops `trainer:info:quiz-*`, `trainer:info:chaos-*`, and the KPI cards that name a fix.
-- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, empty `--tools`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`.
+- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`. No `--tools` flag.
 - Claude confinement is empty `--tools`, `--safe-mode`, a temp home, the login keychain link, and no `CLAUDE_CONFIG_DIR`.
 - Cursor confinement is `--sandbox enabled`, `--mode ask`, no `--force`, and `Read` denies in the temp permissions file.
 - Codex confinement is `--sandbox read-only`, `--ignore-user-config`, `--ephemeral`, and `--ignore-rules`.
@@ -39,7 +46,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - The server requires a proxy secret of at least 16 characters.
 - Leak patterns are wider. An answer with a secret shape returns "unavailable".
 - The child environment strips the proxy secret, the canary, `PWD`, `OLDPWD`, and `INIT_CWD`.
-- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, empty `--tools`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`.
+- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`. No `--tools` flag.
 - Claude confinement is empty `--tools`, `--safe-mode`, a temp home, the login keychain link, and no `CLAUDE_CONFIG_DIR`.
 - Cursor confinement is `--sandbox enabled`, `--mode ask`, no `--force`, and `Read` denies in the temp permissions file.
 - Codex confinement is `--sandbox read-only`, `--ignore-user-config`, `--ephemeral`, and `--ignore-rules`.

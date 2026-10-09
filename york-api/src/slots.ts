@@ -4,10 +4,14 @@ export function resetHolds(): void {
   held.clear()
 }
 
+/** Peek. True when another call can take a slot. */
+export function canHold(id: string, limit: number): boolean {
+  return (held.get(id) ?? 0) < limit
+}
+
 export function tryHold(id: string, limit: number): boolean {
-  const now = held.get(id) ?? 0
-  if (now >= limit) return false
-  held.set(id, now + 1)
+  if (!canHold(id, limit)) return false
+  held.set(id, (held.get(id) ?? 0) + 1)
   return true
 }
 

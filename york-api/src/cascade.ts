@@ -1,7 +1,7 @@
 import { remainingMs } from './deadline.ts'
 import { redactReason } from './leak.ts'
 import { usableModelText } from './parse.ts'
-import { releaseHold, tryHold } from './slots.ts'
+import { canHold, releaseHold, tryHold } from './slots.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
 export interface Adapter {
@@ -20,12 +20,35 @@ function cursorBudget(later: Adapter[]): number {
   return 0
 }
 
+function cursorCanRun(later: Adapter[]): boolean {
+  const cursor = later.find((item) => item.id === 'cursor')
+  if (!cursor || !cursor.enabled()) return false
+  if (!cursor.limit) return true
+  return canHold(cursor.id, cursor.limit)
+}
+
+/** Skip claude only under its own budget. A busy cursor slot does not skip claude. */
+function skipClaude(later: Adapter[], left: number, budget: number): boolean {
+  const cursor = later.find((item) => item.id === 'cursor')
+  if (cursor && !cursorCanRun(later)) return false
+  return left < budget
+}
+
+/** Other tiers still leave room for cursor. Claude uses skipClaude. */
 function leavesCursorShort(adapter: Adapter, later: Adapter[], left: number): boolean {
   const budget = adapter.budgetMs
   const rescue = cursorBudget(later)
-  if (!budget || !rescue || adapter.id === 'cursor') return false
+  if (!budget || !rescue || adapter.id === 'cursor' || adapter.id === 'claude') return false
   if (left < rescue) return false
   return left < budget + rescue
+}
+
+function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
+  if (req.openCase !== true) return adapters
+  const index = adapters.findIndex((item) => item.id === 'claude')
+  const claude = index > 0 ? adapters[index] : undefined
+  if (!claude) return adapters
+  return [claude, ...adapters.slice(0, index), ...adapters.slice(index + 1)]
 }
 
 function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, round: number | undefined): boolean {
@@ -33,7 +56,10 @@ function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, rou
   const budget = adapter.budgetMs
   if (!budget) return false
   const left = remainingMs(signal)
-  if (left >= budget && !leavesCursorShort(adapter, later, left)) return false
+  const skip = adapter.id === 'claude'
+    ? skipClaude(later, left, budget)
+    : left < budget || leavesCursorShort(adapter, later, left)
+  if (!skip) return false
   console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
   return true
 }
@@ -73,13 +99,14 @@ async function takeReply(adapter: Adapter, req: LlmRequest, signal: AbortSignal)
 }
 
 export async function cascade(adapters: Adapter[], req: LlmRequest, signal: AbortSignal): Promise<LlmAnswer> {
+  const order = claudeFirst(adapters, req)
   let lastError = 'no provider'
-  for (let index = 0; index < adapters.length; index += 1) {
-    const adapter = adapters[index]
+  for (let index = 0; index < order.length; index += 1) {
+    const adapter = order[index]
     if (!adapter) continue
     if (signal.aborted) throw new Error('aborted')
     if (!adapter.enabled()) continue
-    if (overBudget(adapter, adapters.slice(index + 1), signal, req.round)) continue
+    if (overBudget(adapter, order.slice(index + 1), signal, req.round)) continue
     const hold = claim(adapter)
     if (!hold) continue
     try {

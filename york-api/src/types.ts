@@ -41,6 +41,8 @@ export interface LlmRequest {
   system: string
   user: string
   round?: number
+  /** An open trouble case. The cascade calls claude before grok. */
+  openCase?: boolean
 }
 
 export interface LlmAnswer {

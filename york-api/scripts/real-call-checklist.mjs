@@ -498,7 +498,7 @@ function homeLaunchShape(tier, launch, home) {
   if (!tmp.startsWith(`${launch.cwd}/`)) return 'tmpdir'
   if (tier !== 'grok') return ''
   if (launch.args.includes('-p') || !launch.args.includes('--prompt-file') || !launch.args.includes('dontAsk')) return 'args'
-  if (!launch.args.includes('--tools') || !launch.args.includes('--disallowed-tools') || !launch.args.includes('--deny')) return 'args'
+  if (launch.args.includes('--tools') || !launch.args.includes('--disallowed-tools') || !launch.args.includes('--deny')) return 'args'
   if (launch.env.GROK_CLAUDE_HOOKS_ENABLED !== '0' || launch.env.GROK_CURSOR_HOOKS_ENABLED !== '0') return 'compat'
   return ''
 }
