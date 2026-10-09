@@ -1101,17 +1101,22 @@ export class ChillerScene {
   }
 
   private pickFleetUnit() {
-    const list: THREE.Object3D[] = []
-    if (this.lodNearMesh?.visible) list.push(this.lodNearMesh)
-    if (this.lodMidMesh?.visible) list.push(this.lodMidMesh)
-    if (this.lodTinyMesh?.visible) list.push(this.lodTinyMesh)
-    if (this.focusMesh?.visible) list.push(this.focusMesh)
+    const list = this.visibleFleetMeshes()
     if (list.length === 0) return
     const hit = this.raycaster.intersectObjects(list, false)[0]
     if (!hit || hit.object === this.focusMesh) return
     if (hit.instanceId === undefined) return
     const unit = this.unitForSlot(hit.object as THREE.InstancedMesh, hit.instanceId)
     if (unit >= 0) this.focusFleetUnit(unit)
+  }
+
+  private visibleFleetMeshes() {
+    const list: THREE.Object3D[] = []
+    const meshes = [this.lodNearMesh, this.lodMidMesh, this.lodTinyMesh, this.focusMesh]
+    for (const mesh of meshes) {
+      if (mesh && mesh.visible) list.push(mesh)
+    }
+    return list
   }
 
   private unitForSlot(mesh: THREE.InstancedMesh, slot: number) {

@@ -17,10 +17,12 @@
  * triangles. Painted vertices (nameplate, OptiView, JCI, panel) are locked so
  * they cannot move. Vertices on a seam whose two sides sample different colors
  * are seam-locked. Permissive collapses are allowed only on the remaining flat
- * shell. PreserveFolds keeps the top edge.
+ * shell. Without Permissive this pass stops near 52,000 triangles.
+ * PreserveFolds keeps the top edge.
  *
- * The tiny mesh uses the same weld and the same border lock, with those paint
- * locks relaxed, and aims at 4,500 triangles. Attributes are copied from the
+ * The tiny mesh starts from that mid index buffer, keeps the same paint and
+ * seam locks, and simplifies again with borders locked and no Permissive.
+ * It stops where those locks stop it. Attributes are copied from the
  * surviving source vertices. simplifyWithUpdate is not used.
  */
 import { NodeIO } from '@gltf-transform/core'
@@ -199,7 +201,7 @@ function packLevel(out, name) {
 const { indices, remap } = weldAttributes()
 const near = addNear(srcIdx)
 const lock = await buildLocks(remap)
-const [farIdx, farErr] = MeshoptSimplifier.simplifyWithAttributes(
+const [midIdx, midErr] = MeshoptSimplifier.simplifyWithAttributes(
   indices,
   pos,
   3,
@@ -211,15 +213,19 @@ const [farIdx, farErr] = MeshoptSimplifier.simplifyWithAttributes(
   0.05,
   ['LockBorder', 'Permissive', 'PreserveFolds'],
 )
-const mid = packLevel(farIdx, 'lod-mid')
-console.log('lod-mid', mid, 'err', farErr.toFixed(5))
-const [tinyIdx, tinyErr] = MeshoptSimplifier.simplify(
-  indices,
+const mid = packLevel(midIdx, 'lod-mid')
+console.log('lod-mid', mid, 'err', midErr.toFixed(5))
+const [tinyIdx, tinyErr] = MeshoptSimplifier.simplifyWithAttributes(
+  midIdx,
   pos,
   3,
-  4500 * 3,
+  new Float32Array(),
+  0,
+  [],
+  lock,
+  12000 * 3,
   0.08,
-  ['LockBorder', 'Permissive', 'PreserveFolds'],
+  ['LockBorder', 'PreserveFolds'],
 )
 const tiny = packLevel(tinyIdx, 'lod-tiny')
 console.log('lod-tiny', tiny, 'err', tinyErr.toFixed(5))
