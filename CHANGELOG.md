@@ -2,6 +2,19 @@
 
 Newest entries are first. Add a new heading. Do not change old entries.
 
+## 2026-10-09 — PR #25 — YORK-12c
+
+- The lead machine stays the full 119,514-triangle mesh. A selected fleet unit switches to that same mesh.
+- Other fleet units use a seam-locked 51,080-triangle mesh inside 14 units. They use a 7,963-triangle mesh past 20 units. Between those distances the unit keeps its current level.
+- The far mesh locks borders. Permissive mode is only on that far mesh, because a locked simplify stops near 51,080 triangles. Distant units do not draw a nameplate.
+- Each level is one instanced draw. The focused unit is its own mesh, so the draw count stays at one extra call.
+- The package file is 6.2 MB. It holds the full mesh and both levels, meshopt compressed. The nameplate and OptiView base color stay at 2048.
+- A desktop sample of the live trainer still draws 126,212 triangles in 103 calls. The frame time averaged 281 ms (3.6 FPS). The pixel ratio stops at 1.5.
+- A real fleet of 18 units draws 261,583 triangles in 104 calls. The frame time averaged 454 ms. All 17 extra units are on the far mesh.
+- A real fleet of 36 units draws 404,917 triangles in 104 calls. The frame time averaged 571 ms. All 35 extra units are on the far mesh.
+- Selecting one extra unit in the 18-unit bank draws 373,134 triangles in 105 calls. The same selection in the 36-unit bank draws 516,468 triangles in 105 calls.
+- Those framed fleets were 2,157,950 triangles at 1,767 ms and 4,309,202 triangles at 3,205 ms in the YORK-12b entry below.
+
 ## 2026-10-09 — PR #25 — YORK-12b
 
 - Locked simplification cannot pass about 51,000 triangles without Permissive mode, so the lead package is the original 119,514-triangle mesh again.

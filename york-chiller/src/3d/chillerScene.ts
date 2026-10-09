@@ -24,6 +24,15 @@ const MB = 1_048_576
 /** Desktop and phone both stay under this. A 2× buffer costs four times the pixels. */
 const MAX_PIXEL_RATIO = 1.5
 
+/** Fleet LOD distances in world units. Inside the inner distance a unit uses the 51k mesh. */
+const LOD_NEAR_IN2 = 14 * 14
+const LOD_NEAR_OUT2 = 20 * 20
+
+/** 0 = full mesh (focused unit), 1 = near, 2 = far. */
+const LOD_FULL = 0
+const LOD_NEAR = 1
+const LOD_FAR = 2
+
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
 export function plantModelProgressText(loaded: number, total: number): string {
   if (!Number.isFinite(loaded) || loaded < 0) return 'The plant model starts.'
@@ -136,6 +145,15 @@ interface Hotspot {
   mesh: THREE.Object3D
 }
 
+interface FleetLayout {
+  cols: number
+  gapX: number
+  gapZ: number
+  originX: number
+  originZ: number
+  baseY: number
+}
+
 export class ChillerScene {
   readonly renderer: THREE.WebGLRenderer
   readonly scene = new THREE.Scene()
@@ -175,9 +193,25 @@ export class ChillerScene {
   private readonly geos = new Map<string, THREE.BufferGeometry>()
   private readonly materialCache = new Map<string, THREE.Material>()
   private readonly pipeParts = new Map<THREE.Material, THREE.BufferGeometry[]>()
-  private fleetMesh: THREE.InstancedMesh | null = null
+  private fleetRoot: THREE.Group | null = null
+  private lodNearGeo: THREE.BufferGeometry | null = null
+  private lodFarGeo: THREE.BufferGeometry | null = null
+  private lodNearMesh: THREE.InstancedMesh | null = null
+  private lodFarMesh: THREE.InstancedMesh | null = null
+  private focusMesh: THREE.Mesh | null = null
+  private focusMat: THREE.MeshStandardMaterial | null = null
+  private readonly focusBase = new THREE.Color()
   private fleetKey = ''
   private fleetRun = ''
+  private fleetCount = 0
+  private fleetFocus = -1
+  private fleetX = new Float32Array(0)
+  private fleetY = new Float32Array(0)
+  private fleetZ = new Float32Array(0)
+  private fleetMats = new Float32Array(0)
+  private fleetShade = new Float32Array(0)
+  private lodLevel = new Uint8Array(0)
+  private lodSlot = new Uint16Array(0)
   private fleetTagRoot: THREE.Group | null = null
   private readonly tagHome = new Map<PlantTag, { parent: THREE.Object3D; position: THREE.Vector3 }>()
   private fog!: THREE.FogExp2
@@ -576,6 +610,19 @@ export class ChillerScene {
     win.__YORK_MOUNT_COUNT = (win.__YORK_MOUNT_COUNT ?? 0) + 1
   }
 
+  /** Pull the near and far packages out of the lead so only the full mesh stays visible. */
+  private captureLodMeshes(model: THREE.Object3D) {
+    const drop: THREE.Mesh[] = []
+    model.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!mesh.isMesh) return
+      if (mesh.name === 'lod-near') this.lodNearGeo = mesh.geometry
+      if (mesh.name === 'lod-far') this.lodFarGeo = mesh.geometry
+      if (mesh.name === 'lod-near' || mesh.name === 'lod-far') drop.push(mesh)
+    })
+    for (const mesh of drop) mesh.removeFromParent()
+  }
+
   /**
    * Fit the Meshy package. POSITION accessor on this GLB is about
    * 0.85 × 1.22 × 1.90, so the shells run on Z and Y is already up.
@@ -585,6 +632,7 @@ export class ChillerScene {
     if (this.disposed) return
     this.noteMountForTest()
     this.model = model
+    this.captureLodMeshes(model)
     model.traverse((c) => {
       const mesh = c as THREE.Mesh
       if (!mesh.isMesh) return
@@ -749,7 +797,7 @@ export class ChillerScene {
 
   /**
    * Draw the units after the lead machine. Two units keep the single package.
-   * A larger bank shares the lead geometry in one instanced draw.
+   * A larger bank puts each extra unit in one instanced mesh per LOD level.
    */
   setFleet(units: { running: boolean }[]) {
     if (units.length <= 2) {
@@ -771,31 +819,39 @@ export class ChillerScene {
     this.fleetRun = runBits(units.slice(1))
     this.spreadFleetTags()
     this.framePlant()
+    this.updateFleetLod()
     this.labelsNeedDraw = true
     this.occlusionPending = true
     this.needsRender = true
   }
 
   private paintFleetRunning(units: { running: boolean }[]) {
-    const mesh = this.fleetMesh
-    if (!mesh) return
+    if (this.fleetCount === 0) return
     const bits = runBits(units.slice(1))
     if (bits === this.fleetRun) return
     this.fleetRun = bits
     const extras = units.slice(1)
-    for (let i = 0; i < extras.length; i++) {
-      const shade = extras[i].running ? 1 : 0.72
-      this.fleetColor.setRGB(shade, shade, shade)
-      mesh.setColorAt(i, this.fleetColor)
-    }
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    for (let i = 0; i < extras.length && i < this.fleetCount; i++) this.paintUnit(i, extras[i].running)
     this.needsRender = true
+  }
+
+  private paintUnit(index: number, running: boolean) {
+    const shade = running ? 1 : 0.72
+    if (this.fleetShade[index] === shade) return
+    this.fleetShade[index] = shade
+    this.fleetColor.setRGB(shade, shade, shade)
+    const mesh = this.bucketFor(this.lodLevel[index])
+    if (mesh) {
+      mesh.setColorAt(this.lodSlot[index], this.fleetColor)
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    }
+    if (index === this.fleetFocus) this.poseFocusMesh()
   }
 
   /** Park the eight readings across the bank so they do not stack on the lead unit. */
   private spreadFleetTags() {
-    if (this.fleetTagRoot || !this.fleetMesh) return
-    const box = new THREE.Box3().setFromObject(this.fleetMesh)
+    if (this.fleetTagRoot || !this.fleetRoot) return
+    const box = new THREE.Box3().setFromObject(this.fleetRoot)
     if (this.model) box.union(new THREE.Box3().setFromObject(this.model))
     const tags = [...this.labelAnchors.keys()]
     if (tags.length === 0) return
@@ -831,10 +887,8 @@ export class ChillerScene {
 
   private clearFleet(reframe: boolean) {
     this.restoreFleetTags()
-    if (!this.fleetMesh) return
-    this.root.remove(this.fleetMesh)
-    this.fleetMesh.dispose()
-    this.fleetMesh = null
+    if (!this.fleetRoot) return
+    this.disposeFleetMeshes()
     this.fleetKey = ''
     this.fleetRun = ''
     if (reframe) this.framePlant()
@@ -843,53 +897,209 @@ export class ChillerScene {
     this.needsRender = true
   }
 
+  private disposeFleetMeshes() {
+    this.fleetRoot?.removeFromParent()
+    this.lodNearMesh?.dispose()
+    this.lodFarMesh?.dispose()
+    this.focusMat?.dispose()
+    this.fleetRoot = null
+    this.lodNearMesh = null
+    this.lodFarMesh = null
+    this.focusMesh = null
+    this.focusMat = null
+    this.fleetCount = 0
+    this.fleetFocus = -1
+  }
+
   private spawnFleet(units: { running: boolean }[]) {
     const hero = this.heroMesh()
     const material = hero ? singleMaterial(hero) : null
     if (!hero || !material || units.length === 0) return false
+    const layout = this.fleetLayout(hero, units.length)
+    this.allocFleet(units.length)
+    this.fleetRoot = new THREE.Group()
+    this.root.add(this.fleetRoot)
+    this.lodNearMesh = this.makeBucket(this.lodNearGeo ?? hero.geometry, material, units.length)
+    this.lodFarMesh = this.makeBucket(this.lodFarGeo ?? hero.geometry, material, units.length)
+    this.focusMesh = this.makeFocusMesh(hero.geometry, material)
+    this.fleetRoot.add(this.lodNearMesh, this.lodFarMesh, this.focusMesh)
+    for (let i = 0; i < units.length; i++) this.storeFleetUnit(i, units[i].running, layout)
+    this.lodLevel.fill(LOD_FAR)
+    this.writeLodBuckets()
+    return true
+  }
+
+  private fleetLayout(hero: THREE.Mesh, count: number) {
     hero.updateMatrixWorld(true)
     hero.matrixWorld.decompose(this.fleetPos, this.fleetQuat, this.fleetScale)
     const box = new THREE.Box3().setFromObject(hero)
     const size = box.getSize(new THREE.Vector3())
-    const cols = fleetColumns(units.length)
-    const gapX = size.x + 0.9
     const gapZ = size.z + 1.15
-    const originX = box.min.x
-    const originZ = box.min.z - gapZ
-    const baseY = this.fleetPos.y
-    const mesh = new THREE.InstancedMesh(hero.geometry, material, units.length)
+    return {
+      cols: fleetColumns(count),
+      gapX: size.x + 0.9,
+      gapZ,
+      originX: box.min.x,
+      originZ: box.min.z - gapZ,
+      baseY: this.fleetPos.y,
+    }
+  }
+
+  private allocFleet(count: number) {
+    this.fleetCount = count
+    this.fleetFocus = -1
+    this.fleetX = new Float32Array(count)
+    this.fleetY = new Float32Array(count)
+    this.fleetZ = new Float32Array(count)
+    this.fleetMats = new Float32Array(count * 16)
+    this.fleetShade = new Float32Array(count)
+    this.lodLevel = new Uint8Array(count)
+    this.lodSlot = new Uint16Array(count)
+  }
+
+  private storeFleetUnit(index: number, running: boolean, layout: FleetLayout) {
+    const col = index % layout.cols
+    const row = Math.floor(index / layout.cols)
+    this.fleetPos.set(layout.originX + col * layout.gapX, layout.baseY, layout.originZ - row * layout.gapZ)
+    this.fleetX[index] = this.fleetPos.x
+    this.fleetY[index] = this.fleetPos.y
+    this.fleetZ[index] = this.fleetPos.z
+    this.fleetShade[index] = running ? 1 : 0.72
+    this.fleetMatrix.compose(this.fleetPos, this.fleetQuat, this.fleetScale)
+    this.fleetMatrix.toArray(this.fleetMats, index * 16)
+  }
+
+  private makeBucket(geo: THREE.BufferGeometry, material: THREE.Material, count: number) {
+    const mesh = new THREE.InstancedMesh(geo, material, count)
     mesh.castShadow = false
     mesh.receiveShadow = false
-    for (let i = 0; i < units.length; i++) {
-      this.placeFleetUnit(mesh, i, units[i].running, cols, gapX, gapZ, originX, originZ, baseY)
+    mesh.count = 0
+    mesh.visible = false
+    return mesh
+  }
+
+  private makeFocusMesh(geo: THREE.BufferGeometry, material: THREE.Material) {
+    const src = material as THREE.MeshStandardMaterial
+    const mat = src.clone()
+    this.focusMat = mat
+    this.focusBase.copy(src.color)
+    const mesh = new THREE.Mesh(geo, mat)
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    mesh.visible = false
+    mesh.matrixAutoUpdate = false
+    return mesh
+  }
+
+  private bucketFor(level: number) {
+    if (level === LOD_NEAR) return this.lodNearMesh
+    if (level === LOD_FAR) return this.lodFarMesh
+    return null
+  }
+
+  private writeLodBuckets() {
+    const near = this.lodNearMesh
+    const far = this.lodFarMesh
+    if (!near || !far) return
+    this.fillBucket(near, LOD_NEAR, this.countLevel(LOD_NEAR))
+    this.fillBucket(far, LOD_FAR, this.countLevel(LOD_FAR))
+    this.poseFocusMesh()
+    this.needsRender = true
+  }
+
+  private countLevel(level: number) {
+    let count = 0
+    for (let i = 0; i < this.fleetCount; i++) if (this.lodLevel[i] === level) count++
+    return count
+  }
+
+  private fillBucket(mesh: THREE.InstancedMesh, level: number, count: number) {
+    mesh.count = count
+    mesh.visible = count > 0
+    let slot = 0
+    for (let i = 0; i < this.fleetCount; i++) {
+      if (this.lodLevel[i] !== level) continue
+      this.lodSlot[i] = slot
+      this.writeInstance(mesh, slot, i)
+      slot++
     }
     mesh.instanceMatrix.needsUpdate = true
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-    mesh.computeBoundingSphere()
-    this.root.add(mesh)
-    this.fleetMesh = mesh
-    return true
+    if (count > 0) {
+      mesh.computeBoundingBox()
+      mesh.computeBoundingSphere()
+    }
   }
 
-  private placeFleetUnit(
-    mesh: THREE.InstancedMesh,
-    index: number,
-    running: boolean,
-    cols: number,
-    gapX: number,
-    gapZ: number,
-    originX: number,
-    originZ: number,
-    baseY: number,
-  ) {
-    const col = index % cols
-    const row = Math.floor(index / cols)
-    this.fleetPos.set(originX + col * gapX, baseY, originZ - row * gapZ)
-    this.fleetMatrix.compose(this.fleetPos, this.fleetQuat, this.fleetScale)
-    mesh.setMatrixAt(index, this.fleetMatrix)
-    const shade = running ? 1 : 0.72
+  private writeInstance(mesh: THREE.InstancedMesh, slot: number, unit: number) {
+    this.fleetMatrix.fromArray(this.fleetMats, unit * 16)
+    mesh.setMatrixAt(slot, this.fleetMatrix)
+    const shade = this.fleetShade[unit]
     this.fleetColor.setRGB(shade, shade, shade)
-    mesh.setColorAt(index, this.fleetColor)
+    mesh.setColorAt(slot, this.fleetColor)
+  }
+
+  private poseFocusMesh() {
+    const mesh = this.focusMesh
+    if (!mesh) return
+    if (this.fleetFocus < 0) {
+      mesh.visible = false
+      return
+    }
+    mesh.visible = true
+    mesh.matrix.fromArray(this.fleetMats, this.fleetFocus * 16)
+    mesh.matrixWorldNeedsUpdate = true
+    const shade = this.fleetShade[this.fleetFocus]
+    this.focusMat?.color.copy(this.focusBase).multiplyScalar(shade)
+  }
+
+  private updateFleetLod() {
+    if (this.fleetCount === 0) return
+    const cam = this.camera.position
+    let changed = false
+    for (let i = 0; i < this.fleetCount; i++) {
+      const dx = cam.x - this.fleetX[i]
+      const dy = cam.y - this.fleetY[i]
+      const dz = cam.z - this.fleetZ[i]
+      const next = this.lodFor(i, dx * dx + dy * dy + dz * dz)
+      if (next === this.lodLevel[i]) continue
+      this.lodLevel[i] = next
+      changed = true
+    }
+    if (changed) this.writeLodBuckets()
+  }
+
+  private lodFor(index: number, d2: number) {
+    if (index === this.fleetFocus) return LOD_FULL
+    if (this.lodLevel[index] === LOD_NEAR) return d2 > LOD_NEAR_OUT2 ? LOD_FAR : LOD_NEAR
+    return d2 < LOD_NEAR_IN2 ? LOD_NEAR : LOD_FAR
+  }
+
+  private focusFleetUnit(index: number) {
+    if (index === this.fleetFocus) return
+    this.fleetFocus = index
+    this.updateFleetLod()
+  }
+
+  private pickFleetUnit() {
+    const list: THREE.Object3D[] = []
+    if (this.lodNearMesh?.visible) list.push(this.lodNearMesh)
+    if (this.lodFarMesh?.visible) list.push(this.lodFarMesh)
+    if (this.focusMesh?.visible) list.push(this.focusMesh)
+    if (list.length === 0) return
+    const hit = this.raycaster.intersectObjects(list, false)[0]
+    if (!hit || hit.object === this.focusMesh) return
+    if (hit.instanceId === undefined) return
+    const unit = this.unitForSlot(hit.object as THREE.InstancedMesh, hit.instanceId)
+    if (unit >= 0) this.focusFleetUnit(unit)
+  }
+
+  private unitForSlot(mesh: THREE.InstancedMesh, slot: number) {
+    const level = mesh === this.lodNearMesh ? LOD_NEAR : LOD_FAR
+    for (let i = 0; i < this.fleetCount; i++) {
+      if (this.lodLevel[i] === level && this.lodSlot[i] === slot) return i
+    }
+    return -1
   }
 
   private heroMesh(): THREE.Mesh | null {
@@ -1652,8 +1862,11 @@ export class ChillerScene {
         this.select(id)
         this.focus(id)
         this.onSelect(id)
+        this.focusFleetUnit(-1)
       }
+      return
     }
+    this.pickFleetUnit()
   }
 
   private onResize = () => {
@@ -1796,6 +2009,7 @@ export class ChillerScene {
       this.needsRender = true
       this.labelsNeedDraw = true
       this.occlusionPending = true
+      this.updateFleetLod()
     }
     if (this.needsRender) {
       this.renderer.render(this.scene, this.camera)
@@ -1839,7 +2053,7 @@ export class ChillerScene {
     this.labelAnchors.clear()
     this.controls.dispose()
     disposeSceneResources(this.scene)
-    this.fleetMesh?.dispose()
+    this.disposeFleetMeshes()
     this.renderer.dispose()
   }
 }
