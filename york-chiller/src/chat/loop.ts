@@ -12,6 +12,7 @@ export interface ToolResultIn {
   name: string
   ok: boolean
   message: string
+  rows?: Record<string, unknown>[]
 }
 
 export interface ChatSource {
@@ -33,7 +34,7 @@ export type ChatResponse =
   | { status: 'error'; answer: string }
 
 export interface ToolHost {
-  callTool: (name: string, args: Record<string, unknown>) => { ok: boolean; message: string }
+  callTool: (name: string, args: Record<string, unknown>) => { ok: boolean; message: string; rows?: Record<string, unknown>[] }
 }
 
 export interface AskInput {
@@ -61,7 +62,9 @@ function gateOf(name: string): 'R' | 'W' | 'C' | null {
 
 function runOne(call: ToolCall, host: ToolHost): ToolResultIn {
   const result = host.callTool(call.name, call.args)
-  return { name: call.name, ok: result.ok, message: result.message }
+  const sent: ToolResultIn = { name: call.name, ok: result.ok, message: result.message }
+  if (Array.isArray(result.rows) && result.rows.length > 0) sent.rows = result.rows
+  return sent
 }
 
 async function applyCalls(calls: ToolCall[], host: ToolHost, onConfirm: AskInput['onConfirm'], onUndoOffer: () => void): Promise<ToolResultIn[]> {

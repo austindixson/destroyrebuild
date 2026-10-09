@@ -12,7 +12,10 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - `plant.getActionLog` returns the last rows with time, actor, and action.
 - `plant.getAlarms` lists each active alarm.
 - A follow-up round sends a snapshot delta and the tool results. That prompt does not send the passage set again.
+- The trainer sends the action-log rows and the alarm rows to the server.
 - A follow-up round uses the time left on the 135 s request. The server does not start the tier budget again.
+- Round 0 gives grok 75 s, claude 10 s, and cursor 50 s. Run 7 killed grok at 65 s. Cursor also hit 50 s, so that budget stays.
+- The prompt tells the model to set answer to an empty string when tools is not empty.
 - The coach states only a value that the snapshot, the tool results, or the passages show.
 - The N+1 passage says the plant has N+1 when one chiller capacity is at least the IT load.
 - The checklist treats `no file quote` and `have no` as refusals.
@@ -33,7 +36,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - The service does not use a provider API key.
 - Codex runs only when `YORK_CODEX=1`.
 - The server listens on 127.0.0.1. Caddy forwards chat with the proxy secret.
-- One request gives grok 65 s, claude 20 s, and cursor 50 s.
+- Round 0 gives grok 75 s, claude 10 s, and cursor 50 s. A follow-up round uses the time left on the 135 s request.
 - The server stops the request at 135 s.
 - The trainer stops at 145 s. Caddy waits 155 s.
 - Grok allows 2 calls at once. Claude allows 3. Cursor allows 1. Codex allows 1.

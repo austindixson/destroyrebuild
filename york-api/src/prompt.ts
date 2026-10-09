@@ -11,6 +11,7 @@ const SYSTEM = [
   'Do not invent a manual, a form number, or a page number.',
   'Reply with one JSON object and no other text.',
   'Shape: {"answer":"","cites":["trainer:id"],"tools":[{"name":"plant.getAlarms","args":{}}]}',
+  'Set answer to an empty string when tools is not empty.',
   'Leave tools empty when the snapshot or the tool results already answer.',
   'The sample tool object shows the shape. Include it only when that read is still missing.',
   'Put trainer ids from the passages in cites.',
@@ -76,7 +77,11 @@ function plantDelta(snapshot: Record<string, unknown>): string {
 function toolResultLines(req: ChatRequest, limit: number): string {
   return req.toolResults
     .slice(0, 8)
-    .map((row) => `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message.slice(0, limit)}`)
+    .map((row) => {
+      const head = `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message.slice(0, limit)}`
+      if (!row.rows || row.rows.length === 0) return head
+      return `${head}\n${JSON.stringify(row.rows).slice(0, limit)}`
+    })
     .join('\n')
 }
 

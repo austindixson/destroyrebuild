@@ -8,7 +8,7 @@ function corpusFor(snapshot: unknown, chunks: Chunk[], toolText: string): string
 }
 
 function toolText(results: ToolResultIn[]): string {
-  return results.map((row) => row.message).join('\n')
+  return results.map((row) => (row.rows ? `${row.message}\n${JSON.stringify(row.rows)}` : row.message)).join('\n')
 }
 
 function sourcesFor(ids: string[], chunks: Chunk[]): ChatSource[] {

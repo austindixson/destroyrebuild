@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import index from '../data/trainer-index.json' with { type: 'json' }
 import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
-import { handleChat, type ChatDeps } from '../src/chat.ts'
+import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
 import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
@@ -192,6 +192,7 @@ test('the example shows one tool object and says to leave tools empty', () => {
     [],
   )
   assert.match(prompt.system, /"name":"plant\.getAlarms","args":\{\}/)
+  assert.match(prompt.system, /Set answer to an empty string when tools is not empty/)
   assert.match(prompt.system, /Leave tools empty when the snapshot or the tool results already answer/)
   assert.match(prompt.system, /Include it only when that read is still missing/)
   assert.match(prompt.system, /State only a value that the snapshot, the tool results, or the passages show/)
@@ -205,15 +206,39 @@ test('the example shows one tool object and says to leave tools empty', () => {
       history: [],
       snapshot: { plant: { itLoadMw: 4.2, hallSupplyF: 70, chwValvePct: 40 } },
       round: 1,
-      toolResults: [{ name: 'plant.getActionLog', ok: true, message: 't=12 user setValve loop=chw pct=40' }],
+      toolResults: [{
+        name: 'plant.getActionLog',
+        ok: true,
+        message: '1 rows.',
+        rows: [{ t: 12, actor: 'user', action: 'setValve', args: { loop: 'chw', pct: 40 } }],
+      }],
     },
     [{ id: 'trainer:glossary:n-plus-1', title: 'N+1', href: '/york-chiller/#trainer:glossary:n-plus-1', text: 'long passage' }],
   )
   assert.equal(follow.round, 1)
   assert.match(follow.user, /Snapshot delta:/)
-  assert.match(follow.user, /t=12 user setValve/)
+  assert.match(follow.user, /"action":"setValve"/)
   assert.equal(follow.user.includes('Passages:'), false)
   assert.equal(follow.user.includes('long passage'), false)
+})
+
+test('action log rows reach the server and a tool snapshot does not', () => {
+  const req = readRequest({
+    question: 'How many actions are in the action log?',
+    snapshot: { view: 'home' },
+    round: 1,
+    toolResults: [{
+      name: 'plant.getActionLog',
+      ok: true,
+      message: '1 rows.',
+      rows: [{ t: 12, actor: 'user', action: 'setValve', args: { loop: 'chw', pct: 40 }, snapshot: { secret: true } }],
+      snapshot: { secret: true },
+    }],
+  })
+  assert.ok(req)
+  if (!req) return
+  assert.deepEqual(req.toolResults[0]?.rows, [{ t: 12, actor: 'user', action: 'setValve', args: { loop: 'chw', pct: 40 } }])
+  assert.equal(JSON.stringify(req.toolResults).includes('secret'), false)
 })
 
 test('bare string tool names become tool calls and unknown names are dropped', async () => {

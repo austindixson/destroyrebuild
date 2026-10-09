@@ -21,7 +21,7 @@ import { linkGlossary } from '../ui/glossary'
 
 export interface ChatMount {
   screen: () => ScreenInput
-  callTool: (name: string, args: Record<string, unknown>) => { ok: boolean; message: string }
+  callTool: (name: string, args: Record<string, unknown>) => { ok: boolean; message: string; rows?: Record<string, unknown>[] }
   undo: () => void
 }
 

@@ -13,6 +13,7 @@ export interface ToolResultIn {
   name: string
   ok: boolean
   message: string
+  rows?: Record<string, unknown>[]
 }
 
 export interface HistoryItem {

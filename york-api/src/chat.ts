@@ -36,6 +36,34 @@ function readHistory(value: unknown): HistoryItem[] {
   return rows.slice(-6)
 }
 
+function compactRow(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const src = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  if (typeof src.t === 'number') out.t = src.t
+  if (typeof src.actor === 'string') out.actor = src.actor
+  if (typeof src.action === 'string') out.action = src.action
+  if (typeof src.text === 'string') out.text = src.text
+  if (src.args && typeof src.args === 'object' && !Array.isArray(src.args)) {
+    const args: Record<string, string | number | boolean> = {}
+    for (const [key, item] of Object.entries(src.args as Record<string, unknown>)) {
+      if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') args[key] = item
+    }
+    if (Object.keys(args).length > 0) out.args = args
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+function readToolRows(value: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const rows: Record<string, unknown>[] = []
+  for (const item of value.slice(0, 10)) {
+    const row = compactRow(item)
+    if (row) rows.push(row)
+  }
+  return rows.length > 0 ? rows : undefined
+}
+
 function readTools(value: unknown): ToolResultIn[] {
   if (!Array.isArray(value)) return []
   const rows: ToolResultIn[] = []
@@ -43,7 +71,10 @@ function readTools(value: unknown): ToolResultIn[] {
     if (!item || typeof item !== 'object') continue
     const row = item as Record<string, unknown>
     if (typeof row.name !== 'string' || typeof row.ok !== 'boolean' || typeof row.message !== 'string') continue
-    rows.push({ name: row.name, ok: row.ok, message: row.message })
+    const sent: ToolResultIn = { name: row.name, ok: row.ok, message: row.message }
+    const detail = readToolRows(row.rows)
+    if (detail) sent.rows = detail
+    rows.push(sent)
   }
   return rows
 }

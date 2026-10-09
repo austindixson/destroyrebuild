@@ -6,6 +6,7 @@ import { build } from 'esbuild'
 
 const entries = [
   'tests/phase0.test.ts',
+  'tests/chatLoop.test.ts',
   'tests/snapshot.test.ts',
   'tests/gates.test.ts',
   'tests/valveAlert.test.ts',

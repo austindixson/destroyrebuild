@@ -16,6 +16,7 @@ export interface ToolResult {
   ok: boolean
   message: string
   snapshot: PlantResult['snapshot']
+  rows?: Record<string, unknown>[]
 }
 
 export interface YorkToolInfo {
@@ -63,13 +64,31 @@ function actionText(row: ActionRecord): string {
   return `t=${Math.round(row.t)} ${row.actor} ${row.action}${argText(row.args)}`
 }
 
+function plainArgs(args: unknown): Record<string, string | number | boolean> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return {}
+  const out: Record<string, string | number | boolean> = {}
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') out[key] = value
+  }
+  return out
+}
+
 function actionLogMessage(rows: readonly ActionRecord[]): string {
   const last = rows.slice(-ACTION_ROWS)
   if (last.length === 0) return 'The action log is empty.'
   return [`${rows.length} rows.`, ...last.map(actionText)].join('\n')
 }
 
-function alarmMessage(controller: PlantController): string {
+function actionRows(rows: readonly ActionRecord[]): Record<string, unknown>[] {
+  return rows.slice(-ACTION_ROWS).map((row) => ({
+    t: Math.round(row.t),
+    actor: row.actor,
+    action: row.action,
+    args: plainArgs(row.args),
+  }))
+}
+
+function alarmTexts(controller: PlantController): string[] {
   const alarms = controller.getAlarms()
   const lines: string[] = []
   if (alarms.alarm) lines.push(alarms.alarm)
@@ -79,6 +98,11 @@ function alarmMessage(controller: PlantController): string {
   for (const unit of controller.snapshot.units) {
     if (unit.mode === 'alarm') lines.push(`${unit.id} mode is alarm.`)
   }
+  return lines
+}
+
+function alarmMessage(controller: PlantController): string {
+  const lines = alarmTexts(controller)
   return lines.length > 0 ? lines.join('\n') : 'No active alarm.'
 }
 
@@ -98,7 +122,7 @@ const TOOLS: ToolDef[] = [
     run: (controller, args) => {
       const since = num(args.sinceT)
       const rows = controller.getActionLog(since ?? undefined)
-      return { ok: true, message: actionLogMessage(rows), snapshot: controller.snapshot }
+      return { ok: true, message: actionLogMessage(rows), rows: actionRows(rows), snapshot: controller.snapshot }
     },
   },
   {
@@ -107,7 +131,12 @@ const TOOLS: ToolDef[] = [
     description: 'Read the alarm text and the OptiView log.',
     parameters: { type: 'object', properties: {} },
     run: (controller) => {
-      return { ok: true, message: alarmMessage(controller), snapshot: controller.snapshot }
+      return {
+        ok: true,
+        message: alarmMessage(controller),
+        rows: alarmTexts(controller).map((text) => ({ text })),
+        snapshot: controller.snapshot,
+      }
     },
   },
   {

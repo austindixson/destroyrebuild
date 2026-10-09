@@ -186,15 +186,17 @@ test('the action log and alarm tools list the rows', () => {
   assert.equal(tools.call('plant.getAlarms').message, 'No active alarm.')
   controller.setValve('chw', 40, 'user')
   controller.setWeather('hot', 'ai')
-  const log = tools.call('plant.getActionLog').message
-  assert.match(log, /user setValve loop=chw pct=40/)
-  assert.match(log, /ai setWeather preset=hot/)
-  assert.equal(log.includes('2 actions.'), false)
+  const logged = tools.call('plant.getActionLog')
+  assert.match(logged.message, /user setValve loop=chw pct=40/)
+  assert.match(logged.message, /ai setWeather preset=hot/)
+  assert.equal(logged.message.includes('2 actions.'), false)
+  assert.equal(logged.rows?.some((row) => row.action === 'setValve' && row.actor === 'user'), true)
   controller.injectIncident('hall-hot', 'user')
-  const alarms = tools.call('plant.getAlarms').message
-  assert.match(alarms, /The hall is hot/)
-  assert.match(alarms, /The incident is active/)
-  assert.notEqual(alarms, 'No alarm.')
+  const alarms = tools.call('plant.getAlarms')
+  assert.match(alarms.message, /The hall is hot/)
+  assert.match(alarms.message, /The incident is active/)
+  assert.notEqual(alarms.message, 'No alarm.')
+  assert.equal(alarms.rows?.some((row) => row.text === 'The incident is active. The board is live.'), true)
 })
 
 test('the action log records actor, args, and both snapshots', () => {

@@ -67,15 +67,15 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(grok.includes('-p'), false)
   assert.equal(grokLaunchArgsOk(grok), true)
   assert.equal(grokLaunchArgsOk(['-p']), false)
-  assert.equal(GROK_BUDGET_MS, 65_000)
-  assert.equal(CLAUDE_BUDGET_MS, 20_000)
+  assert.equal(GROK_BUDGET_MS, 75_000)
+  assert.equal(CLAUDE_BUDGET_MS, 10_000)
   assert.equal(CURSOR_BUDGET_MS, 50_000)
   assert.equal(CODEX_BUDGET_MS, 10_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= 135_000)
   const off = tierBudgetMs({})
-  assert.deepEqual(off, { grok: 65_000, claude: 20_000, cursor: 50_000, codex: 10_000 })
+  assert.deepEqual(off, { grok: 75_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
   const on = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.deepEqual(on, { grok: 55_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
+  assert.deepEqual(on, { grok: 65_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
   assert.ok(on.grok + on.claude + on.cursor + on.codex <= 135_000)
   const runner = {
     async run() {
@@ -84,7 +84,7 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   }
   const adapters = buildAdapters({ YORK_SANDBOX: 'ready' }, runner)
   assert.deepEqual(adapters.map((item) => item.id), ['grok', 'claude', 'cursor', 'codex'])
-  assert.equal(adapters[0]?.budgetMs, 65_000)
+  assert.equal(adapters[0]?.budgetMs, 75_000)
   assert.equal(adapters[2]?.budgetMs, 50_000)
   assert.equal(adapters[0]?.limit, 2)
   assert.equal(adapters[1]?.limit, 3)
