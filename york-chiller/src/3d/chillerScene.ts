@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { ComponentId } from '../data/content'
 
 export type HotspotSelect = (id: ComponentId | null) => void
@@ -18,6 +19,9 @@ const MODEL_TIMEOUT_MS = 25_000
 const MODEL_CAP_MS = 180_000
 
 const MB = 1_048_576
+
+/** Desktop and phone both stay under this. A 2× buffer costs four times the pixels. */
+const MAX_PIXEL_RATIO = 1.5
 
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
 export function plantModelProgressText(loaded: number, total: number): string {
@@ -156,7 +160,25 @@ export class ChillerScene {
   private labelValues = new Map<PlantTag, HTMLElement>()
   private labelAnchors = new Map<PlantTag, CSS2DObject>()
   private occlusionAt = 0
-  private fitKey = ''
+  private labelsNeedDraw = true
+  private viewW = -1
+  private viewH = -1
+  private viewPx = 0
+  private viewPy = 0
+  private viewPz = 0
+  private viewTx = 0
+  private viewTy = 0
+  private viewTz = 0
+  private readonly geos = new Map<string, THREE.BufferGeometry>()
+  private readonly materialCache = new Map<string, THREE.Material>()
+  private readonly pipeParts = new Map<THREE.Material, THREE.BufferGeometry[]>()
+  private fleetMesh: THREE.InstancedMesh | null = null
+  private fleetKey = ''
+  private readonly fleetMatrix = new THREE.Matrix4()
+  private readonly fleetPos = new THREE.Vector3()
+  private readonly fleetQuat = new THREE.Quaternion()
+  private readonly fleetScale = new THREE.Vector3()
+  private readonly fleetColor = new THREE.Color()
   private readonly occlusionDir = new THREE.Vector3()
   private readonly occlusionAnchor = new THREE.Vector3()
   private readings: SceneReadings | null = null
@@ -194,7 +216,7 @@ export class ChillerScene {
       powerPreference: lowPower ? 'low-power' : 'high-performance',
       failIfMajorPerformanceCaveat: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2))
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO))
     this.renderer.setSize(w, h, false)
     this.labelRenderer = new CSS2DRenderer()
     const labels = this.labelRenderer.domElement
@@ -209,13 +231,14 @@ export class ChillerScene {
     this.labelRenderer.setSize(w, h)
     void document.fonts.ready.then(() => {
       if (this.disposed) return
-      this.fitKey = ''
+      this.labelsNeedDraw = true
       this.needsRender = true
     })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = !lowPower
+    this.renderer.shadowMap.type = THREE.BasicShadowMap
 
     this.camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 80)
     this.camera.position.set(0.4, 5.2, 13)
@@ -250,21 +273,52 @@ export class ChillerScene {
     document.addEventListener('visibilitychange', this.onVisibility)
     this.tick()
     requestAnimationFrame(() => this.onResize())
+    this.publishStatsHook()
+  }
+
+  /** Opt-in handle so a real-app sample can read renderer.info. No effect otherwise. */
+  private publishStatsHook() {
+    if (!new URLSearchParams(window.location.search).has('plantStats')) return
+    const win = window as Window & { __YORK_SCENE?: ChillerScene }
+    win.__YORK_SCENE = this
   }
 
   private segs(hi: number, lo: number) {
-    return this.lowPower ? lo : hi
+    if (this.lowPower) return lo
+    return Math.min(hi, Math.max(lo, 10))
   }
 
   private steel(color: number, metalness = 0.65, roughness = 0.4) {
-    return new THREE.MeshStandardMaterial({ color, metalness, roughness })
+    const key = `${color}:${metalness}:${roughness}`
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshStandardMaterial({ color, metalness, roughness })
+    this.materialCache.set(key, mat)
+    return mat
   }
 
-  private addHotspot(id: ComponentId, mesh: THREE.Object3D) {
+  private geo(key: string, make: () => THREE.BufferGeometry) {
+    const cached = this.geos.get(key)
+    if (cached) return cached
+    const created = make()
+    this.geos.set(key, created)
+    return created
+  }
+
+  private hiddenMat() {
+    const key = 'hidden'
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    this.materialCache.set(key, mat)
+    return mat
+  }
+
+  private addHotspot(id: ComponentId, mesh: THREE.Object3D, cast = true) {
     mesh.userData.componentId = id
     mesh.traverse((c) => {
       c.userData.componentId = id
-      if ((c as THREE.Mesh).isMesh) {
+      if (cast && (c as THREE.Mesh).isMesh) {
         c.castShadow = !this.lowPower
         c.receiveShadow = !this.lowPower
       }
@@ -300,7 +354,8 @@ export class ChillerScene {
     key.position.set(6, 10, 4)
     if (!this.lowPower) {
       key.castShadow = true
-      key.shadow.mapSize.set(1024, 1024)
+      key.shadow.mapSize.set(512, 512)
+      key.shadow.bias = -0.0004
       key.shadow.camera.near = 1
       key.shadow.camera.far = 30
       key.shadow.camera.left = -10
@@ -509,10 +564,9 @@ export class ChillerScene {
     this.model = model
     model.traverse((c) => {
       const mesh = c as THREE.Mesh
-      if (mesh.isMesh) {
-        mesh.castShadow = false
-        mesh.receiveShadow = !this.lowPower
-      }
+      if (!mesh.isMesh) return
+      mesh.castShadow = false
+      mesh.receiveShadow = false
     })
     model.rotation.y = Math.PI / 2
     model.updateMatrixWorld(true)
@@ -533,8 +587,23 @@ export class ChillerScene {
     this.renderer.toneMappingExposure = 1.45
     this.placeProxyHotspots(fitted)
     this.buildFieldPiping(fitted)
+    if (!this.lowPower) this.addContactShadow(fitted)
     this.framePlant()
     this.needsRender = true
+  }
+
+  /** One invisible box stands in for the package. The GLB itself does not sample the shadow map. */
+  private addContactShadow(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const caster = new THREE.Mesh(
+      new THREE.BoxGeometry(size.x * 0.9, Math.max(size.y * 0.8, 0.4), size.z * 0.9),
+      this.hiddenMat(),
+    )
+    caster.position.copy(center)
+    caster.castShadow = true
+    caster.receiveShadow = false
+    this.root.add(caster)
   }
 
   /** Fit the camera to the chiller plus both heat sinks. One placement, from the measured bounds. */
@@ -561,35 +630,134 @@ export class ChillerScene {
 
   setValve(kind: LoopKind, pct: number) {
     const turns = (pct / 100) * Math.PI * 3
+    const attr = `data-valve-${kind}`
+    let seen = false
     let moved = false
     for (const item of this.instruments) {
       if (item.kind !== kind) continue
+      seen = true
+      if (item.wheel.rotation.y === turns) continue
       item.wheel.rotation.y = turns
       moved = true
     }
-    if (moved) this.renderer.domElement.setAttribute(`data-valve-${kind}`, turns.toFixed(4))
-    this.needsRender = true
+    if (!seen) return
+    if (!moved && this.renderer.domElement.hasAttribute(attr)) return
+    this.renderer.domElement.setAttribute(attr, turns.toFixed(4))
+    if (moved) this.needsRender = true
   }
 
   /** Fan rpm follows the sim. 100% is a full spin; 0% is stopped. */
   setFans(dryPct: number, towerPct: number) {
-    this.drySpin = Math.max(0, dryPct) / 100 * 9
-    this.towerSpin = Math.max(0, towerPct) / 100 * 7
+    const dry = (Math.max(0, dryPct) / 100) * 9
+    const tower = (Math.max(0, towerPct) / 100) * 7
+    if (dry === this.drySpin && tower === this.towerSpin) return
+    this.drySpin = dry
+    this.towerSpin = tower
     this.poseFans(this.clock.getElapsedTime())
     this.needsRender = true
+  }
+
+  /**
+   * Draw the units after the lead machine. Two units keep the single package.
+   * A larger bank shares the lead geometry in one instanced draw.
+   */
+  setFleet(units: { running: boolean }[]) {
+    if (units.length <= 2) {
+      this.clearFleet(true)
+      return
+    }
+    const key = fleetRunKey(units)
+    if (key === this.fleetKey) return
+    this.clearFleet(false)
+    if (!this.spawnFleet(units.slice(1))) return
+    this.fleetKey = key
+    this.framePlant()
+    this.labelsNeedDraw = true
+    this.needsRender = true
+  }
+
+  private clearFleet(reframe: boolean) {
+    if (!this.fleetMesh) return
+    this.root.remove(this.fleetMesh)
+    this.fleetMesh.dispose()
+    this.fleetMesh = null
+    this.fleetKey = ''
+    if (reframe) this.framePlant()
+    this.labelsNeedDraw = true
+    this.needsRender = true
+  }
+
+  private spawnFleet(units: { running: boolean }[]) {
+    const hero = this.heroMesh()
+    const material = hero ? singleMaterial(hero) : null
+    if (!hero || !material || units.length === 0) return false
+    hero.updateMatrixWorld(true)
+    hero.matrixWorld.decompose(this.fleetPos, this.fleetQuat, this.fleetScale)
+    const box = new THREE.Box3().setFromObject(hero)
+    const size = box.getSize(new THREE.Vector3())
+    const cols = fleetColumns(units.length)
+    const gapX = size.x + 0.9
+    const gapZ = size.z + 1.15
+    const originX = box.min.x
+    const originZ = box.min.z - gapZ
+    const baseY = this.fleetPos.y
+    const mesh = new THREE.InstancedMesh(hero.geometry, material, units.length)
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    for (let i = 0; i < units.length; i++) {
+      this.placeFleetUnit(mesh, i, units[i].running, cols, gapX, gapZ, originX, originZ, baseY)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    mesh.computeBoundingSphere()
+    this.root.add(mesh)
+    this.fleetMesh = mesh
+    return true
+  }
+
+  private placeFleetUnit(
+    mesh: THREE.InstancedMesh,
+    index: number,
+    running: boolean,
+    cols: number,
+    gapX: number,
+    gapZ: number,
+    originX: number,
+    originZ: number,
+    baseY: number,
+  ) {
+    const col = index % cols
+    const row = Math.floor(index / cols)
+    this.fleetPos.set(originX + col * gapX, baseY, originZ - row * gapZ)
+    this.fleetMatrix.compose(this.fleetPos, this.fleetQuat, this.fleetScale)
+    mesh.setMatrixAt(index, this.fleetMatrix)
+    const shade = running ? 1 : 0.72
+    this.fleetColor.setRGB(shade, shade, shade)
+    mesh.setColorAt(index, this.fleetColor)
+  }
+
+  private heroMesh(): THREE.Mesh | null {
+    const model = this.model
+    if (!model) return null
+    let found: THREE.Mesh | null = null
+    model.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (!found && mesh.isMesh) found = mesh
+    })
+    return found
   }
 
   /** Refresh label text from the latest sim snapshot. Nodes stay put; only textContent changes. */
   setReadings(readings: SceneReadings) {
     this.readings = readings
+    let changed = false
     for (const [tag, el] of this.labelValues) {
       const next = readingText(tag, readings)
-      if (el.textContent !== next) {
-        el.textContent = next
-        this.fitKey = ''
-      }
+      if (el.textContent === next) continue
+      el.textContent = next
+      changed = true
     }
-    this.needsRender = true
+    if (changed) this.labelsNeedDraw = true
   }
 
   /**
@@ -682,6 +850,7 @@ export class ChillerScene {
       ], line, 'gly', tip, 'x')
     }
     this.buildDryCooler(group, coolX, coolZ)
+    this.flushPipes(group)
     this.root.add(group)
   }
 
@@ -767,7 +936,7 @@ export class ChillerScene {
     flangeAt: THREE.Vector3,
     flangeAxis: 'x' | 'z',
   ) {
-    this.runPipe(group, points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
+    this.runPipe(points, kind === 'gly' ? 0.068 : 0.082, this.steel(line.color, 0.62, 0.32))
     this.addFlange(group, flangeAt, flangeAxis)
     this.addValve(group, points[1].clone().lerp(points[2], 0.55), line.id, kind, line.tag)
     const run = points.length - 2
@@ -833,18 +1002,18 @@ export class ChillerScene {
   /** Fan disc lies in XZ and spins on Y. Local +Y is up, so the visible face is the top. */
   private fanDisc(radius: number) {
     const fan = new THREE.Group()
+    const tube = this.segs(6, 4)
+    const around = this.segs(16, 10)
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, 0.028, this.segs(6, 4), this.segs(16, 10)),
+      this.geo(`fan-ring-${radius}-${tube}-${around}`, () => new THREE.TorusGeometry(radius, 0.028, tube, around)),
       this.steel(0xd7dee6, 0.65, 0.3),
     )
     ring.rotation.x = Math.PI / 2
     fan.add(ring)
+    const bladeGeo = this.geo(`fan-blade-${radius}`, () => new THREE.BoxGeometry(radius * 0.85, 0.02, radius * 0.22))
     for (let i = 0; i < 4; i++) {
       const theta = (i * Math.PI) / 2
-      const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(radius * 0.85, 0.02, radius * 0.22),
-        this.steel(0xe7eef4, 0.55, 0.35),
-      )
+      const blade = new THREE.Mesh(bladeGeo, this.steel(0xe7eef4, 0.55, 0.35))
       blade.position.set(Math.cos(theta) * radius * 0.42, 0, Math.sin(theta) * radius * 0.42)
       blade.rotation.y = theta
       fan.add(blade)
@@ -852,26 +1021,53 @@ export class ChillerScene {
     return fan
   }
 
-  private runPipe(group: THREE.Group, points: THREE.Vector3[], radius: number, mat: THREE.Material) {
-    const up = new THREE.Vector3(0, 1, 0)
-    const dir = new THREE.Vector3()
+  private runPipe(points: THREE.Vector3[], radius: number, mat: THREE.Material) {
+    const radial = this.segs(10, 6)
+    const jointW = this.segs(8, 6)
+    const jointH = this.segs(6, 4)
     for (let i = 0; i < points.length - 1; i++) {
-      dir.subVectors(points[i + 1], points[i])
-      const len = dir.length()
-      if (len < 0.02) continue
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, this.segs(14, 8)), mat)
-      mesh.position.copy(points[i]).add(points[i + 1]).multiplyScalar(0.5)
-      mesh.quaternion.setFromUnitVectors(up, dir.normalize())
-      group.add(mesh)
-      const joint = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.15, this.segs(12, 8), this.segs(8, 6)), mat)
-      joint.position.copy(points[i + 1])
-      group.add(joint)
+      this.stashPipe(points[i], points[i + 1], radius, mat, radial, jointW, jointH)
     }
   }
 
+  private stashPipe(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    radius: number,
+    mat: THREE.Material,
+    radial: number,
+    jointW: number,
+    jointH: number,
+  ) {
+    const dir = new THREE.Vector3().subVectors(b, a)
+    const len = dir.length()
+    if (len < 0.02) return
+    const mid = a.clone().add(b).multiplyScalar(0.5)
+    const tube = new THREE.CylinderGeometry(radius, radius, len, radial, 1, true)
+    tube.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()))
+    tube.translate(mid.x, mid.y, mid.z)
+    pushGeo(this.pipeParts, mat, tube)
+    const joint = new THREE.SphereGeometry(radius * 1.15, jointW, jointH)
+    joint.translate(b.x, b.y, b.z)
+    pushGeo(this.pipeParts, mat, joint)
+  }
+
+  private flushPipes(group: THREE.Group) {
+    for (const [mat, parts] of this.pipeParts) {
+      const merged = mergePipe(parts)
+      if (!merged) continue
+      const mesh = new THREE.Mesh(merged, mat)
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      group.add(mesh)
+    }
+    this.pipeParts.clear()
+  }
+
   private addFlange(group: THREE.Group, pos: THREE.Vector3, axis: 'x' | 'z') {
+    const sides = this.segs(16, 8)
     const flange = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.16, 0.05, this.segs(16, 8)),
+      this.geo(`flange-${sides}`, () => new THREE.CylinderGeometry(0.16, 0.16, 0.05, sides)),
       this.steel(0xc5ccd1, 0.78, 0.28),
     )
     flange.position.copy(pos)
@@ -882,20 +1078,24 @@ export class ChillerScene {
   private addValve(group: THREE.Group, pos: THREE.Vector3, id: InstrumentId, kind: LoopKind, tag: PlantTag) {
     const valve = new THREE.Group()
     valve.position.copy(pos)
+    const bodySides = this.segs(14, 8)
     const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.14, 0.14, 0.26, this.segs(14, 8)),
+      this.geo(`valve-body-${bodySides}`, () => new THREE.CylinderGeometry(0.14, 0.14, 0.26, bodySides)),
       this.steel(0x1c2430, 0.72, 0.34),
     )
     body.rotation.z = Math.PI / 2
     valve.add(body)
+    const tube = this.segs(8, 6)
+    const ring = this.segs(18, 10)
     const wheel = new THREE.Mesh(
-      new THREE.TorusGeometry(0.16, 0.022, this.segs(8, 6), this.segs(18, 10)),
+      this.geo(`valve-wheel-${tube}-${ring}`, () => new THREE.TorusGeometry(0.16, 0.022, tube, ring)),
       this.steel(0xd7dee6, 0.85, 0.22),
     )
     wheel.position.y = 0.2
     valve.add(wheel)
+    const spokeGeo = this.geo('valve-spoke', () => new THREE.BoxGeometry(0.28, 0.015, 0.015))
     for (const rot of [0, Math.PI / 2]) {
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.015, 0.015), this.steel(0xd7dee6, 0.8, 0.25))
+      const spoke = new THREE.Mesh(spokeGeo, this.steel(0xd7dee6, 0.8, 0.25))
       spoke.position.y = 0.2
       spoke.rotation.y = rot
       wheel.add(spoke)
@@ -915,25 +1115,35 @@ export class ChillerScene {
     const gauge = new THREE.Group()
     gauge.position.copy(pos)
     const stem = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.018, 0.018, 0.16, 6),
+      this.geo('gauge-stem', () => new THREE.CylinderGeometry(0.018, 0.018, 0.16, 6)),
       this.steel(0x9aa4ad, 0.6, 0.3),
     )
     stem.position.y = 0.1
     gauge.add(stem)
+    const dialSides = this.segs(16, 8)
     const dial = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.085, 0.085, 0.035, this.segs(16, 8)),
-      new THREE.MeshStandardMaterial({
-        color: kind === 'p' ? 0xf4f7fb : 0xf0a202,
-        metalness: 0.25,
-        roughness: 0.4,
-        emissive: kind === 't' ? 0x7c4a03 : 0x000000,
-        emissiveIntensity: kind === 't' ? 0.25 : 0,
-      }),
+      this.geo(`gauge-dial-${dialSides}`, () => new THREE.CylinderGeometry(0.085, 0.085, 0.035, dialSides)),
+      this.gaugeMat(kind),
     )
     dial.rotation.x = Math.PI / 2
     dial.position.y = 0.2
     gauge.add(dial)
     group.add(gauge)
+  }
+
+  private gaugeMat(kind: 'p' | 't') {
+    const key = `gauge-${kind}`
+    const cached = this.materialCache.get(key)
+    if (cached) return cached
+    const mat = new THREE.MeshStandardMaterial({
+      color: kind === 'p' ? 0xf4f7fb : 0xf0a202,
+      metalness: 0.25,
+      roughness: 0.4,
+      emissive: kind === 't' ? 0x7c4a03 : 0x000000,
+      emissiveIntensity: kind === 't' ? 0.25 : 0,
+    })
+    this.materialCache.set(key, mat)
+    return mat
   }
 
   private tagLabel(text: PlantTag, color: string) {
@@ -998,18 +1208,6 @@ export class ChillerScene {
     const canvas = this.renderer.domElement
     const view = canvas.getBoundingClientRect()
     if (view.width < 8 || view.height < 8) return
-    const key = [
-      canvas.clientWidth,
-      canvas.clientHeight,
-      this.camera.position.x.toFixed(2),
-      this.camera.position.y.toFixed(2),
-      this.camera.position.z.toFixed(2),
-      this.controls.target.x.toFixed(2),
-      this.controls.target.y.toFixed(2),
-      this.controls.target.z.toFixed(2),
-    ].join('|')
-    if (key === this.fitKey) return
-    this.fitKey = key
     const bounds = insetBox(domBox(view), 4)
     const hud = this.hudBoxes().map((box) => padBox(box, 4))
     const fitted: FittedTag[] = []
@@ -1067,14 +1265,14 @@ export class ChillerScene {
     const region = (id: ComponentId, nx: number, ny: number, nz: number, nw: number, nh: number, nd: number) => {
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(Math.max(size.x * nw, 0.2), Math.max(size.y * nh, 0.2), Math.max(size.z * nd, 0.2)),
-        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+        this.hiddenMat(),
       )
       mesh.position.set(
         min.x + size.x * (nx + nw / 2),
         min.y + size.y * (ny + nh / 2),
         min.z + size.z * (nz + nd / 2),
       )
-      this.addHotspot(id, mesh)
+      this.addHotspot(id, mesh, false)
     }
     // Fractions of the fitted package. Front is +Z (camera side).
     region('vsd', 0.0, 0.05, 0.15, 0.16, 0.85, 0.7)
@@ -1313,6 +1511,7 @@ export class ChillerScene {
     this.renderer.setSize(w, h, false)
     this.labelRenderer.setSize(w, h)
     this.placeAllTags()
+    this.labelsNeedDraw = true
     this.needsRender = true
   }
 
@@ -1405,12 +1604,46 @@ export class ChillerScene {
     this.raycaster.far = savedFar
   }
 
+  private viewDirty() {
+    const canvas = this.renderer.domElement
+    const w = canvas.clientWidth
+    const h = canvas.clientHeight
+    const p = this.camera.position
+    const t = this.controls.target
+    const dirty =
+      this.viewW !== w ||
+      this.viewH !== h ||
+      Math.abs(this.viewPx - p.x) > 0.004 ||
+      Math.abs(this.viewPy - p.y) > 0.004 ||
+      Math.abs(this.viewPz - p.z) > 0.004 ||
+      Math.abs(this.viewTx - t.x) > 0.004 ||
+      Math.abs(this.viewTy - t.y) > 0.004 ||
+      Math.abs(this.viewTz - t.z) > 0.004
+    if (!dirty) return false
+    this.viewW = w
+    this.viewH = h
+    this.viewPx = p.x
+    this.viewPy = p.y
+    this.viewPz = p.z
+    this.viewTx = t.x
+    this.viewTy = t.y
+    this.viewTz = t.z
+    return true
+  }
+
   private renderFrame(t: number) {
-    if (!this.needsRender) return
-    this.renderer.render(this.scene, this.camera)
+    if (this.viewDirty()) {
+      this.needsRender = true
+      this.labelsNeedDraw = true
+    }
+    if (this.needsRender) {
+      this.renderer.render(this.scene, this.camera)
+      if (this.lowPower && !this.interacting) this.needsRender = false
+    }
+    if (!this.labelsNeedDraw) return
+    this.labelsNeedDraw = false
     this.syncLabelLayer()
     this.fadeOccludedLabels(t)
-    if (this.lowPower && !this.interacting) this.needsRender = false
   }
 
   private tick = () => {
@@ -1437,17 +1670,61 @@ export class ChillerScene {
     this.labelValues.clear()
     this.labelAnchors.clear()
     this.controls.dispose()
-    this.scene.traverse((obj) => {
-      const mesh = obj as THREE.Mesh
-      if (mesh.isMesh) {
-        mesh.geometry?.dispose()
-        const mat = mesh.material
-        if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-        else mat?.dispose?.()
-      }
-    })
+    disposeSceneResources(this.scene)
+    this.fleetMesh?.dispose()
     this.renderer.dispose()
   }
+}
+
+function pushGeo(batches: Map<THREE.Material, THREE.BufferGeometry[]>, mat: THREE.Material, geo: THREE.BufferGeometry) {
+  const list = batches.get(mat)
+  if (list) list.push(geo)
+  else batches.set(mat, [geo])
+}
+
+function mergePipe(parts: THREE.BufferGeometry[]) {
+  if (parts.length === 0) return null
+  if (parts.length === 1) return parts[0]
+  const merged = mergeGeometries(parts, false)
+  for (const part of parts) part.dispose()
+  return merged
+}
+
+function fleetColumns(count: number) {
+  if (count > 24) return 9
+  if (count > 12) return 6
+  return 4
+}
+
+function fleetRunKey(units: { running: boolean }[]) {
+  let key = String(units.length)
+  for (const unit of units) key += unit.running ? '1' : '0'
+  return key
+}
+
+function singleMaterial(mesh: THREE.Mesh) {
+  return Array.isArray(mesh.material) ? mesh.material[0] ?? null : mesh.material
+}
+
+function hasGeometry(obj: THREE.Object3D): obj is THREE.Mesh {
+  const mesh = obj as THREE.Mesh
+  return Boolean(mesh.isMesh || (obj as THREE.Points).isPoints || (obj as THREE.Line).isLine)
+}
+
+function disposeSceneResources(scene: THREE.Scene) {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (!hasGeometry(mesh)) return
+    if (mesh.geometry) geometries.add(mesh.geometry)
+    const mat = mesh.material
+    if (Array.isArray(mat)) {
+      for (const item of mat) materials.add(item)
+    } else if (mat) materials.add(mat)
+  })
+  for (const geo of geometries) geo.dispose()
+  for (const mat of materials) mat.dispose()
 }
 
 interface ScreenBox {
