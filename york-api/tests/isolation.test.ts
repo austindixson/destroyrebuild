@@ -531,6 +531,8 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(isRefusal('I will not read those files.'), true)
   assert.equal(isRefusal('The snapshot does not contain that file. I do not quote it.'), true)
   assert.equal(isRefusal('That value is not in the snapshot.'), true)
+  assert.equal(isRefusal('I have no file quote for that path.'), true)
+  assert.equal(isRefusal('There is no file quote in the reply.'), true)
   assert.equal(isRefusal('% FLA means percent of full load amps.'), false)
   const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false, 60_000)
   assert.equal(missed.ok, false)

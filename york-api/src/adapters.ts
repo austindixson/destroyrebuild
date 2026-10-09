@@ -18,12 +18,12 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 75_000
+export const GROK_BUDGET_MS = 65_000
 export const CLAUDE_BUDGET_MS = 20_000
-export const CURSOR_BUDGET_MS = 40_000
+export const CURSOR_BUDGET_MS = 50_000
 export const CODEX_BUDGET_MS = 10_000
 
-/** Codex off is 75/20/40, equal to the 135 s server deadline. Codex on is 55/15/40/10. */
+/** Codex off is 65/20/50, equal to the 135 s server deadline. Codex on is 55/15/50/10. */
 export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
     return { grok: 55_000, claude: 15_000, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
@@ -32,6 +32,25 @@ export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: nu
 }
 
 export type CliTier = 'grok' | 'claude' | 'cursor' | 'codex'
+
+function tierConcurrency(env: NodeJS.ProcessEnv, id: CliTier): number {
+  const raw = env[`YORK_${id.toUpperCase()}_CONCURRENCY`]
+  if (typeof raw === 'string' && /^[1-9]\d*$/.test(raw)) return Number(raw)
+  switch (id) {
+    case 'grok':
+      return 2
+    case 'claude':
+      return 3
+    case 'cursor':
+      return 1
+    case 'codex':
+      return 1
+    default: {
+      const neverId: never = id
+      return neverId
+    }
+  }
+}
 
 function within<T>(parent: AbortSignal, ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
@@ -59,6 +78,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       id: 'grok',
       model: GROK_MODEL,
       budgetMs: budget.grok,
+      limit: tierConcurrency(env, 'grok'),
       enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
       complete: (req, signal) => within(signal, budget.grok, (limited) => completeGrok(req, limited, run, env)),
     },
@@ -66,6 +86,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       id: 'claude',
       model: CLAUDE_MODEL,
       budgetMs: budget.claude,
+      limit: tierConcurrency(env, 'claude'),
       enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
       complete: (req, signal) => within(signal, budget.claude, (limited) => completeClaude(req, limited, run, env)),
     },
@@ -73,6 +94,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       id: 'cursor',
       model: CURSOR_MODEL,
       budgetMs: budget.cursor,
+      limit: tierConcurrency(env, 'cursor'),
       enabled: () => selected('cursor') && cliOn(env, 'YORK_CURSOR_CLI'),
       complete: (req, signal) => within(signal, budget.cursor, (limited) => completeCursor(req, limited, run, env)),
     },
@@ -80,6 +102,7 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       id: 'codex',
       model: CODEX_MODEL,
       budgetMs: budget.codex,
+      limit: tierConcurrency(env, 'codex'),
       enabled: () => selected('codex') && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
       complete: (req, signal) => within(signal, budget.codex, (limited) => completeCodex(req, limited, run, env)),
     },

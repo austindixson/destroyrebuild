@@ -7,7 +7,7 @@
 const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void/i
 const TOOL_RECORD = /Error: Permission denied|PermissionDenied|readPermissionDenied|"tool_use"|\bWebFetch\b|\bGrep\b|\bGlob\b/
 const DENIED_TOOL = /permissiondenied|readpermissiondenied|permission denied|access denied|operation not permitted|\bEPERM\b|\bEACCES\b|blocked by sandbox|blocked by permissions configuration|deny file-read|sandbox restriction|user cancelled|user rejected|isolated server/i
-const REFUSAL = /\b(i will not|i cannot|cannot read|will not read|do not have (?:shell|file|tools)|no shell or file|does not contain|do not quote|not in the snapshot|not in the passages)\b/i
+const REFUSAL = /\b(i will not|i cannot|cannot read|will not read|do not have (?:shell|file|tools)|no shell or file|does not contain|do not quote|not in the snapshot|not in the passages|no file quote|have no)\b/i
 const CONTAINED = /workspace-scoped|workspace only|\b0 matches\b|\b0 paths\b|no matches/i
 
 /** A structured tool record. Claude's plain-text `<invoke_tool>` tag is not one. */

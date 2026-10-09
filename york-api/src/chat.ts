@@ -71,6 +71,7 @@ function answerBody(answer: string, model: string, sources: ChatSource[], notice
 async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps, llm: LlmAnswer, nearCap: boolean): Promise<ChatResponse> {
   const planned = planTurn(llm.text, req.snapshot.blocksWrites === true, req.toolResults)
   const notice = nearCap ? DAILY_NOTICE : undefined
+  if (planned.kind === 'unusable') throw new Error('unusable')
   if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1, notice }
   if (planned.kind === 'confirm') return { status: 'confirm', confirm: planned.confirm, round: req.round + 1, notice }
   if (req.snapshot.blocksWrites === true && !planned.answer) {

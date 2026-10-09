@@ -4,7 +4,9 @@ import index from '../data/trainer-index.json' with { type: 'json' }
 import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
+import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
+import { planTurn } from '../src/turn.ts'
 import { NO_ANSWER } from '../src/copy.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
@@ -182,14 +184,53 @@ test('cascade fallthrough still answers', async () => {
   assert.match(result.body.answer, /70°F/)
 })
 
-test('the example reply leaves tools empty', () => {
+const BARE_TOOLS = '{"answer":"","cites":[],"tools":["plant.getAlarms","plant.getActionLog","not.a.tool"]}'
+
+test('the example shows one tool object and says to leave tools empty', () => {
   const prompt = buildPrompt(
     { question: 'q', previousQuestions: [], history: [], snapshot: {}, round: 0, toolResults: [] },
     [],
   )
-  assert.match(prompt.system, /"tools":\[\]/)
+  assert.match(prompt.system, /"name":"plant\.getAlarms","args":\{\}/)
   assert.match(prompt.system, /Leave tools empty when the snapshot or the tool results already answer/)
-  assert.equal(prompt.system.includes('plant.getSnapshot'), false)
+  assert.match(prompt.system, /Include it only when that read is still missing/)
+  assert.equal(prompt.system.includes('"tools":[]'), false)
+})
+
+test('bare string tool names become tool calls and unknown names are dropped', async () => {
+  const plan = parseModelPlan(BARE_TOOLS)
+  assert.equal(plan.validJson, true)
+  assert.deepEqual(plan.tools, [
+    { name: 'plant.getAlarms', args: {} },
+    { name: 'plant.getActionLog', args: {} },
+  ])
+  const fenced = `\`\`\`json\n${BARE_TOOLS}\n\`\`\``
+  assert.equal(parseModelPlan(fenced).validJson, true)
+  assert.deepEqual(parseModelPlan(fenced).tools.map((tool) => tool.name), ['plant.getAlarms', 'plant.getActionLog'])
+  const result = await handleChat(
+    { question: 'Read the alarms', snapshot: { blocksWrites: false }, round: 0 },
+    deps(async () => llm(BARE_TOOLS)),
+  )
+  assert.equal(result.body.status, 'tools')
+  if (result.body.status !== 'tools') return
+  assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getAlarms', 'plant.getActionLog'])
+})
+
+test('prose that announces a tool is not an answer, and valid JSON still wins', async () => {
+  const prose = 'I will read the alarms and the action log.'
+  assert.equal(planTurn(prose, false).kind, 'unusable')
+  const fenced = '```json\n{"answer":"The hall supply is stable.","cites":[],"tools":["plant.getAlarms"]}\n```'
+  assert.equal(planTurn(fenced, false).kind, 'answer')
+  const toolsOnly = '```json\n{"answer":"","tools":["plant.getAlarms","plant.getActionLog"]}\n```'
+  const planned = planTurn(toolsOnly, false)
+  assert.equal(planned.kind, 'tools')
+  if (planned.kind !== 'tools') return
+  assert.deepEqual(planned.calls.map((call) => call.name), ['plant.getAlarms', 'plant.getActionLog'])
+  const result = await handleChat(
+    { question: 'Read the alarms', snapshot: { blocksWrites: false }, round: 0 },
+    deps(async () => llm(prose)),
+  )
+  assert.equal(result.body.status, 'unavailable')
 })
 
 test('a non-empty answer wins over a snapshot tool request', async () => {

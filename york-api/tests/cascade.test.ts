@@ -9,8 +9,8 @@ import type { LlmRequest } from '../src/types.ts'
 
 const req: LlmRequest = { system: 'sys', user: 'user' }
 
-function adapter(id: string, model: string, complete: Adapter['complete'], enabled = true, budgetMs?: number): Adapter {
-  return { id, model, enabled: () => enabled, complete, budgetMs }
+function adapter(id: string, model: string, complete: Adapter['complete'], enabled = true, budgetMs?: number, limit?: number): Adapter {
+  return { id, model, enabled: () => enabled, complete, budgetMs, limit }
 }
 
 test('cascade skips an error, an empty answer, and a disabled provider', async () => {
@@ -67,15 +67,15 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(grok.includes('-p'), false)
   assert.equal(grokLaunchArgsOk(grok), true)
   assert.equal(grokLaunchArgsOk(['-p']), false)
-  assert.equal(GROK_BUDGET_MS, 75_000)
+  assert.equal(GROK_BUDGET_MS, 65_000)
   assert.equal(CLAUDE_BUDGET_MS, 20_000)
-  assert.equal(CURSOR_BUDGET_MS, 40_000)
+  assert.equal(CURSOR_BUDGET_MS, 50_000)
   assert.equal(CODEX_BUDGET_MS, 10_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= 135_000)
   const off = tierBudgetMs({})
-  assert.deepEqual(off, { grok: 75_000, claude: 20_000, cursor: 40_000, codex: 10_000 })
+  assert.deepEqual(off, { grok: 65_000, claude: 20_000, cursor: 50_000, codex: 10_000 })
   const on = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.deepEqual(on, { grok: 55_000, claude: 15_000, cursor: 40_000, codex: 10_000 })
+  assert.deepEqual(on, { grok: 55_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
   assert.ok(on.grok + on.claude + on.cursor + on.codex <= 135_000)
   const runner = {
     async run() {
@@ -84,8 +84,13 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   }
   const adapters = buildAdapters({ YORK_SANDBOX: 'ready' }, runner)
   assert.deepEqual(adapters.map((item) => item.id), ['grok', 'claude', 'cursor', 'codex'])
-  assert.equal(adapters[0]?.budgetMs, 75_000)
-  assert.equal(adapters[2]?.budgetMs, 40_000)
+  assert.equal(adapters[0]?.budgetMs, 65_000)
+  assert.equal(adapters[2]?.budgetMs, 50_000)
+  assert.equal(adapters[0]?.limit, 2)
+  assert.equal(adapters[1]?.limit, 3)
+  assert.equal(adapters[2]?.limit, 1)
+  assert.equal(adapters[3]?.limit, 1)
+  assert.equal(buildAdapters({ YORK_CURSOR_CONCURRENCY: '4' }, runner)[2]?.limit, 4)
   assert.equal(adapters[0]?.enabled(), true)
   assert.equal(adapters.find((item) => item.id === 'codex')?.enabled(), false)
   assert.equal(buildAdapters({}, runner)[0]?.enabled(), true)
@@ -158,7 +163,7 @@ test('cascade skips a tier when the time left is below its budget', async () => 
         adapter('grok', GROK_MODEL, async () => {
           calls.push('grok')
           return 'no'
-        }, true, 75_000),
+        }, true, 65_000),
         adapter('claude', 'claude-haiku-5-5', async () => {
           calls.push('claude')
           return 'The hall is stable.'
@@ -175,4 +180,83 @@ test('cascade skips a tier when the time left is below its budget', async () => 
   const joined = lines.join('\n')
   assert.match(joined, /york-api cli grok skipped reason=budget remaining=/)
   assert.equal(joined.includes('grok failed'), false)
+})
+
+const TOOL_PROSE = 'I will read the alarms and the action log.'
+
+test('prose that announces a tool is asked once more, then the next tier', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 135_000)
+  let calls = 0
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls += 1
+        return TOOL_PROSE
+      }, true, 65_000),
+      adapter('claude', 'claude-haiku-5-5', async () => '{"answer":"The hall is stable.","cites":[],"tools":[]}'),
+    ],
+    req,
+    controller.signal,
+  )
+  assert.equal(calls, 2)
+  assert.equal(result.provider, 'claude')
+  assert.equal(result.text, '{"answer":"The hall is stable.","cites":[],"tools":[]}')
+})
+
+test('a prose tool announcement skips the reask when the budget is already short', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 135_000)
+  let calls = 0
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async (_req, signal) => {
+        calls += 1
+        stampDeadline(signal, Date.now() + 500)
+        return TOOL_PROSE
+      }, true, 65_000),
+      adapter('claude', 'claude-haiku-5-5', async () => '{"answer":"The hall is stable.","cites":[],"tools":[]}'),
+    ],
+    req,
+    controller.signal,
+  )
+  assert.equal(calls, 1)
+  assert.equal(result.provider, 'claude')
+})
+
+test('a tier at its concurrency cap is skipped', async () => {
+  let open!: () => void
+  const gate = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  let started!: () => void
+  const ready = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let cursorCalls = 0
+  const cursor = adapter('slot-cursor', 'auto', async () => {
+    cursorCalls += 1
+    started()
+    await gate
+    return '{"answer":"The hall is stable.","cites":[],"tools":[]}'
+  }, true, 50_000, 1)
+  const claude = adapter('claude-next', 'claude-haiku-5-5', async () => '{"answer":"Claude answered.","cites":[],"tools":[]}', true, 20_000, 3)
+  const signal = new AbortController().signal
+  const first = cascade([cursor, claude], req, signal)
+  await ready
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const second = await cascade([cursor, claude], req, signal)
+    assert.equal(second.provider, 'claude-next')
+    assert.equal(cursorCalls, 1)
+    assert.match(lines.join('\n'), /york-api cli slot-cursor skipped reason=busy/)
+  } finally {
+    console.log = log
+    open()
+    await first
+  }
 })
