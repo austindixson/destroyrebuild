@@ -406,26 +406,37 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
-/** The next line is a child heading. A blank line ends the parent. */
-function directChild(part: Piece, next: Piece | undefined): boolean {
-  if (!next || !isHeading(next.text)) return false
-  return !/\n\s*\n/.test(part.sep)
+function hashLevel(text: string): number | null {
+  const marks = /^(#{1,6})(?:\s|$)/.exec(text.trim())
+  if (!marks?.[1]) return null
+  return marks[1].length
 }
 
-function stackLast(raw: Piece[], index: number): number {
-  let j = index
-  while (j + 1 < raw.length) {
-    const part = raw[j]
-    const next = raw[j + 1]
-    if (!part || !directChild(part, next)) break
-    j += 1
-  }
-  return j
+/** An all-caps label is a peer of the next all-caps label. A phrase heading can be a parent. */
+function capsHeading(text: string): boolean {
+  const plain = text.trim().replace(/[*_]/g, '').replace(/^#{1,6}\s*/, '')
+  return /[A-Z]/.test(plain) && plain === plain.toUpperCase()
 }
 
-function bodyEnd(raw: Piece[], start: number): number {
+function hashDeeper(parent: string, child: string): boolean | null {
+  const parentHash = hashLevel(parent)
+  const childHash = hashLevel(child)
+  if (parentHash === null || childHash === null) return null
+  return childHash > parentHash
+}
+
+function isParent(part: Piece, next: Piece | undefined): boolean {
+  if (!next || !isHeading(next.text) || /\n\s*\n/.test(part.sep)) return false
+  const deeper = hashDeeper(part.text, next.text)
+  if (deeper !== null) return deeper
+  if (hashLevel(part.text) !== null) return true
+  if (capsHeading(part.text) && capsHeading(next.text)) return false
+  return !capsHeading(part.text)
+}
+
+function bodyEnd(raw: Piece[], start: number, limit: number): number {
   let end = start
-  while (end < raw.length) {
+  while (end < limit) {
     const piece = raw[end]
     if (!piece || isHeading(piece.text)) break
     end += 1
@@ -436,34 +447,49 @@ function bodyEnd(raw: Piece[], start: number): number {
 function bodyKeepsContent(raw: Piece[], kept: Set<Piece>, start: number, end: number): boolean {
   for (let k = start; k < end; k += 1) {
     const piece = raw[k]
-    if (piece && kept.has(piece)) return true
+    if (piece && kept.has(piece) && !isHeading(piece.text)) return true
   }
   return false
 }
 
-function markStack(raw: Piece[], start: number, last: number, stay: Set<Piece>): void {
-  for (let j = start; j <= last; j += 1) {
-    const head = raw[j]
-    if (head) stay.add(head)
+/** A blank line ends the parent. Later sections inside the span still belong to it. */
+function parentScope(raw: Piece[], index: number, limit: number): number {
+  let j = index + 1
+  while (j < limit) {
+    const prev = raw[j - 1]
+    const piece = raw[j]
+    if (!prev || !piece) break
+    if (isHeading(piece.text) && /\n\s*\n/.test(prev.sep)) return j
+    j += 1
   }
+  return limit
 }
 
-/** A parent heading stays when a later section under it keeps text. */
-function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
-  const kept = new Set(keptPieces)
-  const stay = new Set<Piece>()
-  let i = 0
-  while (i < raw.length) {
+function markRanges(raw: Piece[], kept: Set<Piece>, start: number, limit: number, stay: Set<Piece>): void {
+  let i = start
+  while (i < limit) {
     const part = raw[i]
     if (!part || !isHeading(part.text)) {
       i += 1
       continue
     }
-    const last = stackLast(raw, i)
-    const end = bodyEnd(raw, last + 1)
-    if (bodyKeepsContent(raw, kept, last + 1, end)) markStack(raw, i, last, stay)
-    i = end > last ? end : last + 1
+    if (isParent(part, raw[i + 1])) {
+      const scope = parentScope(raw, i, limit)
+      if (bodyKeepsContent(raw, kept, i + 1, scope)) stay.add(part)
+      markRanges(raw, kept, i + 1, scope, stay)
+      i = scope
+      continue
+    }
+    const end = bodyEnd(raw, i + 1, limit)
+    if (bodyKeepsContent(raw, kept, i + 1, end)) stay.add(part)
+    i = end > i ? end : i + 1
   }
+}
+
+/** A parent stays when any later section under it keeps text. */
+function headingStaySet(raw: Piece[], keptPieces: Piece[]): Set<Piece> {
+  const stay = new Set<Piece>()
+  markRanges(raw, new Set(keptPieces), 0, raw.length, stay)
   return stay
 }
 

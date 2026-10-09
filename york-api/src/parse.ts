@@ -77,10 +77,104 @@ function prosePlan(answer: string): ModelPlan {
   return { answer, cites: [], tools: [], validJson: false }
 }
 
+const OUTSIDE_LIMIT = 40
+const PLAN_KEY = /"(?:answer|tools)"\s*:/
+
+type Brace = { start: number; end: number }
+
+function closeString(ch: string, escape: boolean): { inString: boolean; escape: boolean } {
+  if (escape) return { inString: true, escape: false }
+  if (ch === '\\') return { inString: true, escape: true }
+  if (ch === '"') return { inString: false, escape: false }
+  return { inString: true, escape: false }
+}
+
+function braceObjects(text: string): Brace[] {
+  const found: Brace[] = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escape = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i] ?? ''
+    if (inString) {
+      const next = closeString(ch, escape)
+      inString = next.inString
+      escape = next.escape
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') {
+      if (depth === 0) start = i
+      depth += 1
+      continue
+    }
+    if (ch === '}' && depth > 0) {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        found.push({ start, end: i + 1 })
+        start = -1
+      }
+    }
+  }
+  return found
+}
+
+function outsideLength(text: string, span: Brace): number {
+  return `${text.slice(0, span.start)}${text.slice(span.end)}`.trim().length
+}
+
+function parsedObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function hasPlanKey(row: Record<string, unknown>): boolean {
+  return 'answer' in row || 'tools' in row
+}
+
+function planSpans(text: string): Brace[] {
+  return braceObjects(text).filter((span) => PLAN_KEY.test(text.slice(span.start, span.end)))
+}
+
+/** One plan object with a short lead-in. A longer sentence stays prose. */
+function ledPlan(text: string): Record<string, unknown> | null {
+  const spans = planSpans(text)
+  if (spans.length !== 1) return null
+  const span = spans[0]
+  if (!span || outsideLength(text, span) > OUTSIDE_LIMIT) return null
+  const row = parsedObject(text.slice(span.start, span.end))
+  if (!row || !hasPlanKey(row)) return null
+  return row
+}
+
+/** A broken or repeated plan object with a short lead-in needs another JSON reply. */
+export function jsonRetryNeeded(text: string): boolean {
+  const body = replyBody(text)
+  if (wholeObject(body)) return false
+  const spans = planSpans(body)
+  if (spans.length === 0) return false
+  if (spans.length > 1) return true
+  const span = spans[0]
+  if (!span || outsideLength(body, span) > OUTSIDE_LIMIT) return false
+  const row = parsedObject(body.slice(span.start, span.end))
+  return !row || !hasPlanKey(row)
+}
+
 export function parseModelPlan(text: string): ModelPlan {
   const body = replyBody(text)
-  const json = wholeObject(body)
-  if (json) return planFromJson(json)
+  const whole = wholeObject(body)
+  if (whole) return planFromJson(whole)
+  const led = ledPlan(body)
+  if (led) return planFromJson(led)
   if (body.startsWith('{')) {
     const answer = quotedAnswer(body)
     if (answer) return prosePlan(answer)
@@ -89,6 +183,7 @@ export function parseModelPlan(text: string): ModelPlan {
 }
 
 export function usableModelText(text: string): boolean {
+  if (jsonRetryNeeded(text)) return false
   const plan = parseModelPlan(text)
   if (plan.validJson) return true
   if (announcesToolUse(text)) return false

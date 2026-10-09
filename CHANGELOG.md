@@ -6,9 +6,16 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z9
+
+- A reply with one JSON object and 40 characters or less of other text is that object when the object has an "answer" or "tools" key. "Here is my reply:" before a tools object is a tool plan. "Sure." before an answer object is an answer. A longer sentence that quotes a JSON object stays prose. A broken object, or two plan objects, asks for one JSON object again.
+- A parent heading stays when any later section under it keeps text. "Eight-hour checklist" stays when "Shift start" loses an untraced step and "Mid shift" keeps "2. Log it".
+- A heading with nothing under it drops when the next heading is the same level. "PUMPS" above "CHILLERS" drops. "PUMPS" above its own step still stays.
+- A claude smoke retry writes the saved YORK_CLAUDE_CLI value back. A success with no saved value sets ready. The key is not deleted.
+
 ### 2026-10-09 — YORK-8Z8
 
-- A heading drops only when the guard removed the raw text under it. A heading directly above another heading is a parent and stays when a later section keeps a step. "Eight-hour checklist" stays above "Shift start". "PUMPS" above "CHILLERS" stays when the step stays. "PUMPS" drops when its own sentence was removed. An empty "PUMPS" or "**Pumps**" still drops.
+- A heading drops only when the guard removed the raw text under it. "Eight-hour checklist" stays above "Shift start" when that step stays. "PUMPS" drops when its own sentence was removed. An empty "PUMPS" or "**Pumps**" still drops.
 - Grok startup accepts a reply that is the number 5 alone, with an optional final period.
 - "401" and "authentication_error" are sign-in errors, with the same 10 min wait.
 - A prose reply that quotes a JSON object stays prose. JSON is read only when the whole reply, or a fenced block, is the object.

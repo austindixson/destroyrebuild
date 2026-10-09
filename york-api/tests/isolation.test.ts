@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, recoverGrok, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, recoverGrok, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -792,6 +792,29 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
     console.log = log
   }
   assert.match(lines.join('\n'), /claude needs sign-in/)
+})
+
+test('a claude retry keeps the YORK_CLAUDE_CLI setting', () => {
+  const ready: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'ready' }
+  restoreClaudeFlag(ready, 'ready', true)
+  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
+  restoreClaudeFlag(ready, 'ready', false)
+  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
+  assert.equal(Object.hasOwn(ready, 'YORK_CLAUDE_CLI'), true)
+  const custom: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'local' }
+  restoreClaudeFlag(custom, 'local', true)
+  assert.equal(custom.YORK_CLAUDE_CLI, 'local')
+  restoreClaudeFlag(custom, 'local', false)
+  assert.equal(custom.YORK_CLAUDE_CLI, 'local')
+  const unset: NodeJS.ProcessEnv = {}
+  restoreClaudeFlag(unset, undefined, true)
+  assert.equal(unset.YORK_CLAUDE_CLI, 'ready')
+  const failed: NodeJS.ProcessEnv = {}
+  restoreClaudeFlag(failed, undefined, false)
+  assert.equal(failed.YORK_CLAUDE_CLI, 'unavailable')
+  const down: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
+  restoreClaudeFlag(down, 'unavailable', true)
+  assert.equal(down.YORK_CLAUDE_CLI, 'ready')
 })
 
 test('grok smoke retries once and reprobes on the claude backoff', async () => {

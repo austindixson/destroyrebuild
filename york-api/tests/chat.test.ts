@@ -4,7 +4,7 @@ import index from '../data/trainer-index.json' with { type: 'json' }
 import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
-import { parseModelPlan } from '../src/parse.ts'
+import { jsonRetryNeeded, parseModelPlan, usableModelText } from '../src/parse.ts'
 import { buildPrompt, jsonWithin, N_PLUS_ONE_LINE } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
@@ -459,11 +459,12 @@ test('bare string tool names become tool calls and unknown names are dropped', a
   const fenced = `\`\`\`json\n${BARE_TOOLS}\n\`\`\``
   assert.equal(parseModelPlan(fenced).validJson, true)
   assert.deepEqual(parseModelPlan(fenced).tools.map((tool) => tool.name), ['plant.getAlarms', 'plant.getActionLog'])
-  const quoted = 'The valve stays open. The shape is {"answer":"close it","cites":[],"tools":["plant.getAlarms"]}.'
+  const quoted = 'The chilled-water valve stays open. The shape is {"answer":"close it","cites":[],"tools":["plant.getAlarms"]}.'
   const prose = parseModelPlan(quoted)
   assert.equal(prose.validJson, false)
   assert.equal(prose.answer, quoted)
   assert.deepEqual(prose.tools, [])
+  assert.equal(jsonRetryNeeded(quoted), false)
   const whole = '{"answer":"The hall is stable.","cites":["a"],"tools":[]}'
   assert.equal(parseModelPlan(whole).validJson, true)
   assert.equal(parseModelPlan(whole).answer, 'The hall is stable.')
@@ -474,6 +475,37 @@ test('bare string tool names become tool calls and unknown names are dropped', a
   assert.equal(result.body.status, 'tools')
   if (result.body.status !== 'tools') return
   assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getAlarms', 'plant.getActionLog'])
+})
+
+test('a short lead-in before one JSON object is that object', () => {
+  const tools = `Here is my reply:\n${BARE_TOOLS}`
+  const toolPlan = parseModelPlan(tools)
+  assert.equal(toolPlan.validJson, true)
+  assert.deepEqual(toolPlan.tools.map((tool) => tool.name), ['plant.getAlarms', 'plant.getActionLog'])
+  assert.equal(jsonRetryNeeded(tools), false)
+  assert.equal(usableModelText(tools), true)
+  const toolTurn = planTurn(tools, false)
+  assert.equal(toolTurn.kind, 'tools')
+  if (toolTurn.kind !== 'tools') return
+  assert.deepEqual(toolTurn.calls.map((call) => call.name), ['plant.getAlarms', 'plant.getActionLog'])
+  const answer = 'Sure.\n{"answer":"The hall is stable.","cites":["a"],"tools":[]}'
+  const answerPlan = parseModelPlan(answer)
+  assert.equal(answerPlan.validJson, true)
+  assert.equal(answerPlan.answer, 'The hall is stable.')
+  assert.deepEqual(answerPlan.cites, ['a'])
+  assert.equal(planTurn(answer, false).kind, 'answer')
+  const object = '{"answer":"The hall is stable.","cites":[],"tools":[]}'
+  assert.equal(parseModelPlan(`${'x'.repeat(40)}${object}`).validJson, true)
+  const longer = `${'x'.repeat(41)}${object}`
+  assert.equal(parseModelPlan(longer).validJson, false)
+  assert.equal(parseModelPlan(longer).answer, longer)
+  const broken = 'Sure.\n{"answer":"The hall is stable.",}'
+  assert.equal(parseModelPlan(broken).validJson, false)
+  assert.equal(jsonRetryNeeded(broken), true)
+  assert.equal(usableModelText(broken), false)
+  const twice = 'Sure.\n{"answer":"One.","cites":[],"tools":[]}\n{"answer":"Two.","cites":[],"tools":[]}'
+  assert.equal(jsonRetryNeeded(twice), true)
+  assert.equal(usableModelText(twice), false)
 })
 
 test('prose that announces a tool is not an answer', async () => {
@@ -803,6 +835,8 @@ test('stacked headings and a heading above a blank line stay', () => {
     dropUntracedNumbers('Eight-hour checklist\nShift start\nThe count is 99.', ''),
     '',
   )
+  const later = 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it'
+  assert.equal(dropUntracedNumbers(later, ''), 'Eight-hour checklist\nMid shift\n2. Log it')
 })
 
 test('schedule words do not empty an answer', () => {
@@ -920,10 +954,9 @@ const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 test('an empty heading drops when its section lost its text', () => {
   assert.equal(dropUntracedNumbers('PUMPS', ''), '')
   assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  const pumps = 'PUMPS\nFANS\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(pumps, ''), pumps)
-  const chillers = 'PUMPS\nCHILLERS\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(chillers, ''), chillers)
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n- Open the valve.', ''), 'CHILLERS\n- Open the valve.')
   assert.equal(
     dropUntracedNumbers('PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', ''),
     'CHILLERS\n1. Open the valve.',

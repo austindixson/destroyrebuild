@@ -295,14 +295,24 @@ async function smokeOne(
   }
 }
 
-/** Probe claude without clearing YORK_CLAUDE_CLI. A failure leaves the saved flag. */
-async function claudeSmoke(env: NodeJS.ProcessEnv): Promise<SmokeVerdict> {
-  const saved = env.YORK_CLAUDE_CLI
-  const verdict = await smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env), true)
-  if (!verdict?.ok) {
+/** A retry keeps the saved flag. Success with no saved flag sets ready. It does not delete the key. */
+export function restoreClaudeFlag(env: NodeJS.ProcessEnv, saved: string | undefined, ok: boolean): void {
+  if (!ok) {
     env.YORK_CLAUDE_CLI = saved ?? 'unavailable'
-    return verdict ?? { ok: false, reason: 'unavailable' }
+    return
   }
+  env.YORK_CLAUDE_CLI = saved === undefined || saved === 'unavailable' ? 'ready' : saved
+}
+
+/** Two tries. The saved YORK_CLAUDE_CLI value stays in place. */
+async function claudeSmoke(env: NodeJS.ProcessEnv, force = false): Promise<SmokeVerdict | null> {
+  if (!force && env.YORK_CLAUDE_CLI === 'unavailable') return null
+  const saved = env.YORK_CLAUDE_CLI
+  const verdict = await retryOnce(async () => {
+    const result = await smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env), true)
+    return result ?? { ok: false, reason: 'unavailable' }
+  })
+  restoreClaudeFlag(env, saved, verdict.ok)
   return verdict
 }
 
@@ -312,11 +322,11 @@ export async function recoverClaude(
   probe?: () => Promise<SmokeVerdict>,
 ): Promise<SmokeVerdict | null> {
   if (env.YORK_CLAUDE_CLI !== 'unavailable') return null
-  const verdict = probe ? await probe() : await claudeSmoke(env)
-  if (!verdict.ok) {
-    env.YORK_CLAUDE_CLI = 'unavailable'
-    if (claudeNeedsSignIn(verdict.reason)) console.log('york-api cli claude needs sign-in')
-    return verdict
+  const verdict = probe ? await probe() : await claudeSmoke(env, true)
+  if (!verdict?.ok) {
+    if (verdict) env.YORK_CLAUDE_CLI = 'unavailable'
+    if (verdict && claudeNeedsSignIn(verdict.reason)) console.log('york-api cli claude needs sign-in')
+    return verdict ?? null
   }
   env.YORK_CLAUDE_CLI = 'ready'
   console.log('york-api cli claude status=ready reason=recovered')
@@ -389,7 +399,7 @@ export function startGrokReprobe(env: NodeJS.ProcessEnv = process.env): ReturnTy
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
   const jobs = [
     grokSmoke(env),
-    smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env)),
+    claudeSmoke(env),
     smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env)),
   ]
   if (env.YORK_CODEX === '1') {
