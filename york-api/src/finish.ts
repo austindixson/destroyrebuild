@@ -1,5 +1,5 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
-import { dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
+import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
 import { containsSecretMaterial, redactReason } from './leak.ts'
 import { OPEN_DECLINE } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
@@ -107,6 +107,42 @@ function wipedReason(stripped: string, traced: string, quoted: string, ste: stri
   return 'label-only'
 }
 
+function isReason(sentence: string): boolean {
+  return sentence.startsWith('Reason:')
+}
+
+function findFrom(sentences: string[], sentence: string, start: number): number {
+  for (let i = start; i < sentences.length; i += 1) {
+    if (sentences[i] === sentence) return i
+  }
+  return -1
+}
+
+function reasonKept(sentences: string[], index: number, kept: Set<string>): boolean {
+  if (index <= 0) return false
+  const owner = sentences[index - 1] ?? ''
+  if (!owner || isReason(owner)) return false
+  return kept.has(owner)
+}
+
+/** A Reason sentence stays only when the step before it is still in the answer. */
+function dropOrphanReasons(source: string, cleaned: string): string {
+  const sourceSentences = sentenceList(source)
+  const kept = new Set(sentenceList(cleaned))
+  const out: string[] = []
+  let cursor = 0
+  for (const sentence of sentenceList(cleaned)) {
+    if (!isReason(sentence)) {
+      out.push(sentence)
+      continue
+    }
+    const index = findFrom(sourceSentences, sentence, cursor)
+    cursor = index + 1
+    if (reasonKept(sourceSentences, index, kept)) out.push(sentence)
+  }
+  return out.join(' ')
+}
+
 function withoutLabel(text: string): string {
   return text
     .split(/(?<=[.!?])\s+/)
@@ -132,8 +168,8 @@ export function polishAnswer(
     `${corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results))}\n${extraCorpus}`,
   )
   const quoted = dropUnmatchedQuotes(traced)
-  const ste = dropSteSentences(quoted)
-  const clear = restoreDecline(labelLiveNumbers(ste), raw, caseOpen(snapshot))
+  const ste = dropSteSentences(dropMisusedFla(quoted))
+  const clear = restoreDecline(labelLiveNumbers(dropOrphanReasons(stripped.text, ste)), raw, caseOpen(snapshot))
   if (!withoutLabel(clear)) {
     return { answer: '', sources: [], empty: wipedReason(stripped.text, traced, quoted, ste, raw) }
   }

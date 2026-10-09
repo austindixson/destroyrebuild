@@ -7,6 +7,17 @@ export function yorkFlaWording(text: string): string {
   return text.replaceAll('%RLA', '% FLA').replaceAll('%TSLA', '% FLA')
 }
 
+const PLANT_PERCENT = /\b(?:valves?|fans?|towers?)\b/i
+
+function misusedFla(sentence: string): boolean {
+  return sentence.includes('% FLA') && PLANT_PERCENT.test(sentence)
+}
+
+/** % FLA is motor current. A valve, fan, or tower does not use that unit. */
+export function dropMisusedFla(text: string): string {
+  return sentences(text).filter((sentence) => !misusedFla(sentence)).join(' ')
+}
+
 export function stripMarkers(text: string, allowed: Set<string>): { text: string; cites: string[] } {
   const cites: string[] = []
   const cleaned = text.replace(MARKER, (_match, id: string) => {

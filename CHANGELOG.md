@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8U
+
+- % FLA is for chiller motor current only. A valve uses % open. A fan uses % speed.
+- A sentence that puts % FLA on a valve, a fan, or a tower is dropped.
+- An orphaned Reason sentence is dropped when the step before it was removed.
+
 ### 2026-10-09 — YORK-8T
 
 - Every follow-up starts on claude, then grok, then cursor. The echoed tier is logged and does not choose the order. A tier that timed out earlier is still skipped.

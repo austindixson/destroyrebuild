@@ -8,7 +8,7 @@ const SYSTEM = [
   'Do not add a plant fact that those sources omit.',
   'Call every live number a trainer-model value.',
   'Name a live value in plain words, such as "IT load 4.2 MW". Do not write a raw field name such as itLoadMw.',
-  'Use % FLA. Do not use %RLA or %TSLA.',
+  'Use % FLA for chiller motor current only. A valve uses % open. A fan uses % speed. Do not use %RLA or %TSLA.',
   'Use short active sentences. Do not use contractions.',
   'Do not invent a manual, a form number, or a page number.',
   'Reply with one JSON object and no other text.',
@@ -31,7 +31,7 @@ function toolLines(): string {
     .join('\n')
 }
 
-const FOLLOW_VOICE = 'Use active voice. Do not put is, are, was, were, or been before a past participle. Keep each sentence to 25 words. Keep a command to 20 words.'
+const FOLLOW_VOICE = 'Use active voice. Do not put is, are, was, were, or been before a past participle. Keep each sentence to 25 words. Keep a command to 20 words. Use % FLA for chiller motor current only. A valve uses % open. A fan uses % speed.'
 
 export const N_PLUS_ONE_LINE = [
   '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',

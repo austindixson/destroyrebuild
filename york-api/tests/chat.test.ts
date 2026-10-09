@@ -9,7 +9,7 @@ import { buildPrompt, N_PLUS_ONE_LINE } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { finishAnswer, polishAnswer } from '../src/finish.ts'
-import { dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
+import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
@@ -355,9 +355,14 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round1.system, /Use active voice/)
   assert.match(round1.system, /20 words/)
   assert.equal(round0.user.includes('Use active voice'), false)
-  assert.equal(promptBytes(round1), 1834)
-  assert.equal(promptBytes(round0), 3127)
-  assert.equal(round1.user.length, 566)
+  assert.match(round0.system, /chiller motor current only/)
+  assert.match(round0.system, /% open/)
+  assert.match(round0.system, /% speed/)
+  assert.match(round1.user, /chiller motor current only/)
+  assert.match(round1.user, /% open/)
+  assert.equal(promptBytes(round1), 2072)
+  assert.equal(promptBytes(round0), 3199)
+  assert.equal(round1.user.length, 649)
   assert.equal(round0.user.length, 2002)
 })
 
@@ -648,6 +653,44 @@ test('an emptied answer logs a reason code and not the model text', async () => 
   assert.equal(joined.includes('sk-ant-'), false)
   assert.equal(joined.includes('cooling tower'), false)
   assert.equal(joined.includes('valve'), false)
+})
+
+test('% FLA on a valve, fan, or tower is dropped', () => {
+  const mixed = [
+    'The motor current is 40% FLA.',
+    'The CHW valve is at 40% FLA.',
+    'The condenser fan is at 80% FLA.',
+    'The cooling tower is at 40% FLA.',
+  ].join(' ')
+  const kept = dropMisusedFla(mixed)
+  assert.match(kept, /motor current is 40% FLA/)
+  assert.equal(kept.includes('valve'), false)
+  assert.equal(kept.includes('fan'), false)
+  assert.equal(kept.includes('tower'), false)
+  const polished = polishAnswer(mixed, [], [], {}, [], '40 80')
+  assert.match(polished.answer, /motor current is 40% FLA/)
+  assert.equal(polished.answer.includes('valve'), false)
+  assert.equal(polished.answer.includes('fan'), false)
+  assert.equal(polished.answer.includes('tower'), false)
+})
+
+const LONG_STEP = 'The operator reads the long gauge that fails the check because the sentence has too many words for the limit in this trainer answer today now.'
+
+test('an orphaned Reason sentence is dropped when its step was removed', () => {
+  const raw = `Open the valve. Reason: The hall is warm. ${LONG_STEP} Reason: The spare is ready.`
+  const kept = polishAnswer(raw, [], [], {})
+  assert.match(kept.answer, /Open the valve/)
+  assert.match(kept.answer, /Reason: The hall is warm/)
+  assert.equal(kept.answer.includes('spare is ready'), false)
+  assert.equal(kept.answer.includes('long gauge'), false)
+  const leading = ` ${LONG_STEP} Reason: The spare is ready. Open the valve. Reason: The hall is warm.`
+  const shifted = polishAnswer(leading, [], [], {})
+  assert.match(shifted.answer, /Open the valve/)
+  assert.match(shifted.answer, /Reason: The hall is warm/)
+  assert.equal(shifted.answer.includes('spare is ready'), false)
+  const pair = polishAnswer('Open the valve. Reason: The hall is warm.', [], [], {})
+  assert.match(pair.answer, /Open the valve/)
+  assert.match(pair.answer, /Reason: The hall is warm/)
 })
 
 test('unit ids are not live numbers and corpus checks use number tokens', () => {
