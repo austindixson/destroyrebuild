@@ -93,7 +93,7 @@ test('tool args that fail the schema are dropped and not echoed', async () => {
       round: 0,
     },
     deps(async () => answer(JSON.stringify({
-      answer: 'The board stays as it is.',
+      answer: '',
       cites: [],
       tools: [
         { name: 'chiller.stop', args: { unit: 'CH-01', mode: 'soft', secret: 'canary-leak' } },

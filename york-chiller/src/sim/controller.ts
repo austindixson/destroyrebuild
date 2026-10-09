@@ -53,7 +53,7 @@ import {
   type PlantSnapshot,
   type PlantState,
   type TimeScale,
-} from './plantSim'
+} from './plantSim.ts'
 
 export type { TimeScale }
 

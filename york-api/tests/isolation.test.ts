@@ -529,6 +529,8 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(claudeNoTools('{"tools":[],"mcp_servers":[]}', []), true)
   assert.equal(claudeNoTools('plain text', ['--tools', '']), true)
   assert.equal(isRefusal('I will not read those files.'), true)
+  assert.equal(isRefusal('The snapshot does not contain that file. I do not quote it.'), true)
+  assert.equal(isRefusal('That value is not in the snapshot.'), true)
   assert.equal(isRefusal('% FLA means percent of full load amps.'), false)
   const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false, 60_000)
   assert.equal(missed.ok, false)
@@ -615,4 +617,30 @@ test('fast guard: a budget kill logs timeout budget, not an empty exit', async (
   const joined = lines.join('\n')
   assert.match(joined, /york-api cli launch failed reason=timeout budget=15000/)
   assert.equal(joined.includes('exit=1 stderr='), false)
+})
+
+test('fast guard: a client abort logs aborted, not exit=1', async () => {
+  const parent = new AbortController()
+  parent.abort()
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    await assert.rejects(
+      () => completeClaude(req, parent.signal, {
+        async run(_cmd, _args, _input, _env, signal) {
+          assert.equal(signal.aborted, true)
+          return { code: 1, stdout: '', stderr: '' }
+        },
+      }, { PATH: process.env.PATH, HOME: '/tmp' }),
+      /aborted/,
+    )
+  } finally {
+    console.log = log
+  }
+  const joined = lines.join('\n')
+  assert.match(joined, /york-api cli launch failed reason=aborted/)
+  assert.equal(joined.includes('exit=1'), false)
 })

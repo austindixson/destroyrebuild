@@ -6,6 +6,7 @@ import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
 import { defaultInflight, type Inflight } from './inflight.ts'
 import { completeWithCascade, type CliTier } from './adapters.ts'
+import { stampDeadline } from './deadline.ts'
 import { headerText, proxySecretConfigured, proxySecretOk, trustedClientIp } from './ip.ts'
 import { searchChunks } from './rag.ts'
 import type { Budget } from './budget.ts'
@@ -94,6 +95,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 function requestSignal(res: ServerResponse): { signal: AbortSignal; stop(): void } {
   const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + REQUEST_MS)
   const timer = setTimeout(() => controller.abort(), REQUEST_MS)
   const onGone = () => {
     if (!res.writableFinished) controller.abort()

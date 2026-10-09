@@ -18,12 +18,12 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 60_000
+export const GROK_BUDGET_MS = 75_000
 export const CLAUDE_BUDGET_MS = 20_000
-export const CURSOR_BUDGET_MS = 50_000
+export const CURSOR_BUDGET_MS = 40_000
 export const CODEX_BUDGET_MS = 10_000
 
-/** Codex off is 60/20/50, under the 135 s server deadline. Codex on is 55/15/50/10. */
+/** Codex off is 75/20/40, equal to the 135 s server deadline. Codex on is 55/15/40/10. */
 export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
     return { grok: 55_000, claude: 15_000, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
@@ -58,24 +58,28 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
     {
       id: 'grok',
       model: GROK_MODEL,
+      budgetMs: budget.grok,
       enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
       complete: (req, signal) => within(signal, budget.grok, (limited) => completeGrok(req, limited, run, env)),
     },
     {
       id: 'claude',
       model: CLAUDE_MODEL,
+      budgetMs: budget.claude,
       enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
       complete: (req, signal) => within(signal, budget.claude, (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',
       model: CURSOR_MODEL,
+      budgetMs: budget.cursor,
       enabled: () => selected('cursor') && cliOn(env, 'YORK_CURSOR_CLI'),
       complete: (req, signal) => within(signal, budget.cursor, (limited) => completeCursor(req, limited, run, env)),
     },
     {
       id: 'codex',
       model: CODEX_MODEL,
+      budgetMs: budget.codex,
       enabled: () => selected('codex') && env.YORK_CODEX === '1' && cliOn(env, 'YORK_CODEX_CLI') && codexLaunchArgsOk(codexArgs()),
       complete: (req, signal) => within(signal, budget.codex, (limited) => completeCodex(req, limited, run, env)),
     },

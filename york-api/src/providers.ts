@@ -532,6 +532,10 @@ async function runLaunch(launch: CliLaunch, signal: AbortSignal, run: ProcessRun
     console.log(`york-api cli launch failed reason=${timeout}`)
     throw new Error(timeout)
   }
+  if (signal.aborted) {
+    console.log('york-api cli launch failed reason=aborted')
+    throw new Error('aborted')
+  }
   if (result.code !== 0) {
     const reason = failureReason(result.code, result.stderr)
     console.log(`york-api cli launch failed reason=${redactReason(reason)}`)

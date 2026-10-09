@@ -1,5 +1,7 @@
-import type { ComponentId, ViewId } from '../data/content'
-import type { IncidentKind, PlantSnapshot, UnitSnapshot } from '../sim/plantSim'
+import { CYCLE_NODES, MAINT_ITEMS, PLANT_NODES, QUIZ, TROUBLE_CASES, type ComponentId, type ViewId } from '../data/content.ts'
+import { masteryPercent, type ProgressState } from '../progress.ts'
+import type { PlantController } from '../sim/controller.ts'
+import { rankFor, type IncidentKind, type PlantSnapshot, type UnitSnapshot } from '../sim/plantSim.ts'
 
 export interface ScreenInput {
   view: ViewId
@@ -333,6 +335,89 @@ function shownFor(input: ScreenInput): Record<string, string> {
 
 function writesBlocked(input: ScreenInput): boolean {
   return input.view === 'trouble' && !input.troubleDone && !input.troublePicked && input.troubleSeconds > 0
+}
+
+const FRESH_PROGRESS: ProgressState = {
+  explored: [],
+  plantComplete: false,
+  cycleComplete: false,
+  operationComplete: false,
+  optiviewComplete: false,
+  matchBest: 0,
+  quizBest: 0,
+  troubleSolved: [],
+  maintenanceComplete: false,
+  xp: 0,
+}
+
+function incidentLabel(kind: IncidentKind): string {
+  switch (kind) {
+    case 'high-head':
+      return 'Peak weather, high head'
+    case 'hall-hot':
+      return 'Hot hall, low chiller load'
+    case 'landing':
+      return 'ATS landing'
+    case 'failover':
+      return 'Lead trip and failover'
+    case 'bms-fight':
+      return 'BMS and panel disagree'
+    default: {
+      const unknown: never = kind
+      return unknown
+    }
+  }
+}
+
+/** Home screen at a fresh rank, using the same capture the chat panel sends. */
+export function defaultHomeInput(controller: PlantController): ScreenInput {
+  const snap = controller.snapshot
+  const incident = controller.incident
+  const pct = masteryPercent(FRESH_PROGRESS)
+  const rank = rankFor(pct, FRESH_PROGRESS.xp)
+  return {
+    view: 'home',
+    snap,
+    ch01Running: controller.running,
+    ch02Running: controller.unitRunning('CH-02'),
+    paused: controller.paused,
+    timeScale: controller.timeScale,
+    itLoadTargetMw: controller.itLoadCenterMw,
+    incident,
+    chaosLabel: incident ? incidentLabel(incident) : null,
+    optiLog: controller.optiLogLines.map((line) => line.text),
+    selectedId: null,
+    selectedName: null,
+    optiTab: 'home',
+    plantStep: 0,
+    plantSteps: PLANT_NODES.length,
+    plantLabel: PLANT_NODES[0]?.label ?? '',
+    cycleStep: 0,
+    cycleSteps: CYCLE_NODES.length,
+    cycleLabel: CYCLE_NODES[0]?.label ?? '',
+    opMode: 'start',
+    opIndex: 0,
+    troubleSeconds: 45,
+    troubleDone: false,
+    troubleTitle: TROUBLE_CASES[0]?.title ?? '',
+    troubleSolved: 0,
+    troubleTotal: TROUBLE_CASES.length,
+    troublePicked: false,
+    quizIndex: 0,
+    quizTotal: QUIZ.length,
+    quizScore: 0,
+    quizDone: false,
+    matchScore: 0,
+    matchBest: 0,
+    maintChecked: 0,
+    maintTotal: MAINT_ITEMS.length,
+    explored: 0,
+    rankTitle: rank.title,
+    rankTier: rank.tier,
+    masteryPct: pct,
+    xp: FRESH_PROGRESS.xp,
+    wallClock: new Date().toLocaleTimeString(),
+  }
 }
 
 /** Capture every live value on the current view, plus the full trainer board. */

@@ -10,7 +10,7 @@
 
 import type { Actor, PlantController, PlantResult, StopMode, TimeScale, WeatherPreset } from './controller'
 import type { ChillerUnitState, IncidentKind } from './plantSim'
-import { isIncidentKind } from './plantSim'
+import { isIncidentKind } from './plantSim.ts'
 
 export interface ToolResult {
   ok: boolean

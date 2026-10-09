@@ -4,6 +4,7 @@ import index from '../data/trainer-index.json' with { type: 'json' }
 import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
+import { buildPrompt } from '../src/prompt.ts'
 import { NO_ANSWER } from '../src/copy.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
@@ -179,4 +180,50 @@ test('cascade fallthrough still answers', async () => {
   assert.equal(result.body.provider, 'local')
   assert.equal(result.body.model, 'auto')
   assert.match(result.body.answer, /70°F/)
+})
+
+test('the example reply leaves tools empty', () => {
+  const prompt = buildPrompt(
+    { question: 'q', previousQuestions: [], history: [], snapshot: {}, round: 0, toolResults: [] },
+    [],
+  )
+  assert.match(prompt.system, /"tools":\[\]/)
+  assert.match(prompt.system, /Leave tools empty when the snapshot or the tool results already answer/)
+  assert.equal(prompt.system.includes('plant.getSnapshot'), false)
+})
+
+test('a non-empty answer wins over a snapshot tool request', async () => {
+  const result = await handleChat(
+    { question: 'Read the board', snapshot: { blocksWrites: false }, round: 0 },
+    deps(async () => llm(JSON.stringify({
+      answer: 'The hall supply is stable. This is a trainer-model value.',
+      cites: [],
+      tools: [{ name: 'plant.getSnapshot', args: {} }],
+    }))),
+  )
+  assert.equal(result.body.status, 'answer')
+  if (result.body.status !== 'answer') return
+  assert.match(result.body.answer, /hall supply is stable/)
+})
+
+test('a read that already has a result is not requested again', async () => {
+  const result = await handleChat(
+    {
+      question: 'Read the board',
+      snapshot: { blocksWrites: false },
+      round: 1,
+      toolResults: [{ name: 'plant.getSnapshot', ok: true, message: 'Snapshot.' }],
+    },
+    deps(async () => llm(JSON.stringify({
+      answer: '',
+      cites: [],
+      tools: [
+        { name: 'plant.getSnapshot', args: {} },
+        { name: 'plant.getAlarms', args: {} },
+      ],
+    }))),
+  )
+  assert.equal(result.body.status, 'tools')
+  if (result.body.status !== 'tools') return
+  assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getAlarms'])
 })
