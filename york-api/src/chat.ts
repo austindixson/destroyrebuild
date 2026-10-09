@@ -5,7 +5,7 @@ import { CLOCK_BLOCK, DAILY_NOTICE, NO_ANSWER, QUESTION_LIMIT, TOO_LONG, UNAVAIL
 import { containsSecretMaterial, publicSecrets, redactReason } from './leak.ts'
 import { finishAnswer } from './finish.ts'
 import { buildPrompt } from './prompt.ts'
-import { planTurn } from './turn.ts'
+import { MAX_TOOL_ROUND, planTurn } from './turn.ts'
 import type { ChatRequest, ChatResponse, ChatSource, Chunk, HistoryItem, LlmAnswer, LlmRequest, ToolResultIn } from './types.ts'
 
 export interface ChatDeps {
@@ -69,7 +69,7 @@ function answerBody(answer: string, model: string, sources: ChatSource[], notice
 }
 
 async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps, llm: LlmAnswer, nearCap: boolean): Promise<ChatResponse> {
-  const planned = planTurn(llm.text, req.snapshot.blocksWrites === true, req.toolResults)
+  const planned = planTurn(llm.text, req.snapshot.blocksWrites === true, req.toolResults, req.round)
   const notice = nearCap ? DAILY_NOTICE : undefined
   if (planned.kind === 'unusable') throw new Error('unusable')
   if (planned.kind === 'tools') return { status: 'tools', calls: planned.calls, round: req.round + 1, notice }
@@ -80,7 +80,7 @@ async function answerFromModel(req: ChatRequest, chunks: Chunk[], deps: ChatDeps
   const finished = await finishAnswer(planned.answer, planned.cites, chunks, req.snapshot, async (prompt) => {
     const next = await deps.complete(prompt, deps.signal)
     return next.text
-  })
+  }, req.toolResults)
   return answerBody(finished.answer, llm.model, finished.sources, notice)
 }
 
@@ -91,7 +91,7 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
   if (process.env.YORK_LOG_CLIENT === '1') console.log(`york-api chat key=${budgetKey(deps.ip)} round=${req.round}`)
   const slot = deps.budget.allow(deps.ip, req.round, deps.now())
   if (!slot.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }
-  if (req.round > 6) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }
+  if (req.round > MAX_TOOL_ROUND) return { http: 200, body: { status: 'error', answer: NO_ANSWER } }
   const chunks = deps.search(req.question)
   const gate = holdInflight(deps.inflight)
   if (!gate.ok) return { http: 200, body: { status: 'unavailable', answer: UNAVAILABLE } }

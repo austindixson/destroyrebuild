@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { buildAdapters } from '../src/adapters.ts'
 import { cascade, type Adapter } from '../src/cascade.ts'
 import { stampDeadline } from '../src/deadline.ts'
-import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, tierBudgetMs } from '../src/adapters.ts'
+import { CLAUDE_BUDGET_MS, CODEX_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, roundBudgetMs, tierBudgetMs } from '../src/adapters.ts'
 import { claudeArgs, codexArgs, codexLaunchArgsOk, cursorArgs, grokArgs, grokLaunchArgsOk, GROK_MODEL } from '../src/providers.ts'
 import type { LlmRequest } from '../src/types.ts'
 
@@ -180,6 +180,54 @@ test('cascade skips a tier when the time left is below its budget', async () => 
   const joined = lines.join('\n')
   assert.match(joined, /york-api cli grok skipped reason=budget remaining=/)
   assert.equal(joined.includes('grok failed'), false)
+})
+
+test('a follow-up round keeps the time left and does not apply the tier budget again', async () => {
+  const open = new AbortController()
+  assert.equal(roundBudgetMs(open.signal, 65_000, 0), 65_000)
+  assert.equal(roundBudgetMs(open.signal, 65_000, undefined), 65_000)
+  const follow = new AbortController()
+  stampDeadline(follow.signal, Date.now() + 30_000)
+  const left = roundBudgetMs(follow.signal, 65_000, 1)
+  assert.ok(left <= 30_000)
+  assert.ok(left > 25_000)
+  const calls: string[] = []
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async () => {
+        calls.push('grok')
+        return '{"answer":"The hall is stable.","tools":[]}'
+      }, true, 65_000),
+    ],
+    { system: 'sys', user: 'user', round: 1 },
+    follow.signal,
+  )
+  assert.equal(result.provider, 'grok')
+  assert.deepEqual(calls, ['grok'])
+})
+
+test('a follow-up launch uses the request time left', async () => {
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 250)
+  const adapters = buildAdapters({}, {
+    async run(_cmd, _args, _input, _env, signal) {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      return { code: 1, stdout: '', stderr: '' }
+    },
+  })
+  const grok = adapters[0]
+  if (!grok) throw new Error('missing grok')
+  await assert.rejects(
+    () => grok.complete({ system: 's', user: 'u', round: 1 }, controller.signal),
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : ''
+      const ms = Number(message.replace('timeout budget=', ''))
+      return message.startsWith('timeout budget=') && ms > 0 && ms < 5_000
+    },
+  )
 })
 
 const TOOL_PROSE = 'I will read the alarms and the action log.'

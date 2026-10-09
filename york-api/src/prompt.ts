@@ -3,7 +3,8 @@ import type { ChatRequest, Chunk } from './types.ts'
 
 const SYSTEM = [
   'You are the coach for the York YMC2 trainer.',
-  'Answer only from the screen snapshot and the trainer passages.',
+  'State only a value that the snapshot, the tool results, or the passages show.',
+  'Do not add a plant fact that those sources omit.',
   'Call every live number a trainer-model value.',
   'Use % FLA. Do not use %RLA or %TSLA.',
   'Use short active sentences. Do not use contractions.',
@@ -23,29 +24,88 @@ function toolLines(): string {
     .join('\n')
 }
 
+const N_PLUS_ONE_LINE =
+  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load. The plant has N+1 when one chiller capacity in MW is at least the IT load in MW.'
+
+const DELTA_KEYS = [
+  't',
+  'itLoadMw',
+  'runningCapacityMw',
+  'unmetMw',
+  'hallSupplyF',
+  'lchltAct',
+  'oatF',
+  'alarm',
+  'chwValvePct',
+  'cwValvePct',
+  'glycolValvePct',
+] as const
+
 function passage(chunk: Chunk): string {
   return `[${chunk.id}] ${chunk.title}: ${chunk.text.slice(0, 700)}`
 }
 
-export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string } {
+function unitDelta(value: unknown): unknown[] | null {
+  if (!Array.isArray(value)) return null
+  return value.slice(0, 8).map((item) => {
+    if (!item || typeof item !== 'object') return item
+    const row = item as Record<string, unknown>
+    return { id: row.id, running: row.running, capacityMw: row.capacityMw, mode: row.mode }
+  })
+}
+
+function plantFields(plant: Record<string, unknown>): Record<string, unknown> {
+  const picked: Record<string, unknown> = {}
+  for (const key of DELTA_KEYS) {
+    if (key in plant) picked[key] = plant[key]
+  }
+  const units = unitDelta(plant.units)
+  if (units) picked.units = units
+  return picked
+}
+
+function plantDelta(snapshot: Record<string, unknown>): string {
+  const out: Record<string, unknown> = { blocksWrites: snapshot.blocksWrites === true }
+  if (snapshot.incident) out.incident = snapshot.incident
+  if (typeof snapshot.chaosLabel === 'string') out.chaosLabel = snapshot.chaosLabel
+  const plant = snapshot.plant
+  if (plant && typeof plant === 'object' && !Array.isArray(plant)) out.plant = plantFields(plant as Record<string, unknown>)
+  return JSON.stringify(out)
+}
+
+function toolResultLines(req: ChatRequest, limit: number): string {
+  return req.toolResults
+    .slice(0, 8)
+    .map((row) => `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message.slice(0, limit)}`)
+    .join('\n')
+}
+
+function followUpUser(req: ChatRequest): string {
+  const results = toolResultLines(req, 1600)
+  return [`Question: ${req.question}`, `Snapshot delta:\n${plantDelta(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
+}
+
+function firstUser(req: ChatRequest, chunks: Chunk[]): string {
   const history = req.history
     .slice(-6)
     .map((item) => `${item.role}: ${item.text.slice(0, 400)}`)
     .join('\n')
-  const results = req.toolResults
-    .slice(0, 8)
-    .map((row) => `${row.name} ${row.ok ? 'ok' : 'fail'}: ${row.message.slice(0, 400)}`)
-    .join('\n')
-  const user = [
+  const results = toolResultLines(req, 400)
+  const passages = [N_PLUS_ONE_LINE, ...chunks.filter((chunk) => chunk.id !== 'trainer:glossary:n-plus-1').map(passage)]
+  return [
     `Question: ${req.question}`,
     `Earlier questions: ${req.previousQuestions.slice(-6).join(' | ')}`,
     history ? `History:\n${history}` : '',
     `Snapshot:\n${JSON.stringify(req.snapshot).slice(0, 12000)}`,
-    `Passages:\n${chunks.map(passage).join('\n')}`,
+    `Passages:\n${passages.join('\n')}`,
     `Tools:\n${toolLines()}`,
     results ? `Tool results:\n${results}` : '',
   ]
     .filter(Boolean)
     .join('\n\n')
-  return { system: SYSTEM, user }
+}
+
+export function buildPrompt(req: ChatRequest, chunks: Chunk[]): { system: string; user: string; round: number } {
+  const user = req.round >= 1 ? followUpUser(req) : firstUser(req, chunks)
+  return { system: SYSTEM, user, round: req.round }
 }

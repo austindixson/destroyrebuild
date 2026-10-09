@@ -4,7 +4,18 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 ## 2026-10-09 — PR #22 — FM-REBUILD-YORK-8 — York AI chat
 
-Commits on this branch run from 2026-10-08 through 2026-10-09 (`3a45cf9` to `361294c`). york-api serves the trainer chat from the signed-in CLIs.
+Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
+
+### 2026-10-09 — YORK-8L
+
+- A non-empty tool list returns a tool round. The server ignores the interim answer while the round is below 6.
+- `plant.getActionLog` returns the last rows with time, actor, and action.
+- `plant.getAlarms` lists each active alarm.
+- A follow-up round sends a snapshot delta and the tool results. That prompt does not send the passage set again.
+- A follow-up round uses the time left on the 135 s request. The server does not start the tier budget again.
+- The coach states only a value that the snapshot, the tool results, or the passages show.
+- The N+1 passage says the plant has N+1 when one chiller capacity is at least the IT load.
+- The checklist treats `no file quote` and `have no` as refusals.
 
 ### Learner
 

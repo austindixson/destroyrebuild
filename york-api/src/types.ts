@@ -39,6 +39,7 @@ export type ChatResponse =
 export interface LlmRequest {
   system: string
   user: string
+  round?: number
 }
 
 export interface LlmAnswer {

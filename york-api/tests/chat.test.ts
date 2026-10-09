@@ -6,7 +6,7 @@ import { createBudget } from '../src/budget.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { parseModelPlan } from '../src/parse.ts'
 import { buildPrompt } from '../src/prompt.ts'
-import { planTurn } from '../src/turn.ts'
+import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { NO_ANSWER } from '../src/copy.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
@@ -194,7 +194,26 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /"name":"plant\.getAlarms","args":\{\}/)
   assert.match(prompt.system, /Leave tools empty when the snapshot or the tool results already answer/)
   assert.match(prompt.system, /Include it only when that read is still missing/)
+  assert.match(prompt.system, /State only a value that the snapshot, the tool results, or the passages show/)
+  assert.match(prompt.user, /trainer:glossary:n-plus-1/)
+  assert.match(prompt.user, /one chiller capacity in MW is at least the IT load/)
   assert.equal(prompt.system.includes('"tools":[]'), false)
+  const follow = buildPrompt(
+    {
+      question: 'How many actions are in the action log?',
+      previousQuestions: [],
+      history: [],
+      snapshot: { plant: { itLoadMw: 4.2, hallSupplyF: 70, chwValvePct: 40 } },
+      round: 1,
+      toolResults: [{ name: 'plant.getActionLog', ok: true, message: 't=12 user setValve loop=chw pct=40' }],
+    },
+    [{ id: 'trainer:glossary:n-plus-1', title: 'N+1', href: '/york-chiller/#trainer:glossary:n-plus-1', text: 'long passage' }],
+  )
+  assert.equal(follow.round, 1)
+  assert.match(follow.user, /Snapshot delta:/)
+  assert.match(follow.user, /t=12 user setValve/)
+  assert.equal(follow.user.includes('Passages:'), false)
+  assert.equal(follow.user.includes('long passage'), false)
 })
 
 test('bare string tool names become tool calls and unknown names are dropped', async () => {
@@ -216,11 +235,9 @@ test('bare string tool names become tool calls and unknown names are dropped', a
   assert.deepEqual(result.body.calls.map((call) => call.name), ['plant.getAlarms', 'plant.getActionLog'])
 })
 
-test('prose that announces a tool is not an answer, and valid JSON still wins', async () => {
+test('prose that announces a tool is not an answer', async () => {
   const prose = 'I will read the alarms and the action log.'
   assert.equal(planTurn(prose, false).kind, 'unusable')
-  const fenced = '```json\n{"answer":"The hall supply is stable.","cites":[],"tools":["plant.getAlarms"]}\n```'
-  assert.equal(planTurn(fenced, false).kind, 'answer')
   const toolsOnly = '```json\n{"answer":"","tools":["plant.getAlarms","plant.getActionLog"]}\n```'
   const planned = planTurn(toolsOnly, false)
   assert.equal(planned.kind, 'tools')
@@ -233,18 +250,42 @@ test('prose that announces a tool is not an answer, and valid JSON still wins', 
   assert.equal(result.body.status, 'unavailable')
 })
 
-test('a non-empty answer wins over a snapshot tool request', async () => {
+const GROK_LOG = '{"answer":"I need to read the action log before I can count the actions.","cites":[],"tools":["plant.getActionLog"]}'
+const CLAUDE_LOG = '{"answer":"You need to read it to answer how many actions are in the action log.","tools":[{"name":"plant.getActionLog","args":{}}]}'
+
+test('an interim answer with tools returns the tool round', async () => {
+  for (const text of [GROK_LOG, CLAUDE_LOG]) {
+    const planned = planTurn(text, false)
+    assert.equal(planned.kind, 'tools')
+    if (planned.kind !== 'tools') return
+    assert.deepEqual(planned.calls, [{ name: 'plant.getActionLog', args: {} }])
+  }
+  const capped = planTurn(GROK_LOG, false, [], MAX_TOOL_ROUND)
+  assert.equal(capped.kind, 'answer')
+  if (capped.kind !== 'answer') return
+  assert.match(capped.answer, /need to read the action log/)
   const result = await handleChat(
-    { question: 'Read the board', snapshot: { blocksWrites: false }, round: 0 },
-    deps(async () => llm(JSON.stringify({
-      answer: 'The hall supply is stable. This is a trainer-model value.',
-      cites: [],
-      tools: [{ name: 'plant.getSnapshot', args: {} }],
-    }))),
+    { question: 'How many actions are in the action log?', snapshot: { blocksWrites: false }, round: 0 },
+    deps(async () => llm(GROK_LOG)),
+  )
+  assert.equal(result.body.status, 'tools')
+  if (result.body.status !== 'tools') return
+  assert.deepEqual(result.body.calls, [{ name: 'plant.getActionLog', args: {} }])
+})
+
+test('a follow-up answer keeps a number that the tool result shows', async () => {
+  const result = await handleChat(
+    {
+      question: 'What does the action log show?',
+      snapshot: { plant: { hallSupplyF: 70 } },
+      round: 1,
+      toolResults: [{ name: 'plant.getActionLog', ok: true, message: 't=12 user setValve loop=chw pct=41' }],
+    },
+    deps(async () => llm('The log shows one valve move at 41 percent.')),
   )
   assert.equal(result.body.status, 'answer')
   if (result.body.status !== 'answer') return
-  assert.match(result.body.answer, /hall supply is stable/)
+  assert.match(result.body.answer, /41/)
 })
 
 test('a read that already has a result is not requested again', async () => {

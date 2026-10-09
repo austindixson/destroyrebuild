@@ -13,7 +13,8 @@ export interface Adapter {
   complete(req: LlmRequest, signal: AbortSignal): Promise<string>
 }
 
-function overBudget(adapter: Adapter, signal: AbortSignal): boolean {
+function overBudget(adapter: Adapter, signal: AbortSignal, round: number | undefined): boolean {
+  if ((round ?? 0) >= 1) return false
   const budget = adapter.budgetMs
   if (!budget) return false
   const left = remainingMs(signal)
@@ -32,6 +33,7 @@ function jsonRetry(req: LlmRequest): LlmRequest {
   return {
     system: req.system,
     user: `${req.user}\n\nThe last reply was prose. Reply with one JSON object and no other text.`,
+    round: req.round,
   }
 }
 
@@ -60,7 +62,7 @@ export async function cascade(adapters: Adapter[], req: LlmRequest, signal: Abor
   for (const adapter of adapters) {
     if (signal.aborted) throw new Error('aborted')
     if (!adapter.enabled()) continue
-    if (overBudget(adapter, signal)) continue
+    if (overBudget(adapter, signal, req.round)) continue
     const hold = claim(adapter)
     if (!hold) continue
     try {

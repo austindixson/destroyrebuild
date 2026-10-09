@@ -179,6 +179,24 @@ test('the snapshot stack and the action log are bounded', () => {
   assert.equal(logged.getActionLog().length, ACTION_LOG_LIMIT)
 })
 
+test('the action log and alarm tools list the rows', () => {
+  const controller = new PlantController({ seed: 0 })
+  const tools = createYorkTools(controller)
+  assert.equal(tools.call('plant.getActionLog').message, 'The action log is empty.')
+  assert.equal(tools.call('plant.getAlarms').message, 'No active alarm.')
+  controller.setValve('chw', 40, 'user')
+  controller.setWeather('hot', 'ai')
+  const log = tools.call('plant.getActionLog').message
+  assert.match(log, /user setValve loop=chw pct=40/)
+  assert.match(log, /ai setWeather preset=hot/)
+  assert.equal(log.includes('2 actions.'), false)
+  controller.injectIncident('hall-hot', 'user')
+  const alarms = tools.call('plant.getAlarms').message
+  assert.match(alarms, /The hall is hot/)
+  assert.match(alarms, /The incident is active/)
+  assert.notEqual(alarms, 'No alarm.')
+})
+
 test('the action log records actor, args, and both snapshots', () => {
   const controller = new PlantController({ seed: 0 })
   controller.setValve('cw', 50, 'ai')

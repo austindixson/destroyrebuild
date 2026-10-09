@@ -1,10 +1,14 @@
 import { NO_ANSWER } from './copy.ts'
 import { dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
 import { steHits } from './steRuntime.ts'
-import type { ChatSource, Chunk, LlmRequest } from './types.ts'
+import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
 
-function corpusFor(snapshot: unknown, chunks: Chunk[]): string {
-  return `${JSON.stringify(snapshot)}\n${chunks.map((chunk) => chunk.text).join('\n')}`
+function corpusFor(snapshot: unknown, chunks: Chunk[], toolText: string): string {
+  return `${JSON.stringify(snapshot)}\n${chunks.map((chunk) => chunk.text).join('\n')}\n${toolText}`
+}
+
+function toolText(results: ToolResultIn[]): string {
+  return results.map((row) => row.message).join('\n')
 }
 
 function sourcesFor(ids: string[], chunks: Chunk[]): ChatSource[] {
@@ -29,12 +33,21 @@ function dropSteSentences(text: string): string {
     .join(' ')
 }
 
-export function polishAnswer(raw: string, citeIds: string[], chunks: Chunk[], snapshot: unknown): { answer: string; sources: ChatSource[] } {
+export function polishAnswer(
+  raw: string,
+  citeIds: string[],
+  chunks: Chunk[],
+  snapshot: unknown,
+  results: ToolResultIn[] = [],
+): { answer: string; sources: ChatSource[] } {
   const allowed = new Set(chunks.map((chunk) => chunk.id))
   const knownCites = citeIds.map((id) => matchedCite(id, allowed)).filter(Boolean)
   const stripped = stripMarkers(yorkFlaWording(raw), allowed)
   const cites = stripped.cites.length > 0 ? stripped.cites : knownCites
-  const traced = dropUntracedNumbers(stripped.text, corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id))))
+  const traced = dropUntracedNumbers(
+    stripped.text,
+    corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id)), toolText(results)),
+  )
   const clear = dropSteSentences(labelLiveNumbers(traced))
   if (!clear) return { answer: '', sources: [] }
   return { answer: clear, sources: sourcesFor(cites, chunks) }
@@ -46,16 +59,17 @@ export async function finishAnswer(
   chunks: Chunk[],
   snapshot: unknown,
   rewrite: (req: LlmRequest) => Promise<string>,
+  results: ToolResultIn[] = [],
 ): Promise<{ answer: string; sources: ChatSource[] }> {
   if (!raw.trim()) return { answer: NO_ANSWER, sources: [] }
-  const first = polishAnswer(raw, citeIds, chunks, snapshot)
+  const first = polishAnswer(raw, citeIds, chunks, snapshot, results)
   if (first.answer) return first
   try {
     const secondText = await rewrite({
       system: 'Rewrite the answer in short active sentences. Do not use contractions. Keep trainer-model on live numbers. Reply with the answer text only.',
       user: raw,
     })
-    const second = polishAnswer(secondText, citeIds, chunks, snapshot)
+    const second = polishAnswer(secondText, citeIds, chunks, snapshot, results)
     if (second.answer) return second
     return { answer: NO_ANSWER, sources: [] }
   } catch {
