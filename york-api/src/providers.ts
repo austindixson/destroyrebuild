@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { redactReason } from './leak.ts'
-import { resolvedPath } from './sandbox.ts'
+import { resolvedPath, serverGroupId } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
@@ -72,7 +72,7 @@ function take(bucket: Buffer[], size: number, chunk: Buffer, max: number): numbe
  */
 function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid
-  if (!pid) return
+  if (!pid || pid === serverGroupId()) return
   try {
     process.kill(-pid, signal)
     return

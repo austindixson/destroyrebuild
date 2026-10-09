@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { claudeVersionOk, cliProbeEnv, cursorVersionOk, grokVersionOk, readCliVersion } from '../src/cliVersions.ts'
+import { claudeVersionOk, cliProbeEnv, cursorVersionOk, GROK_CLI_MAX, grokVersionAboveTested, grokVersionOk, readCliVersion } from '../src/cliVersions.ts'
 import { INCIDENT_KINDS } from '../../york-chiller/src/sim/plantSim.ts'
 import { buildAdapters } from '../src/adapters.ts'
 import { createBudget } from '../src/budget.ts'
@@ -65,6 +65,23 @@ function alive(pid: number): boolean {
   }
 }
 
+/** Linux reads /proc. macOS prints the process environment the same way. */
+function childEnvironNode(): string {
+  return [
+    "const fs=require('node:fs');",
+    "if (fs.existsSync('/proc/self/environ')) process.stdout.write(fs.readFileSync('/proc/self/environ'));",
+    "else process.stdout.write(Object.entries(process.env).map(([k,v])=>k+'='+v).join('\\0'));",
+  ].join('')
+}
+
+function childEnvironShell(): string {
+  return [
+    'if [ -r /proc/self/environ ]; then cat /proc/self/environ;',
+    'else node -e \'process.stdout.write(Object.entries(process.env).map(([k,v])=>k+"="+v).join("\\0"))\';',
+    'fi',
+  ].join(' ')
+}
+
 function listen(server: Server): Promise<number> {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -117,7 +134,7 @@ test('fast guard: a CLI child keeps the signed-in home and drops the proxy secre
     YORK_PROXY_SECRET: 'proxy-secret',
     CANARY: 'canary-secret',
   })
-  const script = "process.stdout.write(require('node:fs').readFileSync('/proc/self/environ'))"
+  const script = childEnvironNode()
   const result = await nodeRunner.run(process.execPath, ['-e', script], '', env, new AbortController().signal)
   assert.equal(result.stdout.includes('proxy-secret'), false)
   assert.equal(result.stdout.includes('canary-secret'), true)
@@ -131,7 +148,7 @@ test('fast guard: claude runs in a temp dir with a temp HOME', async () => {
 printf 'FILES:%s\\n' "$(ls -A | wc -l | tr -d ' ')"
 printf 'CWD:%s\\n' "$(pwd)"
 printf 'ARGS:%s\\n' "$*"
-cat /proc/self/environ
+${childEnvironShell()}
 `)
   chmodSync(bin, 0o755)
   try {
@@ -440,8 +457,14 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
   assert.equal(grokVersionOk('grok 1.0.50 (abc) [stable]'), true)
   assert.equal(grokVersionOk('0.0.1\ngrok 1.0.50 (abc) [stable]'), true)
   assert.equal(grokVersionOk('grok 1.0.49 (abc) [stable]'), false)
+  assert.equal(grokVersionOk('grok 1.0.51 (abc) [stable]'), true)
   assert.equal(grokVersionOk('1.0.50'), false)
   assert.equal(grokVersionOk('grok-1.0.50'), false)
+  assert.equal(GROK_CLI_MAX, '1.0.50')
+  assert.equal(grokVersionAboveTested('grok 1.0.50 (abc) [stable]'), false)
+  assert.equal(grokVersionAboveTested('grok 1.0.51 (abc) [stable]'), true)
+  assert.equal(grokVersionAboveTested('grok 1.1.0 (abc) [stable]'), true)
+  assert.equal(grokVersionAboveTested('1.0.51'), false)
   const probed = cliProbeEnv({
     PATH: '/usr/bin',
     HOME: '/Users/ghost128',

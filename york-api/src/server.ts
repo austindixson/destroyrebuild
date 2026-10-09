@@ -32,9 +32,14 @@ interface ChatClock {
 
 const chatClocks = new Map<string, ChatClock>()
 
-function clockKey(ip: string, row: Record<string, unknown>): string {
-  const question = typeof row.question === 'string' ? row.question : ''
-  return `${ip}\n${question}`
+function clockId(row: Record<string, unknown>): string {
+  const session = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+  if (session.length > 0) return session
+  const request = typeof row.requestId === 'string' ? row.requestId.trim() : ''
+  if (request.length > 0) return request
+  const made = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  row.sessionId = made
+  return made
 }
 
 function asRow(raw: unknown): Record<string, unknown> | null {
@@ -42,12 +47,12 @@ function asRow(raw: unknown): Record<string, unknown> | null {
   return raw as Record<string, unknown>
 }
 
-/** Elapsed time and timed-out tiers for this question. Client fields are ignored. */
+/** Elapsed time and timed-out tiers for this session id. The question text is not the key. */
 export function serverChatClock(ip: string, raw: unknown, now: number): { elapsedMs: number; timedOut: string[] } {
   const row = asRow(raw)
   if (!row) return { elapsedMs: 0, timedOut: [] }
   const round = typeof row.round === 'number' && row.round > 0 ? Math.floor(row.round) : 0
-  const key = clockKey(ip, row)
+  const key = clockId(row)
   const existing = round > 0 ? chatClocks.get(key) : undefined
   const clock = existing ?? { startedAt: now, timedOut: [] }
   if (!existing) chatClocks.set(key, clock)
@@ -61,7 +66,7 @@ export function serverChatClock(ip: string, raw: unknown, now: number): { elapse
 export function rememberTimeouts(ip: string, raw: unknown, timedOut: string[]): void {
   const row = asRow(raw)
   if (!row) return
-  const clock = chatClocks.get(clockKey(ip, row))
+  const clock = chatClocks.get(clockId(row))
   if (!clock) return
   clock.timedOut = timedOut
 }

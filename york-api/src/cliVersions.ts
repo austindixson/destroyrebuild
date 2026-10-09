@@ -21,13 +21,15 @@ import {
   replyText,
   timeoutReason,
 } from './providers.ts'
-import { resolveBin } from './sandbox.ts'
+import { resolveBin, serverGroupId, setCliDownHook } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 /** Log-and-warn floors. An older binary still serves. A missing binary does not. */
 export const CLAUDE_CLI_MIN = '2.1.293'
 export const CURSOR_CLI_MIN = '2026.07.17'
 export const GROK_CLI_MIN = '1.0.50'
+/** Highest grok build this tree was checked against. A newer build stays on and logs a warning. */
+export const GROK_CLI_MAX = '1.0.50'
 
 const SMOKE_TOKEN = 'YORKOK'
 const SMOKE_PROMPT: LlmRequest = {
@@ -43,6 +45,7 @@ const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b
 const CLAUDE_MIN = [2, 1, 293] as const
 const CURSOR_MIN = [2026, 7, 17] as const
 const GROK_MIN = [1, 0, 50] as const
+const GROK_MAX = [1, 0, 50] as const
 
 const SHARED_PROBE = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'SHELL', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'] as const
 
@@ -84,11 +87,31 @@ export function claudeVersionOk(text: string): boolean {
   return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CLAUDE_MIN)
 }
 
-/** The version is the triple after the `grok ` prefix, not an earlier number in the text. */
-export function grokVersionOk(text: string): boolean {
+function grokTriple(text: string): number[] | null {
   const match = text.match(/(?:^|\n)\s*grok\s+v?(\d+)\.(\d+)\.(\d+)\b/i)
-  if (!match) return false
-  return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], GROK_MIN)
+  if (!match?.[1] || !match[2] || !match[3]) return null
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+function sameVersion(got: number[], pin: readonly number[]): boolean {
+  for (let i = 0; i < pin.length; i += 1) {
+    if ((got[i] ?? 0) !== (pin[i] ?? 0)) return false
+  }
+  return true
+}
+
+/** The version is the triple after the `grok ` prefix, not an earlier number in the text. The check is a floor. */
+export function grokVersionOk(text: string): boolean {
+  const got = grokTriple(text)
+  if (!got) return false
+  return atLeast(got, GROK_MIN)
+}
+
+/** True when the grok triple is above the tested maximum. The tier stays on. */
+export function grokVersionAboveTested(text: string): boolean {
+  const got = grokTriple(text)
+  if (!got) return false
+  return atLeast(got, GROK_MAX) && !sameVersion(got, GROK_MAX)
 }
 
 /** True when `agent` is the grok binary. The xAI installer symlinks `agent` to grok. */
@@ -116,7 +139,7 @@ export function readCliVersion(bin: string, env: NodeJS.ProcessEnv): Promise<str
       settled = true
       clearTimeout(timer)
       const pid = child.pid
-      if (pid) {
+      if (pid && pid !== serverGroupId()) {
         try {
           process.kill(-pid, 'SIGKILL')
         } catch {
@@ -247,7 +270,7 @@ export const CLAUDE_REPROBE_STEPS_MS = [60_000, 120_000, 300_000, 600_000] as co
 const CLAUDE_AUTH_REPROBE_MS = 600_000
 
 export function claudeNeedsSignIn(reason: string): boolean {
-  return /oauth session expired|please run \/login|not logged in|invalid api key|authentication_error|\b401\b/i.test(reason)
+  return /oauth session expired|please run \/login|not logged in|invalid api key|authentication_error|authentication required|agent login|\b401\b/i.test(reason)
 }
 
 let smokeStopped = false
@@ -335,16 +358,22 @@ function procsForDir(dir: string): ProcRow[] {
 }
 
 function groupsFor(dir: string, pgid?: number): number[] {
+  const own = serverGroupId()
   const ids = new Set<number>()
-  if (pgid && pgid > 1 && pgid !== process.pid) ids.add(pgid)
+  if (pgid && pgid > 1 && pgid !== own) ids.add(pgid)
   for (const row of procsForDir(dir)) {
-    if (row.pgid > 1 && row.pgid !== process.pid) ids.add(row.pgid)
+    if (row.pgid > 1 && row.pgid !== own) ids.add(row.pgid)
   }
   return [...ids]
 }
 
+/** Process groups a smoke stop would signal. The server's own group is left out. */
+export function smokeGroupIds(dir: string, pgid?: number): number[] {
+  return groupsFor(dir, pgid)
+}
+
 function signalGroup(pgid: number, signal: NodeJS.Signals): void {
-  if (pgid === process.pid) return
+  if (pgid === serverGroupId()) return
   try {
     process.kill(-pgid, signal)
   } catch {
@@ -553,34 +582,59 @@ export async function recoverGrok(
   return verdict
 }
 
+const reprobePending = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** The next wait after a probe. A healthy check stops this chain so a later outage can arm it again. */
+export function nextReprobeDelay(
+  verdict: SmokeVerdict | null,
+  attempt: number,
+): { attempt: number; delay: number } | null {
+  if (!verdict || verdict.ok) return null
+  const next = attempt + 1
+  return { attempt: next, delay: claudeReprobeDelay(next, verdict.reason) }
+}
+
+export function stopCliReprobes(): void {
+  for (const timer of reprobePending.values()) clearTimeout(timer)
+  reprobePending.clear()
+}
+
 function armReprobe(
   env: NodeJS.ProcessEnv,
+  name: string,
   recover: (probeEnv: NodeJS.ProcessEnv) => Promise<SmokeVerdict | null>,
 ): ReturnType<typeof setTimeout> {
   let attempt = 0
   const arm = (delay: number): ReturnType<typeof setTimeout> => {
+    const previous = reprobePending.get(name)
+    if (previous) clearTimeout(previous)
+    const seconds = Math.round(delay / 1000)
+    console.log(`york-api cli ${name} reprobe in ${seconds} s`)
     const timer = setTimeout(() => {
+      reprobePending.delete(name)
       void recover(env).then((verdict) => {
-        if (!verdict || verdict.ok) {
+        const step = nextReprobeDelay(verdict, attempt)
+        if (!step) {
           attempt = 0
           return
         }
-        attempt += 1
-        arm(claudeReprobeDelay(attempt, verdict.reason))
+        attempt = step.attempt
+        arm(step.delay)
       })
     }, delay)
     timer.unref()
+    reprobePending.set(name, timer)
     return timer
   }
   return arm(claudeReprobeDelay(0, ''))
 }
 
 export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
-  return armReprobe(env, (probeEnv) => recoverClaude(probeEnv))
+  return armReprobe(env, 'claude', (probeEnv) => recoverClaude(probeEnv))
 }
 
 export function startGrokReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
-  return armReprobe(env, (probeEnv) => recoverGrok(probeEnv))
+  return armReprobe(env, 'grok', (probeEnv) => recoverGrok(probeEnv))
 }
 
 /** Two tries. A later success clears the unavailable flag. */
@@ -612,7 +666,7 @@ export async function recoverCursor(
 }
 
 export function startCursorReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
-  return armReprobe(env, (probeEnv) => recoverCursor(probeEnv))
+  return armReprobe(env, 'cursor', (probeEnv) => recoverCursor(probeEnv))
 }
 
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
@@ -652,4 +706,13 @@ async function logOne(
   const ok = minimum.length === 0 || okText(text)
   console.log(`york-api cli ${name} version=${version} status=ready`)
   if (!ok) console.warn(`york-api cli ${name} is older than ${minimum}. This tier stays on.`)
+  if (name === 'grok' && grokVersionAboveTested(text)) {
+    console.warn(`york-api cli grok is newer than tested ${GROK_CLI_MAX}. This tier stays on.`)
+  }
 }
+
+setCliDownHook((env) => {
+  if (env.YORK_CLAUDE_CLI === 'unavailable') startClaudeReprobe(env)
+  if (env.YORK_GROK_CLI === 'unavailable') startGrokReprobe(env)
+  if (env.YORK_CURSOR_CLI === 'unavailable') startCursorReprobe(env)
+})

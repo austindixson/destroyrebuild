@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverCursor, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startCursorReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, nextReprobeDelay, probeAndLogClis, recoverClaude, recoverCursor, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeGroupIds, smokeVerdict, startClaudeReprobe, startCursorReprobe, startGrokReprobe, stopCliReprobes, stopOpenSmokes } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -30,7 +30,7 @@ import {
   timeoutReason,
 } from '../src/providers.ts'
 import { REQUEST_MS, chatWindowMs, rememberTimeouts, serverChatClock, yorkOnlyFrom } from '../src/server.ts'
-import { applySandboxProbe, execTreeUnderHome, launchCommand, macSandboxProfile, probeSandbox, profileDeniesHome } from '../src/sandbox.ts'
+import { applySandboxProbe, execTreeUnderHome, launchCommand, macSandboxProfile, probeSandbox, profileDeniesHome, serverGroupId } from '../src/sandbox.ts'
 import type { LlmAnswer, LlmRequest } from '../src/types.ts'
 
 const req: LlmRequest = { system: 'sys', user: 'user text' }
@@ -384,13 +384,28 @@ test('fast guard: sandbox probe fails closed and does not write a home canary of
     assert.equal(missing.reason, 'sandbox-exec-missing')
     assert.deepEqual(readdirSync(home), [])
     const env: NodeJS.ProcessEnv = { YORK_GROK_CLI: 'ready' }
-    applySandboxProbe(env, missing)
+    const lines: string[] = []
+    const log = console.log
+    console.log = (msg?: unknown) => {
+      lines.push(String(msg))
+    }
+    try {
+      applySandboxProbe(env, missing)
+    } finally {
+      console.log = log
+      stopCliReprobes()
+    }
     assert.equal(env.YORK_SANDBOX, 'unavailable')
     assert.equal(env.YORK_GROK_CLI, 'unavailable')
     assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
     assert.equal(env.YORK_CURSOR_CLI, 'unavailable')
     assert.equal(env.YORK_CODEX_CLI, 'unavailable')
+    const joined = lines.join('\n')
+    assert.match(joined, /grok reprobe in 60 s/)
+    assert.match(joined, /claude reprobe in 60 s/)
+    assert.match(joined, /cursor reprobe in 60 s/)
   } finally {
+    stopCliReprobes()
     rmSync(home, { recursive: true, force: true })
   }
 })
@@ -406,14 +421,16 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.equal(chatWindowMs({ elapsedMs: 0 }), REQUEST_MS)
   assert.equal(chatWindowMs({ elapsedMs: 80_000 }), 55_000)
   assert.equal(chatWindowMs({ elapsedMs: 200_000 }), 0)
-  const clockBody = { question: 'server clock', round: 0, elapsedMs: 90_000, timedOut: ['claude'] }
+  const clockBody = { question: 'server clock', round: 0, sessionId: 'clock-session', elapsedMs: 90_000, timedOut: ['claude'] }
   const opened = serverChatClock('127.0.0.1', clockBody, 1_000)
   assert.equal(opened.elapsedMs, 0)
   assert.deepEqual(opened.timedOut, [])
-  rememberTimeouts('127.0.0.1', clockBody, ['grok'])
-  const followed = serverChatClock('127.0.0.1', { question: 'server clock', round: 1, elapsedMs: 0, timedOut: ['cursor'] }, 81_000)
+  rememberTimeouts('10.1.1.1', clockBody, ['grok'])
+  const followed = serverChatClock('10.9.9.9', { question: 'a different question', round: 1, sessionId: 'clock-session', elapsedMs: 0, timedOut: ['cursor'] }, 81_000)
   assert.equal(followed.elapsedMs, 80_000)
   assert.deepEqual(followed.timedOut, ['grok'])
+  const other = serverChatClock('127.0.0.1', { question: 'server clock', round: 1, sessionId: 'other-session' }, 81_000)
+  assert.equal(other.elapsedMs, 0)
   const emptyTools = [
     '{"type":"available_commands","tools":[],"commands":[]}',
     '{"type":"thought","data":"15"}',
@@ -768,6 +785,8 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
   assert.equal(claudeNeedsSignIn('invalid api key'), true)
   assert.equal(claudeNeedsSignIn('401'), true)
   assert.equal(claudeNeedsSignIn('authentication_error'), true)
+  assert.equal(claudeNeedsSignIn('Authentication required'), true)
+  assert.equal(claudeNeedsSignIn('agent login'), true)
   assert.equal(claudeNeedsSignIn('exit=1 stderr='), false)
   assert.equal(claudeNeedsSignIn('1401'), false)
   assert.equal(claudeReprobeDelay(1, 'authentication_error'), 600_000)
@@ -776,6 +795,7 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
   assert.equal(claudeReprobeDelay(2, 'invalid api key'), 600_000)
   const timer = startClaudeReprobe({ YORK_CLAUDE_CLI: 'ready' })
   clearTimeout(timer)
+  stopCliReprobes()
   const lines: string[] = []
   const log = console.log
   console.log = (msg?: unknown) => {
@@ -978,8 +998,22 @@ test('grok smoke retries once and reprobes on the claude backoff', async () => {
   })
   assert.equal(calls, 3)
   assert.equal(once.ok, true)
+  const linesReady: string[] = []
+  const readyLog = console.log
+  console.log = (msg?: unknown) => {
+    linesReady.push(String(msg))
+  }
   const timer = startGrokReprobe({ YORK_GROK_CLI: 'ready' })
+  console.log = readyLog
   clearTimeout(timer)
+  stopCliReprobes()
+  assert.match(linesReady.join('\n'), /grok reprobe in 60 s/)
+  assert.equal(nextReprobeDelay(null, 4), null)
+  assert.equal(nextReprobeDelay({ ok: true, reason: 'answered' }, 2), null)
+  const again = nextReprobeDelay({ ok: false, reason: 'smoke-mismatch' }, 0)
+  assert.equal(again?.attempt, 1)
+  assert.equal(again?.delay, 120_000)
+  assert.equal(nextReprobeDelay({ ok: false, reason: 'Authentication required' }, 0)?.delay, 600_000)
   const lines: string[] = []
   const log = console.log
   console.log = (msg?: unknown) => {
@@ -1008,9 +1042,25 @@ test('grok smoke retries once and reprobes on the claude backoff', async () => {
   assert.equal(ready.YORK_GROK_CLI, 'ready')
 })
 
+test('a smoke stop leaves the server process group alone', () => {
+  const own = serverGroupId()
+  assert.ok(own > 1)
+  assert.deepEqual(smokeGroupIds('/no/such/york-smoke-dir', own), [])
+  const foreign = own === 424242 ? 424243 : 424242
+  assert.deepEqual(smokeGroupIds('/no/such/york-smoke-dir', foreign), [foreign])
+})
+
 test('cursor reprobe uses the same backoff and marks a recovered check ready', async () => {
+  const linesReady: string[] = []
+  const readyLog = console.log
+  console.log = (msg?: unknown) => {
+    linesReady.push(String(msg))
+  }
   const timer = startCursorReprobe({ YORK_CURSOR_CLI: 'ready' })
+  console.log = readyLog
   clearTimeout(timer)
+  stopCliReprobes()
+  assert.match(linesReady.join('\n'), /cursor reprobe in 60 s/)
   const lines: string[] = []
   const log = console.log
   console.log = (msg?: unknown) => {

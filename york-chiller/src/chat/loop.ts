@@ -154,6 +154,7 @@ export async function askTrainer(input: AskInput): Promise<{ answer: string; sou
     snapshot: input.snapshot,
     round: 0,
     writesUsed: 0,
+    sessionId: crypto.randomUUID(),
   }
   try {
     for (let round = 0; round < MAX_ROUNDS; round += 1) {

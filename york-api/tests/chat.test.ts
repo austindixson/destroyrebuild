@@ -5,7 +5,7 @@ import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, readRequest, type ChatDeps } from '../src/chat.ts'
 import { jsonRetryNeeded, parseModelPlan, usableModelText } from '../src/parse.ts'
-import { buildPrompt, jsonWithin, N_PLUS_ONE_LINE } from '../src/prompt.ts'
+import { buildPrompt, jsonWithin, N_PLUS_ONE_LINE, nPlusOneSpareUnits, withNPlusOne } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { finishAnswer, loggableRaw, polishAnswer } from '../src/finish.ts'
@@ -284,12 +284,15 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /IT load 4\.2 MW/)
   assert.match(prompt.system, /Do not write a raw field name such as itLoadMw/)
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
-  assert.match(prompt.user, /standby units that can start/)
-  assert.match(prompt.user, /Subtract the largest unit/)
-  assert.match(prompt.user, /N\+1 holds\./)
-  assert.match(prompt.user, /N\+1 does not hold\./)
-  assert.match(prompt.user, /17 times 5 MW is 85 MW/)
-  assert.match(prompt.user, /itLoadMw/)
+  assert.match(prompt.user, /nPlusOneSpareUnits/)
+  assert.match(prompt.user, /count of chillers that can run, minus 1/)
+  assert.match(prompt.user, /lead, lag, or standby/)
+  assert.match(prompt.user, /number of units/)
+  assert.match(prompt.user, /not megawatts/)
+  assert.match(prompt.user, /not a holds verdict/)
+  assert.equal(prompt.user.includes('N+1 holds.'), false)
+  assert.equal(prompt.user.includes('17 times 5 MW is 85 MW'), false)
+  assert.match(prompt.system, /itLoadMw/)
   assert.equal(prompt.openCase, false)
   const openCase = buildPrompt(
     { question: 'q', previousQuestions: [], history: [], snapshot: { blocksWrites: true }, round: 0, toolResults: [] },
@@ -371,10 +374,10 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /5 MW \+ 5 MW - 5 MW = 5 MW/)
   assert.match(round0.system, /Do not write trainer-model value in an equation/)
   assert.match(round0.system, /3 or more sections/)
-  assert.equal(promptBytes(round1), 2535)
-  assert.equal(promptBytes(round0), 3760)
-  assert.equal(round1.user.length, 569)
-  assert.equal(round0.user.length, 2020)
+  assert.equal(promptBytes(round1), 2540)
+  assert.equal(promptBytes(round0), 3617)
+  assert.equal(round1.user.length, 574)
+  assert.equal(round0.user.length, 1877)
 })
 
 test('a follow-up prompt keeps the chiller row, differential pressure, hall return, and LCHLT setpoint', () => {
@@ -707,15 +710,55 @@ test('an unmatched quote fragment is dropped and an open case keeps the decline'
   assert.equal(loggableRaw('The hall is warm.\nOpen the valve.'), 'The hall is warm.\\nOpen the valve.')
 })
 
-test('the N+1 example numbers are not traced on a first-round answer', () => {
+test('nPlusOneSpareUnits is the count of chillers that can run, minus 1', () => {
+  assert.equal(nPlusOneSpareUnits({ units: [{ running: true }, { running: true }] }), 1)
+  assert.equal(nPlusOneSpareUnits({ units: [{ running: true }] }), 0)
+  assert.equal(nPlusOneSpareUnits({ units: [] }), 0)
+  assert.equal(nPlusOneSpareUnits({
+    units: [{ running: false, mode: 'standby' }, { running: false, mode: 'lead' }],
+  }), 1)
+  assert.equal(nPlusOneSpareUnits({ units: [{ running: false, mode: 'stopped' }] }), 0)
   const gloss = 'N+1 means one extra unit of capacity beyond the load. The spare is every running chiller plus every standby chiller that can start, minus the largest unit.'
   const fleet = '17 times 5 MW is 85 MW.'
   assert.equal(dropUntracedNumbers(fleet, gloss), '')
-  assert.match(dropUntracedNumbers(fleet, N_PLUS_ONE_LINE), /17 times 5 MW is 85 MW/)
+  assert.equal(dropUntracedNumbers(fleet, N_PLUS_ONE_LINE).includes('85'), false)
   const dropped = polishAnswer('Hall supply is 80 F.', [], [], { plant: { hallSupplyF: 72 } })
   assert.equal(dropped.answer, '')
   const fleetDropped = polishAnswer(fleet, [], [], {})
   assert.equal(fleetDropped.answer.includes('85'), false)
+  const shaped = withNPlusOne({
+    units: [{ running: true }, { mode: 'standby' }, { mode: 'stopped' }],
+    plant: { itLoadMw: 4.2 },
+  })
+  assert.equal(shaped.nPlusOneSpareUnits, 1)
+  assert.equal(Object.keys(shaped)[0], 'nPlusOneSpareUnits')
+  assert.equal('nPlusOneSpare' in shaped, false)
+})
+
+test('the proxy secret is withheld from the raw debug log', async () => {
+  const prevSecret = process.env.YORK_PROXY_SECRET
+  const prevRaw = process.env.YORK_DEBUG_RAW
+  const secret = 'york-proxy-secret-value'
+  process.env.YORK_PROXY_SECRET = secret
+  process.env.YORK_DEBUG_RAW = '1'
+  const notes: string[] = []
+  const debug = console.debug
+  console.debug = (msg?: unknown) => {
+    notes.push(String(msg))
+  }
+  try {
+    await finishAnswer(`The hall is warm. ${secret}`, [], [], {}, async () => 'The hall is warm.')
+    assert.equal(loggableRaw(`The hall is warm. ${secret}`), '')
+    assert.equal(loggableRaw('The hall is warm.\nOpen the valve.'), 'The hall is warm.\\nOpen the valve.')
+  } finally {
+    console.debug = debug
+    if (prevSecret === undefined) delete process.env.YORK_PROXY_SECRET
+    else process.env.YORK_PROXY_SECRET = prevSecret
+    if (prevRaw === undefined) delete process.env.YORK_DEBUG_RAW
+    else process.env.YORK_DEBUG_RAW = prevRaw
+  }
+  assert.equal(notes.join('\n').includes(secret), false)
+  assert.equal(notes.length, 0)
 })
 
 test('a rewrite drops an added sentence and keeps the restated fact', async () => {

@@ -67,7 +67,7 @@ There is no documented flag that turns off native `~/.grok/hooks`. York sets `HO
 
 These environment variables are set to `0` on the child: `GROK_CLAUDE_SKILLS_ENABLED`, `GROK_CLAUDE_RULES_ENABLED`, `GROK_CLAUDE_AGENTS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`, `GROK_CLAUDE_HOOKS_ENABLED`, and the five `GROK_CURSOR_*_ENABLED` names of the same shape. `GROK_CLAUDE_SESSIONS_ENABLED`, `GROK_CURSOR_SESSIONS_ENABLED`, and `GROK_CODEX_SESSIONS_ENABLED` are also set to `0`. Run 3 `grok inspect` on ghost128 showed those three session scanners off under this env. A project `.grok/config.toml` cannot turn compat off. It only contributes `[mcp_servers]`, `[plugins]`, and `[permission]`. The home deny is what keeps `~/.agents` and the real `~/.claude/settings.json` unread. Grok's child may set `CLAUDE_CONFIG_DIR` to the temp `.claude`. Claude and Cursor do not.
 
-`grok --version` prints `grok 1.0.50 (hash) [stable]`. The floor `1.0.50` is read from the triple after the `grok ` prefix. The floor is log-and-warn only.
+`grok --version` prints `grok 1.0.50 (hash) [stable]`. The floor `1.0.50` is read from the triple after the `grok ` prefix. The floor is log-and-warn only. The tested maximum is also `1.0.50`. A newer build stays on and logs a warning.
 
 ### Claude
 

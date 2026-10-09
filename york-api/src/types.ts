@@ -28,6 +28,8 @@ export interface ChatRequest {
   snapshot: Record<string, unknown>
   round: number
   toolResults: ToolResultIn[]
+  /** Shared by every round of one question. The server clock uses this id. */
+  sessionId?: string
   /** Tier that answered the previous round. Round 0 ignores it. */
   tier?: string
   /** Tiers that timed out earlier in this question. */

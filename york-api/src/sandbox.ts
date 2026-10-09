@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -250,7 +250,34 @@ export function sandboxReady(env: NodeJS.ProcessEnv): boolean {
   return env.YORK_SANDBOX === 'ready'
 }
 
-/** Fail closed. A failed probe turns every CLI tier off. */
+let cachedGroup = 0
+
+/** The server process group. A smoke kill must not signal this group. */
+export function serverGroupId(): number {
+  if (cachedGroup > 1) return cachedGroup
+  try {
+    const text = execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' })
+    const id = Number(text.trim().split(/\s+/)[0])
+    if (Number.isFinite(id) && id > 1) {
+      cachedGroup = id
+      return cachedGroup
+    }
+  } catch {
+    // ps can be missing in a tight sandbox.
+  }
+  cachedGroup = process.pid > 1 ? process.pid : 1
+  return cachedGroup
+}
+
+type CliDownHook = (env: NodeJS.ProcessEnv) => void
+let cliDownHook: CliDownHook | null = null
+
+/** cliVersions registers this so a later unavailable mark arms the reprobe again. */
+export function setCliDownHook(hook: CliDownHook): void {
+  cliDownHook = hook
+}
+
+/** Fail closed. A failed probe turns every CLI tier off and arms the reprobes again. */
 export function applySandboxProbe(env: NodeJS.ProcessEnv, result: SandboxProbeResult): void {
   if (!result.ok) {
     console.log(`york-api sandbox status=unavailable reason=${result.reason}`)
@@ -259,6 +286,7 @@ export function applySandboxProbe(env: NodeJS.ProcessEnv, result: SandboxProbeRe
     env.YORK_CLAUDE_CLI = 'unavailable'
     env.YORK_CURSOR_CLI = 'unavailable'
     env.YORK_CODEX_CLI = 'unavailable'
+    cliDownHook?.(env)
     return
   }
   env.YORK_SANDBOX = 'ready'

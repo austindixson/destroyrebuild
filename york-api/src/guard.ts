@@ -127,11 +127,27 @@ function shown(value: number, places: number): string {
 const NUM_RE = /^[-\u2212]?\d+(?:\.\d+)?/
 const MUL_OPS = '*\u00d7/\u00f7'
 const ADD_OPS = '+\u2212-'
+/** Optional unit after an operand or a result. psi and psig stay distinct. °F and F are the same unit. */
+const UNIT_RE = /^(?:\u00b0F|psig|psi|kW|MW|gpm|tons|%|F|A)(?![A-Za-z])/
+const UNIT_CANON: Record<string, string> = {
+  '\u00b0F': 'F',
+  F: 'F',
+  psig: 'psig',
+  psi: 'psi',
+  kW: 'kW',
+  MW: 'MW',
+  gpm: 'gpm',
+  tons: 'tons',
+  '%': '%',
+  A: 'A',
+}
+const LEFTOVER_EQ = /(?:^|[^\d.])[-\u2212]?\d+(?:\.\d+)?[^\d.\n]{0,80}=\s*[-\u2212]?\d/
 
 type Op = '+' | '-' | '*' | '/'
-type Expr = { kind: 'num'; token: string } | { kind: 'bin'; op: Op; left: Expr; right: Expr }
+type Expr = { kind: 'num'; token: string; unit: string } | { kind: 'bin'; op: Op; left: Expr; right: Expr }
 type Parsed = { expr: Expr; consumed: number }
-type Equation = { expr: Expr; result: string }
+type Equation = { expr: Expr; result: string; unit: string }
+type EqSpan = { start: number; consumed: number; equation: Equation }
 
 function canonNum(token: string): string {
   return token.replaceAll('\u2212', '-')
@@ -177,6 +193,12 @@ function skipSpace(source: string): number {
   return /^\s*/.exec(source)?.[0].length ?? 0
 }
 
+function takeUnit(source: string): { unit: string; consumed: number } {
+  const gap = skipSpace(source)
+  const raw = UNIT_RE.exec(source.slice(gap))?.[0] ?? ''
+  return { unit: UNIT_CANON[raw] ?? '', consumed: gap + raw.length }
+}
+
 function parseUnary(source: string): Parsed | null {
   const gap = skipSpace(source)
   const body = source.slice(gap)
@@ -189,7 +211,11 @@ function parseUnary(source: string): Parsed | null {
   }
   const num = NUM_RE.exec(body)
   if (!num?.[0]) return null
-  return { expr: { kind: 'num', token: num[0] }, consumed: gap + num[0].length }
+  const unit = takeUnit(body.slice(num[0].length))
+  return {
+    expr: { kind: 'num', token: num[0], unit: unit.unit },
+    consumed: gap + num[0].length + unit.consumed,
+  }
 }
 
 function takeOp(source: string, ops: string): { op: Op; consumed: number } | null {
@@ -226,7 +252,7 @@ function parseAdd(source: string): Parsed | null {
   return foldOps(source, ADD_OPS, parseMul)
 }
 
-function parseEquation(source: string): { expr: Expr; result: string; consumed: number } | null {
+function parseEquation(source: string): { expr: Expr; result: string; unit: string; consumed: number } | null {
   const left = parseAdd(source)
   if (!left) return null
   const rest = source.slice(left.consumed)
@@ -236,7 +262,13 @@ function parseEquation(source: string): { expr: Expr; result: string; consumed: 
   const numGap = skipSpace(after)
   const num = NUM_RE.exec(after.slice(numGap))
   if (!num?.[0]) return null
-  return { expr: left.expr, result: num[0], consumed: left.consumed + gap + 1 + numGap + num[0].length }
+  const unit = takeUnit(after.slice(numGap + num[0].length))
+  return {
+    expr: left.expr,
+    result: num[0],
+    unit: unit.unit,
+    consumed: left.consumed + gap + 1 + numGap + num[0].length + unit.consumed,
+  }
 }
 
 function equationAt(text: string, index: number): boolean {
@@ -244,8 +276,8 @@ function equationAt(text: string, index: number): boolean {
   return ch === '(' || ch === '-' || ch === '\u2212' || /\d/.test(ch)
 }
 
-function equationsIn(text: string): Equation[] {
-  const found: Equation[] = []
+function equationSpans(text: string): EqSpan[] {
+  const found: EqSpan[] = []
   let i = 0
   while (i < text.length) {
     const prev = i > 0 ? text[i - 1] ?? '' : ''
@@ -258,10 +290,53 @@ function equationsIn(text: string): Equation[] {
       i += 1
       continue
     }
-    found.push({ expr: parsed.expr, result: parsed.result })
+    found.push({
+      start: i,
+      consumed: parsed.consumed,
+      equation: { expr: parsed.expr, result: parsed.result, unit: parsed.unit },
+    })
     i += parsed.consumed
   }
   return found
+}
+
+function equationsIn(text: string): Equation[] {
+  return equationSpans(text).map((span) => span.equation)
+}
+
+function blankEquations(text: string): string {
+  let out = text
+  const spans = equationSpans(text)
+  for (let i = spans.length - 1; i >= 0; i -= 1) {
+    const span = spans[i]
+    if (!span) continue
+    const end = span.start + span.consumed
+    out = `${out.slice(0, span.start)}${' '.repeat(span.consumed)}${out.slice(end)}`
+  }
+  return out
+}
+
+function leftoverEquals(text: string): boolean {
+  return LEFTOVER_EQ.test(blankEquations(text))
+}
+
+function collectUnits(expr: Expr, out: string[]): void {
+  if (expr.kind === 'num') {
+    out.push(expr.unit)
+    return
+  }
+  collectUnits(expr.left, out)
+  collectUnits(expr.right, out)
+}
+
+/** A unit on any side requires that same unit on every operand and on the result. */
+function unitsMatch(equation: Equation): boolean {
+  const units: string[] = []
+  collectUnits(equation.expr, units)
+  units.push(equation.unit)
+  const named = units.find((unit) => unit.length > 0) ?? ''
+  if (named.length === 0) return true
+  return units.every((unit) => unit === named)
 }
 
 function exprValue(expr: Expr): number | null {
@@ -309,8 +384,9 @@ function inputsKnown(expr: Expr, known: Set<string>): boolean {
   return true
 }
 
-/** The result keeps at least as many decimal places as any input. */
+/** The result keeps at least as many decimal places as any input. Units must agree. */
 function workIsRight(equation: Equation, known: Set<string>): number | null {
+  if (!unitsMatch(equation)) return null
   if (!inputsKnown(equation.expr, known)) return null
   const value = exprValue(equation.expr)
   if (value === null) return null
@@ -342,7 +418,7 @@ function badEquation(text: string, known: Set<string>): boolean {
   for (const equation of equationsIn(text)) {
     if (workIsRight(equation, known) === null) return true
   }
-  return false
+  return leftoverEquals(text)
 }
 
 function numbersKnown(text: string, known: Set<string>): boolean {

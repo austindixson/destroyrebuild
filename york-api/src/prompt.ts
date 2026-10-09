@@ -38,14 +38,9 @@ function toolLines(): string {
 const FOLLOW_VOICE = 'Use active voice. Do not put is, are, was, were, or been before a past participle. Keep each sentence to 25 words. Keep a command to 20 words. Use % FLA for chiller motor current only. A valve uses % open. A fan uses % speed.'
 
 export const N_PLUS_ONE_LINE = [
-  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',
-  'Count every available chiller: running units plus standby units that can start.',
-  'Subtract the largest unit.',
-  'N+1 holds when that remainder still covers itLoadMw.',
-  'State the verdict as "N+1 holds." or "N+1 does not hold."',
-  'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1.',
-  '17 times 5 MW is 85 MW.',
-  '85 MW covers 80 MW.',
+  '[trainer:glossary:n-plus-1] N+1: nPlusOneSpareUnits is the count of chillers that can run, minus 1.',
+  'A chiller can run when it is running, or when its mode is lead, lag, or standby.',
+  'That count is a number of units. It is not megawatts. It is not a holds verdict.',
 ].join(' ')
 
 function passage(chunk: Chunk): string {
@@ -69,8 +64,8 @@ function unitCanRun(unit: Record<string, unknown>): boolean {
   return typeof unit.mode === 'string' && CAN_START.has(unit.mode)
 }
 
-/** Available chillers minus the largest unit. The glossary example fleet is not a live number. */
-export function nPlusOneSpare(snapshot: unknown): number {
+/** Count of chillers that can run, minus 1. A unit count, not megawatts and not a verdict. */
+export function nPlusOneSpareUnits(snapshot: unknown): number {
   if (!isRecord(snapshot)) return 0
   const available = unitRows(snapshot).filter(unitCanRun)
   if (available.length === 0) return 0
@@ -79,7 +74,13 @@ export function nPlusOneSpare(snapshot: unknown): number {
 
 export function withNPlusOne(snapshot: unknown): Record<string, unknown> {
   const row = isRecord(snapshot) ? snapshot : {}
-  return { ...row, nPlusOneSpare: nPlusOneSpare(row) }
+  const spare = nPlusOneSpareUnits(row)
+  const rest: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'nPlusOneSpare' || key === 'nPlusOneSpareUnits') continue
+    rest[key] = value
+  }
+  return { nPlusOneSpareUnits: spare, ...rest }
 }
 
 const JSON_LIMIT = 12_000
@@ -110,9 +111,19 @@ function fitChild(kept: Record<string, unknown>, key: string, item: unknown, lim
   return parsed
 }
 
+function objectEntries(value: Record<string, unknown>): [string, unknown][] {
+  const spare: [string, unknown][] = []
+  const rest: [string, unknown][] = []
+  for (const entry of Object.entries(value)) {
+    if (entry[0].startsWith('nPlusOne')) spare.push(entry)
+    else rest.push(entry)
+  }
+  return [...spare, ...rest]
+}
+
 function objectWithin(value: Record<string, unknown>, limit: number): string {
   const kept: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(value)) {
+  for (const [key, item] of objectEntries(value)) {
     if (JSON.stringify({ ...kept, [key]: item }).length <= limit) {
       kept[key] = item
       continue
@@ -184,9 +195,9 @@ function chillerRows(snapshot: Record<string, unknown>, plant: Record<string, un
 function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
   const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
   const readings: Record<string, unknown> = {
+    nPlusOneSpareUnits: nPlusOneSpareUnits(snapshot),
     units: chillerRows(snapshot, plant),
     ...numericReadings(plant),
-    nPlusOneSpare: nPlusOneSpare(snapshot),
   }
   if (typeof snapshot.blocksWrites === 'boolean') readings.blocksWrites = snapshot.blocksWrites
   if (typeof snapshot.incident === 'string' || snapshot.incident === null) readings.incident = snapshot.incident

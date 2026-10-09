@@ -6,6 +6,19 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z15
+
+- An equation accepts an optional unit after each operand and after the result: MW, kW, psi, psig, F, °F, %, gpm, tons, or A. psi and psig stay distinct. °F and F are the same unit. Every unit in the equation must match. "(5 MW - 4.2 MW = 0.8 MW)" stays when 5 and 4.2 are live readings. "(17 psi - 9.5 psi = 9.5 psi)" is dropped. "N+1 spare is 5 MW (5 MW + 5 MW = 5 MW)" is dropped. "5 MW + 3 psi = 8" is dropped. An equals sign between numbers that does not parse drops that sentence.
+- nPlusOneSpareUnits is the count of chillers that can run, minus 1. A chiller can run when it is running, or when its mode is lead, lag, or standby. The field is a unit count. It is not megawatts and it is not a holds verdict. The prompt says that. The field stays at the front of a snapshot cut to 12,000 characters.
+- The raw debug log withholds the proxy secret as well as other secret material. YORK_DEBUG_RAW=1 does not print that secret.
+- Each armed reprobe logs "claude reprobe in 60 s" (or grok, or cursor, with the wait in seconds). A healthy check leaves the chain idle. A later unavailable mark, including a failed sandbox probe, arms the chain again.
+- "Authentication required" and "agent login" are sign-in errors, with the same 10 min wait.
+- The server clock is keyed on the session id, or on the request id when that is the id sent. It is not keyed on the client IP or the question text. One question sends the same session id on every round.
+- A smoke kill skips the server's own process group.
+- The child environ checks read /proc/self/environ when that file is present, and the process environment when it is not. The live checklist asks the model to run `ps eww -p $$` on a host without /proc.
+- Grok's version check stays a floor. The tested maximum is 1.0.50. A newer build stays on and logs a warning.
+- Round 0 prompt is 3617 bytes, 143 bytes under the previous prompt. Round 1 is 2540 bytes. User text is 1877 and 574.
+
 ### 2026-10-09 — YORK-8Z14
 
 - A failed cursor startup check is tried again on the same waits as claude and grok: 60 s, 2 min, 5 min, then every 10 min. A later success marks cursor ready, so the tier comes back without a restart.
@@ -91,9 +104,9 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 ### 2026-10-09 — YORK-8Z4
 
 - A plain label line keeps its label on the next kept sentence of that line. "Chilled-water loop: valve at 40% open (untraced 99). Supply 42.5 psig, return 52 psig." keeps "Chilled-water loop" with the supply sentence. A line whose sentences are all dropped loses the label too.
-- A computed number stays only when the same sentence shows the equation, both inputs trace to the data, and the arithmetic is right. "CHW dP is 7.5 psi below target (17 - 9.5 = 7.5)." stays. A bare 7.5 is dropped. Wrong arithmetic is dropped. The prompt states this rule.
+- A computed number stays only when the same sentence shows the equation, both inputs trace to the data, and the arithmetic is right. "The gap is 12.8 (17 − 4.2 = 12.8)." stays when 17 and 4.2 are live readings. "CHW dP is 7.5 psi below target (17 - 9.5 = 7.5)." is dropped when 9.5 is not a live reading. A bare 7.5 is dropped. Wrong arithmetic is dropped. The prompt states this rule.
 - An untraced number drops the sentence that holds it. The rest of the step stays, unless that sentence is the step's first sentence.
-- Stacked headings keep the top heading. "Eight-hour checklist" stays above "Hour 0 to 1" and above "Shift start".
+- A heading stays when kept text remains in its group. "Eight-hour checklist" stays above "Hour 0 to 1" when that step stays. An emptied group drops, including an emptied "Shift start".
 - Hour 4, After 6 hours, Every 4 h, Hours 0-2, At hour 8, and Within 2 hours are schedule labels. An answer that uses only those labels stays.
 - A heading with a blank line and then content stays. A heading with nothing left under it is still dropped.
 - A fact line with no final period is content when it has a digit or a colon followed by a value. "Plant: outdoor air 75 F, free cooling 0%" stays when 75 and 0 are traced.
@@ -114,7 +127,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 ### 2026-10-09 — YORK-8Z
 
 - A number is a whole token after a unit id such as CH-01 is removed. 95MW, -7, and each side of 118-140 are checked.
-- The N+1 example numbers are not a corpus. The server stores the spare count on the snapshot. "Hall supply is 80 F." is dropped when 80 is not a live reading.
+- The N+1 glossary example is not a live corpus. The snapshot field nPlusOneSpareUnits is the count of chillers that can run, minus 1. That field is a unit count. It is not megawatts and it is not a holds verdict. "Hall supply is 80 F." is dropped when 80 is not a live reading.
 - A dropped step takes every sentence up to the next step marker.
 - The quote filter and the % FLA filter keep the newline in front of a numbered step. A heading on its own line stays apart from that step.
 - Grok startup asks for a streaming JSON tool report and stays off unless that report is "tools":[].

@@ -1,6 +1,6 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
 import { applyEmptyHeadings, dropKeptPieces, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, joinSentencePieces, labelLiveNumbers, sentencePieces, stripMarkers, yorkFlaWording } from './guard.ts'
-import { containsSecretMaterial, redactLog } from './leak.ts'
+import { containsSecretMaterial, publicSecrets, redactLog } from './leak.ts'
 import { OPEN_DECLINE, withNPlusOne } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
 import type { ChatSource, Chunk, LlmRequest, ToolResultIn } from './types.ts'
@@ -56,7 +56,7 @@ function restoreDecline(cleaned: string, raw: string, open: boolean): string {
 
 /** Leak check first. A clean log keeps the full raw text, with newlines escaped. */
 export function loggableRaw(raw: string): string {
-  if (containsSecretMaterial(raw)) return ''
+  if (containsSecretMaterial(raw) || containsSecretMaterial(raw, publicSecrets())) return ''
   return raw.replaceAll('\r\n', '\\n').replaceAll('\n', '\\n').replaceAll('\r', '\\n')
 }
 

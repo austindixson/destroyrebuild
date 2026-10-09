@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { jsonWithin } from '../src/prompt.ts'
+import { jsonWithin, withNPlusOne } from '../src/prompt.ts'
 
 function runSnapshot(fault = '') {
   const script = fileURLToPath(new URL('../scripts/real-snapshot.mjs', import.meta.url))
@@ -50,9 +50,14 @@ test('the real snapshot is the trainer capture, including hall-hot at 40 percent
     wide = { ...home.snapshot, units: Array.from({ length: count }, () => unit) }
   }
   assert.ok(JSON.stringify(wide).length > 12_000)
-  const cut = jsonWithin(wide)
+  const late = { units: wide.units, nPlusOneSpareUnits: 7 }
+  const cut = jsonWithin(late)
   assert.ok(cut.length <= 12_000)
-  const parsed = JSON.parse(cut) as { units: { id: string }[] }
+  const parsed = JSON.parse(cut) as { units: { id: string }[]; nPlusOneSpareUnits: number }
   assert.ok(parsed.units.length >= 1)
   assert.equal(parsed.units[0].id, unit.id)
+  assert.equal(parsed.nPlusOneSpareUnits, 7)
+  const shaped = jsonWithin(withNPlusOne({ units: [{ running: true }, { running: true }], note: 'x'.repeat(20_000) }))
+  const spare = JSON.parse(shaped) as { nPlusOneSpareUnits?: number }
+  assert.equal(spare.nPlusOneSpareUnits, 1)
 })
