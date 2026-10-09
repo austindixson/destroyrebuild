@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z3
+
+- A schedule label is not a plant reading. Hour 2 to 4, Hours 4-8, 4-8 h, every 2 hours, t=8, and next 2 hours stay on an hour-by-hour list. Hall supply is 80 F is still dropped when 80 is not a live reading.
+- A newline starts a new piece. A "- " bullet drops its later sentences with it. A heading with nothing left under it is dropped.
+- A command on the next line, such as "Start it later.", stays with the dropped step. A new fact on that line, such as "The hall is warm.", stays in the answer.
+
 ### 2026-10-09 — YORK-8Z2
 
 - A dropped step takes its marker with it. The % FLA filter, the quote filter, and the STE filter use the same step span as the number check. "4. A. Reason: a. 5. Watch the CW valve at 78% FLA. Reason: b. 6. C." becomes "4. A. Reason: a. 6. C."

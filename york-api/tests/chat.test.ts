@@ -750,6 +750,38 @@ test('a newline after a period stays, and a paragraph after the list stays', () 
   assert.equal(afterList.answer.includes('9'), false)
 })
 
+test('schedule labels stay and a hall reading is still checked', () => {
+  const hours = [
+    '1. Hour 0 to 2. Open the log.',
+    '2. Hour 2 to 4. Check the tower every 2 hours.',
+    '3. Hours 4-8. Watch the fans for 4-8 h.',
+    '4. Next 2 hours. Read the trend at t=8.',
+  ].join(' ')
+  assert.equal(dropUntracedNumbers(hours, ''), hours)
+  assert.equal(dropUntracedNumbers('Hall supply is 80 F.', ''), '')
+  assert.equal(dropUntracedNumbers('1. Hour 2 to 4. Hall supply is 80 F.', ''), '1. Hour 2 to 4.')
+})
+
+test('a heading and a bullet drop together, and a lone next-line command follows its step', () => {
+  assert.equal(dropUntracedNumbers('HEADING\n- The count is 9. The spare follows.', ''), '')
+  assert.equal(
+    dropUntracedNumbers('HEADING\n- The count is 9. The spare follows.\n- Open the valve.', ''),
+    'HEADING\n- Open the valve.',
+  )
+  assert.equal(
+    dropUntracedNumbers('HEADING\n- The count is 9.\nThe spare follows.\n\nThe hall is warm.', ''),
+    'The hall is warm.',
+  )
+  assert.equal(
+    dropUntracedNumbers('1. A.\n2. The count is 9.\nStart it later.\n3. C.', ''),
+    '1. A.\n3. C.',
+  )
+  assert.equal(
+    dropUntracedNumbers('1. A.\n2. The count is 9.\nThe hall is warm.\n3. C.', ''),
+    '1. A.\nThe hall is warm.\n3. C.',
+  )
+})
+
 test('% FLA on a valve, fan, or tower is dropped', () => {
   const mixed = [
     'The motor current is 40% FLA.',
