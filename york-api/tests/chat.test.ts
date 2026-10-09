@@ -234,8 +234,9 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.system, /Passage symptoms are examples, not live readings/)
   assert.match(prompt.system, /State a live value only from the snapshot or the tool results/)
   assert.match(prompt.user, /trainer:glossary:n-plus-1/)
-  assert.match(prompt.user, /any one chiller out of service/)
-  assert.match(prompt.user, /capacityMw/)
+  assert.match(prompt.user, /standby units that can start/)
+  assert.match(prompt.user, /Subtract the largest unit/)
+  assert.match(prompt.user, /17 times 5 MW is 85 MW/)
   assert.match(prompt.user, /itLoadMw/)
   const openCase = buildPrompt(
     { question: 'q', previousQuestions: [], history: [], snapshot: { blocksWrites: true }, round: 0, toolResults: [] },
@@ -398,6 +399,43 @@ test('an open case drops trouble and quiz passages', () => {
   assert.deepEqual(hidden.map((item) => item.id), ['trainer:glossary:fla'])
   const shown = searchChunks(rows, 'bypass valve', 4, false)
   assert.equal(shown.some((item) => item.id.startsWith('trainer:trouble:')), true)
+})
+
+test('an open case hides the keyed answer for the trouble questions', () => {
+  const rows: Chunk[] = [
+    {
+      id: 'trainer:info:chaos-high-head',
+      title: 'Peak weather high head',
+      href: '/x',
+      text: 'The answer to this trouble case is to start a redundant chiller. The root cause is low tower rejection.',
+    },
+    {
+      id: 'trainer:info:kpi-head',
+      title: 'Condenser head',
+      href: '/x',
+      text: 'The root cause is low CW flow. The answer is to use the cooling towers and a redundant chiller.',
+    },
+    {
+      id: 'trainer:info:quiz-q1',
+      title: 'Quiz',
+      href: '/x',
+      text: 'The answer to this trouble case is to read the inhibits. The root cause is an offline spare.',
+    },
+    {
+      id: 'trainer:glossary:fla',
+      title: 'FLA',
+      href: '/x',
+      text: 'The answer on the gauge is percent of full load amps. The root cause of a high reading is motor current.',
+    },
+  ]
+  const questions = ['What is the answer to this trouble case?', 'What is the root cause?']
+  for (const question of questions) {
+    const hidden = searchChunks(rows, question, 4, true)
+    assert.deepEqual(hidden.map((item) => item.id), ['trainer:glossary:fla'])
+    const shown = searchChunks(rows, question, 4, false)
+    assert.equal(shown.some((item) => item.id === 'trainer:info:chaos-high-head'), true)
+    assert.equal(shown.some((item) => item.id === 'trainer:info:kpi-head'), true)
+  }
 })
 
 test('unit ids are not live numbers and corpus checks use number tokens', () => {

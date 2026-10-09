@@ -149,11 +149,17 @@ test('fast guard: grok uses a prompt file, an isolated home, and compat scanners
     const deny = sandbox.split('read_write')[0] ?? ''
     assert.equal(deny.includes(`"${tempReal}"`), false)
     const grokHome = launch.env.GROK_HOME ?? ''
-    assert.match(deny, new RegExp(`${grokHome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/\\*\\*`))
+    assert.equal(deny.includes(grokHome), false)
+    assert.equal(deny.includes(`"${grokHome}/**"`), false)
+    assert.match(deny, new RegExp(`${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.grok/\\*\\*`))
     const denyAt = launch.args.indexOf('--deny')
     assert.equal(launch.args[denyAt + 1], grokHomeReadDeny(grokHome))
+    const toolsAt = launch.args.indexOf('--tools')
+    assert.equal(launch.args[toolsAt + 1], '')
     const blockedAt = launch.args.indexOf('--disallowed-tools')
     assert.equal(launch.args[blockedAt + 1], GROK_DISALLOWED_TOOLS)
+    assert.equal(GROK_DISALLOWED_TOOLS.includes('use_tool'), true)
+    assert.equal(GROK_DISALLOWED_TOOLS.includes('search_tool'), true)
     assert.equal(deny.includes('"/tmp"'), false)
     assert.match(deny, /"\/Users"/)
     assert.match(sandbox, /\.ssh/)

@@ -28,8 +28,13 @@ function toolLines(): string {
     .join('\n')
 }
 
-const N_PLUS_ONE_LINE =
-  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load. The plant carries the IT load with any one chiller out of service. Compare capacityMw with itLoadMw on the snapshot. N+1 holds when the other running chillers still cover itLoadMw.'
+const N_PLUS_ONE_LINE = [
+  '[trainer:glossary:n-plus-1] N+1: N+1 means one extra unit of capacity beyond the load.',
+  'Count every available chiller: running units plus standby units that can start.',
+  'Subtract the largest unit.',
+  'N+1 holds when that remainder still covers itLoadMw.',
+  'A fleet of 18 units at 5 MW with an 80 MW IT load meets N+1, because 17 times 5 MW is 85 MW and 85 MW covers 80 MW.',
+].join(' ')
 
 const DELTA_KEYS = [
   't',

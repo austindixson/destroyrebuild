@@ -6,13 +6,26 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8O
+
+- The sandbox profile leaves the temp GROK_HOME off the deny list. A deny of that path stops grok from loading config.
+- Grok keeps `--deny` `Read(<temp GROK_HOME>/**)`.
+- Grok passes `--tools` with an empty value. `--disallowed-tools` stays as a second layer and includes `use_tool` and `search_tool`.
+- N+1 counts running chillers and standby chillers that can start, then subtracts the largest unit.
+- The prompt gives a fleet example: 18 units at 5 MW and an 80 MW load, so 17 times 5 MW is 85 MW.
+- An open case also drops `trainer:info:quiz-*`, `trainer:info:chaos-*`, and the KPI cards that name a fix.
+- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, empty `--tools`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`.
+- Claude confinement is empty `--tools`, `--safe-mode`, a temp home, the login keychain link, and no `CLAUDE_CONFIG_DIR`.
+- Cursor confinement is `--sandbox enabled`, `--mode ask`, no `--force`, and `Read` denies in the temp permissions file.
+- Codex confinement is `--sandbox read-only`, `--ignore-user-config`, `--ephemeral`, and `--ignore-rules`.
+
 ### 2026-10-09 — YORK-8N
 
 - The N+1 glossary uses two sentences. The plant carries the IT load with any one chiller out of service.
 - The prompt compares capacityMw with itLoadMw.
 - `compactRow` copies fields from a key map. `scalarArgs` keeps only scalar tool args.
 - Grok passes `--disallowed-tools` for file, shell, write, subagent, scheduler, workflow, image, and video tools.
-- Grok passes `--deny` `Read(<temp GROK_HOME>/**)`. The sandbox profile denies that same path.
+- Grok passes `--deny` `Read(<temp GROK_HOME>/**)`.
 - An open case drops `trainer:trouble:*`, `trainer:info:trouble-*`, and `trainer:quiz:*`. The prompt says not to give the trouble answer.
 - Every round shares one 135 s deadline. The trainer sends `elapsedMs`.
 - Round 0 skips a tier when that start would leave cursor under its budget.
@@ -26,7 +39,10 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - The server requires a proxy secret of at least 16 characters.
 - Leak patterns are wider. An answer with a secret shape returns "unavailable".
 - The child environment strips the proxy secret, the canary, `PWD`, `OLDPWD`, and `INIT_CWD`.
-- Each tier has its own confinement flags.
+- Grok confinement is `--sandbox york`, `--permission-mode dontAsk`, empty `--tools`, `--disallowed-tools`, and `--deny Read(<GROK_HOME>/**)`.
+- Claude confinement is empty `--tools`, `--safe-mode`, a temp home, the login keychain link, and no `CLAUDE_CONFIG_DIR`.
+- Cursor confinement is `--sandbox enabled`, `--mode ask`, no `--force`, and `Read` denies in the temp permissions file.
+- Codex confinement is `--sandbox read-only`, `--ignore-user-config`, `--ephemeral`, and `--ignore-rules`.
 - The server kills the process group, caps CLI output at 256 KB, and counts every round.
 
 ### 2026-10-09 — YORK-8M
@@ -75,7 +91,7 @@ Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45
 - Claude and Cursor use a temporary home and link the login keychain into that home.
 - Startup marks a tier ready only after a reply that contains `YORKOK`.
 - A budget kill logs `timeout budget=<ms>`. A client abort logs `aborted`.
-- `X-York-Only` applies only on loopback when the proxy secret matches.
+- `X-York-Only` applies only on loopback when the proxy secret matches and `YORK_ALLOW_TIER_OVERRIDE=1` is set.
 - The live checklist loads the plant snapshot from the trainer code.
 - Merge `a3c813a` brings PR #21 and PR #24 into this branch. Those changes keep their own pull request numbers.
 

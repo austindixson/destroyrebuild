@@ -498,7 +498,7 @@ function homeLaunchShape(tier, launch, home) {
   if (!tmp.startsWith(`${launch.cwd}/`)) return 'tmpdir'
   if (tier !== 'grok') return ''
   if (launch.args.includes('-p') || !launch.args.includes('--prompt-file') || !launch.args.includes('dontAsk')) return 'args'
-  if (!launch.args.includes('--disallowed-tools') || !launch.args.includes('--deny')) return 'args'
+  if (!launch.args.includes('--tools') || !launch.args.includes('--disallowed-tools') || !launch.args.includes('--deny')) return 'args'
   if (launch.env.GROK_CLAUDE_HOOKS_ENABLED !== '0' || launch.env.GROK_CURSOR_HOOKS_ENABLED !== '0') return 'compat'
   return ''
 }
@@ -551,8 +551,8 @@ async function grokTomlOk(launch) {
     fail('step 4 grok sandbox.toml denies the request dir')
   }
   const grokHome = `${launch.env.GROK_HOME || ''}`
-  if (grokHome.startsWith('/') && !deny.includes(`"${grokHome}/**"`)) {
-    fail('step 4 grok sandbox.toml does not deny the temp GROK_HOME')
+  if (grokHome.startsWith('/') && deny.includes(`"${grokHome}`)) {
+    fail('step 4 grok sandbox.toml denies the temp GROK_HOME')
   }
   if (!toml.includes('read_write')) {
     fail('step 4 grok sandbox.toml has no read_write for the request dir')

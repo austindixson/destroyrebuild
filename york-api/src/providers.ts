@@ -239,10 +239,19 @@ export interface CliLaunch {
 }
 
 /**
- * Built-in tool ids removed on every headless call.
- * Source: grok headless `--disallowed-tools` (docs.x.ai CLI reference; `--prompt-file` is headless).
- * Ids: that page's tool table, plus grok-build tool_taxonomy.rs and permission_access.rs.
- * ENV.md also names cat, ls, and ps, which run with no prompt.
+ * Empty allowlist. York needs no grok built-in tool.
+ * Source: grok-build user-guide 14-headless-mode.md. `--tools` is a
+ * comma-separated allowlist and is headless-only. `--prompt-file` enters
+ * headless mode. An empty list leaves no built-in tool. MCP meta-tools stay
+ * unless `--disallowed-tools` removes them. The denylist runs after the allowlist.
+ */
+export const GROK_TOOLS = ''
+
+/**
+ * Second layer. Run 10 showed grok 1.0.50 ignores an unknown denylist id.
+ * `use_tool` and `search_tool` stayed offered, with `todo_write`, plan mode,
+ * `ask_user_question`, and `send_feedback`.
+ * Ids: the headless tool table, grok-build tool_taxonomy.rs, and that live list.
  */
 export const GROK_DISALLOWED_TOOLS = [
   'read_file',
@@ -276,6 +285,14 @@ export const GROK_DISALLOWED_TOOLS = [
   'image_edit',
   'image_to_video',
   'reference_to_video',
+  'use_tool',
+  'search_tool',
+  'todo_write',
+  'todowrite',
+  'ask_user_question',
+  'send_feedback',
+  'enter_plan_mode',
+  'exit_plan_mode',
 ].join(',')
 
 /** Headless grok does not read the prompt on stdin. --prompt-file is the supported path. */
@@ -290,6 +307,8 @@ export function grokArgs(promptFile: string): string[] {
     '--no-memory',
     '--sandbox',
     GROK_SANDBOX_PROFILE,
+    '--tools',
+    GROK_TOOLS,
     '--disallowed-tools',
     GROK_DISALLOWED_TOOLS,
   ]
@@ -298,14 +317,19 @@ export function grokArgs(promptFile: string): string[] {
 export function grokLaunchArgsOk(args: string[]): boolean {
   const mode = args.indexOf('--permission-mode')
   const sandbox = args.indexOf('--sandbox')
+  const tools = args.indexOf('--tools')
   const blocked = args.indexOf('--disallowed-tools')
+  const denied = blocked >= 0 ? args[blocked + 1] ?? '' : ''
   return mode >= 0
     && args[mode + 1] === 'dontAsk'
     && args.includes('--prompt-file')
     && sandbox >= 0
     && args[sandbox + 1] === GROK_SANDBOX_PROFILE
-    && blocked >= 0
-    && args[blocked + 1] === GROK_DISALLOWED_TOOLS
+    && tools >= 0
+    && args[tools + 1] === GROK_TOOLS
+    && denied === GROK_DISALLOWED_TOOLS
+    && denied.includes('use_tool')
+    && denied.includes('search_tool')
 }
 
 /** Permission deny for the copied auth tree. `--deny` takes `Read(glob)`. */
@@ -415,16 +439,15 @@ function grokWritable(realHome: string, writableDir: string): string[] {
 
 /**
  * Absolute deny paths. Grok 1.0.50 does not expand $HOME or ~. Those strings
- * became folders inside the cwd. Auth is copied into the temp GROK_HOME, so
- * this profile denies that directory as well as the real home. read_write names
- * the per-request temp directory so grok can rewrite config.toml there. Other
- * write roots (/Users, and /tmp when the request dir is elsewhere) are denied.
+ * became folders inside the cwd. Run 10 showed a deny of the temp GROK_HOME
+ * makes grok exit with "Failed to load config: Operation not permitted".
+ * The profile denies the real home and leaves the temp GROK_HOME off that list.
+ * read_write names the per-request directory so grok can load config.toml there.
+ * Other write roots (/Users, and /tmp when the request dir is elsewhere) are denied.
  */
-export function grokSandboxToml(realHome: string, writableDir = '', grokHome = ''): string {
+export function grokSandboxToml(realHome: string, writableDir = ''): string {
   const home = realHome.startsWith('/') ? realHome : '/Users'
-  const copied = grokHome.startsWith('/') ? [grokHome, `${grokHome}/**`] : []
   const deny = [
-    ...copied,
     home,
     `${home}/**`,
     ...outsideWriteDeny(writableDir),
@@ -613,7 +636,7 @@ export async function prepareGrokLaunch(
   const promptFile = join(dir, 'prompt.txt')
   await writeFile(promptFile, promptOf(req))
   await writeFile(join(grokHome, 'config.toml'), grokConfigToml())
-  const sandbox = grokSandboxToml(realHome, resolvedPath(dir), grokHome)
+  const sandbox = grokSandboxToml(realHome, resolvedPath(dir))
   await writeFile(join(grokHome, 'sandbox.toml'), sandbox)
   await writeFile(join(dir, '.grok', 'sandbox.toml'), sandbox)
   if (realHome) await copyAuth(join(realHome, '.grok'), grokHome, GROK_AUTH)

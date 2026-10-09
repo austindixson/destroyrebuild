@@ -18,11 +18,23 @@ function scoreChunk(chunk: Chunk, terms: string[]): number {
   return score
 }
 
-const SPOILER = /^(?:trainer:trouble:|trainer:info:trouble-|trainer:quiz:)/
+const SPOILER = /^(?:trainer:trouble:|trainer:info:trouble-|trainer:info:quiz-|trainer:info:chaos-|trainer:quiz:)/
+
+/** KPI cards whose text names the corrective action for an open incident. */
+const FIX_KPI = new Set([
+  'trainer:info:kpi-head',
+  'trainer:info:kpi-ch01',
+  'trainer:info:kpi-hall',
+])
+
+function hidesAnswer(id: string): boolean {
+  if (SPOILER.test(id)) return true
+  return FIX_KPI.has(id)
+}
 
 function visibleChunks(chunks: Chunk[], blocksWrites: boolean): Chunk[] {
   if (!blocksWrites) return chunks
-  return chunks.filter((chunk) => !SPOILER.test(chunk.id))
+  return chunks.filter((chunk) => !hidesAnswer(chunk.id))
 }
 
 export function searchChunks(chunks: Chunk[], query: string, limit = 4, blocksWrites = false): Chunk[] {
