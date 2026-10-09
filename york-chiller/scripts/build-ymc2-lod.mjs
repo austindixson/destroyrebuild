@@ -13,11 +13,14 @@
  * The near mesh is a border-locked simplify of the original indices. It stops
  * near 51,080 triangles because real UV seams stay split.
  *
- * The far mesh uses the same weld, then a border-locked simplify aimed at 27,000
+ * The mid mesh uses the same weld, then a border-locked simplify aimed at 27,000
  * triangles. Painted vertices (nameplate, OptiView, JCI, panel) are locked so
  * they cannot move. Vertices on a seam whose two sides sample different colors
  * are seam-locked. Permissive collapses are allowed only on the remaining flat
- * shell. PreserveFolds keeps the top edge. Attributes are copied from the
+ * shell. PreserveFolds keeps the top edge.
+ *
+ * The tiny mesh uses the same weld and the same border lock, with those paint
+ * locks relaxed, and aims at 4,500 triangles. Attributes are copied from the
  * surviving source vertices. simplifyWithUpdate is not used.
  */
 import { NodeIO } from '@gltf-transform/core'
@@ -153,7 +156,7 @@ function buildLocks(remap) {
   })
 }
 
-function packFar(out) {
+function packLevel(out, name) {
   const compactIdx = Uint32Array.from(out)
   const [, unique] = MeshoptSimplifier.compactMesh(compactIdx)
   const srcOf = new Uint32Array(unique)
@@ -182,14 +185,14 @@ function packFar(out) {
     if (v < vMin) vMin = v
     if (v > vMax) vMax = v
   }
-  console.log('far uv', uMin.toFixed(4), uMax.toFixed(4), vMin.toFixed(4), vMax.toFixed(4), 'verts', unique)
+  console.log(name, 'uv', uMin.toFixed(4), uMax.toFixed(4), vMin.toFixed(4), vMax.toFixed(4), 'verts', unique)
   const prim = doc.createPrimitive().setMaterial(srcPrim.getMaterial()).setMode(srcPrim.getMode())
   prim.setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(outPos))
   prim.setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(outNrm))
   prim.setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(outUv))
   prim.setIndices(doc.createAccessor().setType('SCALAR').setArray(compactIdx))
-  const mesh = doc.createMesh('lod-far').addPrimitive(prim)
-  scene.addChild(doc.createNode('lod-far').setMesh(mesh))
+  const mesh = doc.createMesh(name).addPrimitive(prim)
+  scene.addChild(doc.createNode(name).setMesh(mesh))
   return compactIdx.length / 3
 }
 
@@ -208,9 +211,19 @@ const [farIdx, farErr] = MeshoptSimplifier.simplifyWithAttributes(
   0.05,
   ['LockBorder', 'Permissive', 'PreserveFolds'],
 )
-const far = packFar(farIdx)
-console.log('lod-far', far, 'err', farErr.toFixed(5))
-console.log('full', srcIdx.length / 3, 'near', near, 'far', far)
+const mid = packLevel(farIdx, 'lod-mid')
+console.log('lod-mid', mid, 'err', farErr.toFixed(5))
+const [tinyIdx, tinyErr] = MeshoptSimplifier.simplify(
+  indices,
+  pos,
+  3,
+  4500 * 3,
+  0.08,
+  ['LockBorder', 'Permissive', 'PreserveFolds'],
+)
+const tiny = packLevel(tinyIdx, 'lod-tiny')
+console.log('lod-tiny', tiny, 'err', tinyErr.toFixed(5))
+console.log('full', srcIdx.length / 3, 'near', near, 'mid', mid, 'tiny', tiny)
 
 for (const tex of doc.getRoot().listTextures()) {
   const name = tex.getName() || ''

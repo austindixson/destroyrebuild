@@ -25,16 +25,20 @@ const MB = 1_048_576
 const MAX_PIXEL_RATIO = 1.5
 
 /**
- * Far LOD is only for a unit that is too small to read.
- * Below 45 CSS pixels it becomes far. Above 65 CSS pixels it returns to the near mesh.
+ * Fleet meshes by CSS pixels. Each band has about 20% hysteresis.
+ * Near is the 51,080 mesh. Mid is the 26,980 mesh. Tiny is the small mesh.
+ * A framed 18-unit extra is about 61–74 CSS pixels, so the tiny band covers that view.
  */
-const LOD_FAR_IN_PX = 45
-const LOD_FAR_OUT_PX = 65
+const LOD_TINY_IN_PX = 80
+const LOD_TINY_OUT_PX = 96
+const LOD_NEAR_IN_PX = 160
+const LOD_NEAR_OUT_PX = 128
 
-/** 0 = full mesh (focused unit), 1 = near, 2 = far. */
+/** 0 = full mesh (focused unit), 1 = near, 2 = mid, 3 = tiny. */
 const LOD_FULL = 0
 const LOD_NEAR = 1
-const LOD_FAR = 2
+const LOD_MID = 2
+const LOD_TINY = 3
 
 /** Boot line while the GLB bytes arrive. Total 0 means the length is not known. */
 export function plantModelProgressText(loaded: number, total: number): string {
@@ -198,9 +202,11 @@ export class ChillerScene {
   private readonly pipeParts = new Map<THREE.Material, THREE.BufferGeometry[]>()
   private fleetRoot: THREE.Group | null = null
   private lodNearGeo: THREE.BufferGeometry | null = null
-  private lodFarGeo: THREE.BufferGeometry | null = null
+  private lodMidGeo: THREE.BufferGeometry | null = null
+  private lodTinyGeo: THREE.BufferGeometry | null = null
   private lodNearMesh: THREE.InstancedMesh | null = null
-  private lodFarMesh: THREE.InstancedMesh | null = null
+  private lodMidMesh: THREE.InstancedMesh | null = null
+  private lodTinyMesh: THREE.InstancedMesh | null = null
   private focusMesh: THREE.Mesh | null = null
   private focusMat: THREE.MeshStandardMaterial | null = null
   private readonly focusBase = new THREE.Color()
@@ -616,17 +622,22 @@ export class ChillerScene {
     win.__YORK_MOUNT_COUNT = (win.__YORK_MOUNT_COUNT ?? 0) + 1
   }
 
-  /** Pull the near and far packages out of the lead so only the full mesh stays visible. */
+  /** Pull the fleet packages out of the lead so only the full mesh stays visible. */
   private captureLodMeshes(model: THREE.Object3D) {
     const drop: THREE.Mesh[] = []
     model.traverse((child) => {
       const mesh = child as THREE.Mesh
       if (!mesh.isMesh) return
-      if (mesh.name === 'lod-near') this.lodNearGeo = mesh.geometry
-      if (mesh.name === 'lod-far') this.lodFarGeo = mesh.geometry
-      if (mesh.name === 'lod-near' || mesh.name === 'lod-far') drop.push(mesh)
+      this.keepLodGeo(mesh, drop)
     })
     for (const mesh of drop) mesh.removeFromParent()
+  }
+
+  private keepLodGeo(mesh: THREE.Mesh, drop: THREE.Mesh[]) {
+    if (mesh.name === 'lod-near') this.lodNearGeo = mesh.geometry
+    if (mesh.name === 'lod-mid') this.lodMidGeo = mesh.geometry
+    if (mesh.name === 'lod-tiny') this.lodTinyGeo = mesh.geometry
+    if (mesh.name === 'lod-near' || mesh.name === 'lod-mid' || mesh.name === 'lod-tiny') drop.push(mesh)
   }
 
   /**
@@ -867,23 +878,27 @@ export class ChillerScene {
   private disposeFleetMeshes() {
     this.fleetRoot?.removeFromParent()
     this.lodNearMesh?.dispose()
-    this.lodFarMesh?.dispose()
+    this.lodMidMesh?.dispose()
+    this.lodTinyMesh?.dispose()
     this.focusMat?.dispose()
     this.fleetRoot = null
     this.lodNearMesh = null
-    this.lodFarMesh = null
+    this.lodMidMesh = null
+    this.lodTinyMesh = null
     this.focusMesh = null
     this.focusMat = null
     this.fleetCount = 0
     this.fleetFocus = -1
   }
 
-  /** Near and far geometries leave the scene at load, so dispose them even when no fleet was built. */
+  /** Fleet geometries leave the scene at load, so dispose them even when no fleet was built. */
   private disposeLodGeometries() {
     this.lodNearGeo?.dispose()
-    this.lodFarGeo?.dispose()
+    this.lodMidGeo?.dispose()
+    this.lodTinyGeo?.dispose()
     this.lodNearGeo = null
-    this.lodFarGeo = null
+    this.lodMidGeo = null
+    this.lodTinyGeo = null
   }
 
   private spawnFleet(units: { running: boolean }[]) {
@@ -895,12 +910,13 @@ export class ChillerScene {
     this.fleetRoot = new THREE.Group()
     this.root.add(this.fleetRoot)
     this.lodNearMesh = this.makeBucket(this.lodNearGeo ?? hero.geometry, material, units.length)
-    this.lodFarMesh = this.makeBucket(this.lodFarGeo ?? hero.geometry, material, units.length)
+    this.lodMidMesh = this.makeBucket(this.lodMidGeo ?? hero.geometry, material, units.length)
+    this.lodTinyMesh = this.makeBucket(this.lodTinyGeo ?? hero.geometry, material, units.length)
     this.focusMesh = this.makeFocusMesh(hero.geometry, material)
-    this.fleetRoot.add(this.lodNearMesh, this.lodFarMesh, this.focusMesh)
+    this.fleetRoot.add(this.lodNearMesh, this.lodMidMesh, this.lodTinyMesh, this.focusMesh)
     for (let i = 0; i < units.length; i++) this.storeFleetUnit(i, units[i].running, layout)
     this.rememberFleetSpan(hero)
-    this.lodLevel.fill(LOD_FAR)
+    this.lodLevel.fill(LOD_TINY)
     this.writeLodBuckets()
     return true
   }
@@ -969,16 +985,19 @@ export class ChillerScene {
 
   private bucketFor(level: number) {
     if (level === LOD_NEAR) return this.lodNearMesh
-    if (level === LOD_FAR) return this.lodFarMesh
+    if (level === LOD_MID) return this.lodMidMesh
+    if (level === LOD_TINY) return this.lodTinyMesh
     return null
   }
 
   private writeLodBuckets() {
     const near = this.lodNearMesh
-    const far = this.lodFarMesh
-    if (!near || !far) return
+    const mid = this.lodMidMesh
+    const tiny = this.lodTinyMesh
+    if (!near || !mid || !tiny) return
     this.fillBucket(near, LOD_NEAR, this.countLevel(LOD_NEAR))
-    this.fillBucket(far, LOD_FAR, this.countLevel(LOD_FAR))
+    this.fillBucket(mid, LOD_MID, this.countLevel(LOD_MID))
+    this.fillBucket(tiny, LOD_TINY, this.countLevel(LOD_TINY))
     this.poseFocusMesh()
     this.needsRender = true
   }
@@ -1067,8 +1086,12 @@ export class ChillerScene {
 
   private lodFor(index: number, pixels: number) {
     if (index === this.fleetFocus) return LOD_FULL
-    if (this.lodLevel[index] === LOD_FAR) return pixels > LOD_FAR_OUT_PX ? LOD_NEAR : LOD_FAR
-    return pixels < LOD_FAR_IN_PX ? LOD_FAR : LOD_NEAR
+    const level = this.lodLevel[index]
+    if (level === LOD_NEAR && pixels >= LOD_NEAR_OUT_PX) return LOD_NEAR
+    if (level === LOD_TINY && pixels <= LOD_TINY_OUT_PX) return LOD_TINY
+    if (pixels >= LOD_NEAR_IN_PX) return LOD_NEAR
+    if (pixels <= LOD_TINY_IN_PX) return LOD_TINY
+    return LOD_MID
   }
 
   private focusFleetUnit(index: number) {
@@ -1080,7 +1103,8 @@ export class ChillerScene {
   private pickFleetUnit() {
     const list: THREE.Object3D[] = []
     if (this.lodNearMesh?.visible) list.push(this.lodNearMesh)
-    if (this.lodFarMesh?.visible) list.push(this.lodFarMesh)
+    if (this.lodMidMesh?.visible) list.push(this.lodMidMesh)
+    if (this.lodTinyMesh?.visible) list.push(this.lodTinyMesh)
     if (this.focusMesh?.visible) list.push(this.focusMesh)
     if (list.length === 0) return
     const hit = this.raycaster.intersectObjects(list, false)[0]
@@ -1091,11 +1115,17 @@ export class ChillerScene {
   }
 
   private unitForSlot(mesh: THREE.InstancedMesh, slot: number) {
-    const level = mesh === this.lodNearMesh ? LOD_NEAR : LOD_FAR
+    const level = this.levelForBucket(mesh)
     for (let i = 0; i < this.fleetCount; i++) {
       if (this.lodLevel[i] === level && this.lodSlot[i] === slot) return i
     }
     return -1
+  }
+
+  private levelForBucket(mesh: THREE.InstancedMesh) {
+    if (mesh === this.lodNearMesh) return LOD_NEAR
+    if (mesh === this.lodMidMesh) return LOD_MID
+    return LOD_TINY
   }
 
   private heroMesh(): THREE.Mesh | null {
