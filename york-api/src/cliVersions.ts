@@ -583,11 +583,43 @@ export function startGrokReprobe(env: NodeJS.ProcessEnv = process.env): ReturnTy
   return armReprobe(env, (probeEnv) => recoverGrok(probeEnv))
 }
 
+/** Two tries. A later success clears the unavailable flag. */
+async function cursorSmoke(env: NodeJS.ProcessEnv, force = false): Promise<SmokeVerdict | null> {
+  if (!force && env.YORK_CURSOR_CLI === 'unavailable') return null
+  const verdict = await retryOnce(async () => {
+    const result = await smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env), true)
+    return result ?? { ok: false, reason: 'unavailable' }
+  })
+  if (verdict.ok) delete env.YORK_CURSOR_CLI
+  return verdict
+}
+
+/** When cursor was unavailable, a later success marks it ready. */
+export async function recoverCursor(
+  env: NodeJS.ProcessEnv,
+  probe?: () => Promise<SmokeVerdict>,
+): Promise<SmokeVerdict | null> {
+  if (env.YORK_CURSOR_CLI !== 'unavailable') return null
+  const verdict = probe ? await probe() : await cursorSmoke(env, true)
+  if (!verdict?.ok) {
+    if (verdict) env.YORK_CURSOR_CLI = 'unavailable'
+    if (verdict && claudeNeedsSignIn(verdict.reason)) console.log('york-api cli cursor needs sign-in')
+    return verdict ?? null
+  }
+  env.YORK_CURSOR_CLI = 'ready'
+  console.log('york-api cli cursor status=ready reason=recovered')
+  return verdict
+}
+
+export function startCursorReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
+  return armReprobe(env, (probeEnv) => recoverCursor(probeEnv))
+}
+
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
   const jobs = [
     grokSmoke(env),
     claudeSmoke(env),
-    smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env)),
+    cursorSmoke(env),
   ]
   if (env.YORK_CODEX === '1') {
     jobs.push(smokeOne(env, 'codex', 'YORK_CODEX_CLI', (dir) => prepareCodexLaunch(dir, SMOKE_PROMPT, env)))

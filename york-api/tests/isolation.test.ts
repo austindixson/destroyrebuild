@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, probeAndLogClis, recoverClaude, recoverCursor, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeVerdict, startClaudeReprobe, startCursorReprobe, startGrokReprobe, stopOpenSmokes } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -1006,6 +1006,33 @@ test('grok smoke retries once and reprobes on the claude backoff', async () => {
   const skipped = await recoverGrok(ready, async () => ({ ok: false, reason: 'not logged in' }))
   assert.equal(skipped, null)
   assert.equal(ready.YORK_GROK_CLI, 'ready')
+})
+
+test('cursor reprobe uses the same backoff and marks a recovered check ready', async () => {
+  const timer = startCursorReprobe({ YORK_CURSOR_CLI: 'ready' })
+  clearTimeout(timer)
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const env: NodeJS.ProcessEnv = { YORK_CURSOR_CLI: 'unavailable' }
+    const still = await recoverCursor(env, async () => ({ ok: false, reason: 'exit=1 stderr=Please run /login' }))
+    assert.equal(still?.ok, false)
+    assert.equal(env.YORK_CURSOR_CLI, 'unavailable')
+    const back = await recoverCursor(env, async () => ({ ok: true, reason: 'answered' }))
+    assert.equal(back?.ok, true)
+    assert.equal(env.YORK_CURSOR_CLI, 'ready')
+  } finally {
+    console.log = log
+  }
+  assert.match(lines.join('\n'), /cursor needs sign-in/)
+  assert.match(lines.join('\n'), /cursor status=ready reason=recovered/)
+  const ready: NodeJS.ProcessEnv = { YORK_CURSOR_CLI: 'ready' }
+  const skipped = await recoverCursor(ready, async () => ({ ok: false, reason: 'not logged in' }))
+  assert.equal(skipped, null)
+  assert.equal(ready.YORK_CURSOR_CLI, 'ready')
 })
 
 test('a grok chat reply keeps every plain JSON line', async () => {

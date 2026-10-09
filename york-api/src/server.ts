@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { pathToFileURL } from 'node:url'
-import { probeAndLogClis, startClaudeReprobe, startGrokReprobe } from './cliVersions.ts'
+import { probeAndLogClis, startClaudeReprobe, startCursorReprobe, startGrokReprobe } from './cliVersions.ts'
 import { handleChat, defaultBudget } from './chat.ts'
 import { UNAVAILABLE } from './copy.ts'
 import index from '../data/trainer-index.json' with { type: 'json' }
@@ -243,5 +243,6 @@ if (isMain) {
   await probeAndLogClis(process.env)
   startClaudeReprobe(process.env)
   startGrokReprobe(process.env)
+  startCursorReprobe(process.env)
   createYorkServer({ proxySecret: secret }).listen(port, host)
 }

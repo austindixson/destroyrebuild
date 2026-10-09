@@ -6,6 +6,13 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z14
+
+- A failed cursor startup check is tried again on the same waits as claude and grok: 60 s, 2 min, 5 min, then every 10 min. A later success marks cursor ready, so the tier comes back without a restart.
+- An equation uses plain numbers with units, as in "5 MW + 5 MW - 5 MW = 5 MW". The equation does not use the trainer-model value label.
+- # and ## headings are for an answer with 3 or more sections.
+- Round 0 prompt is 3760 bytes, 22 bytes above the previous prompt. Round 1 is 2535 bytes. User text stays 2020 and 569.
+
 ### 2026-10-09 — YORK-8Z13
 
 - Empty headings are judged once, after the number, quote, % FLA, and STE filters, against the original reply. "**Pumps**" drops when its sentence is passive and "**Chillers**" keeps "- CH-01 runs." An ALARMS section whose quote is unmatched drops.
