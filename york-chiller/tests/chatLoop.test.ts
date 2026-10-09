@@ -36,4 +36,6 @@ test('getActionLog rows reach the next server body', async () => {
   assert.equal(results[0]?.snapshot, undefined)
   assert.equal(second?.tier, 'claude')
   assert.deepEqual(second?.timedOut, ['grok'])
+  assert.equal(typeof bodies[0]?.sessionId, 'string')
+  assert.equal(second?.sessionId, bodies[0]?.sessionId)
 })
