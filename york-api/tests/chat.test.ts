@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import index from '../data/trainer-index.json' with { type: 'json' }
 import { cascade } from '../src/cascade.ts'
 import { createBudget } from '../src/budget.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
+import { NO_ANSWER } from '../src/copy.ts'
+import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
 
 const chunk: Chunk = {
@@ -114,6 +117,52 @@ test('the daily cap returns the same unavailable state', async () => {
   const second = await handleChat({ question: 'Two', snapshot: {}, round: 0 }, deps(complete, budget))
   assert.equal(first.body.status, 'answer')
   assert.equal(second.body.status, 'unavailable')
+})
+
+test('a recorded claude FLA reply stays an answer when one sentence fails STE', async () => {
+  const chunks = searchChunks(index as Chunk[], 'What does % FLA mean on a YORK YMC2 chiller?')
+  const recorded = [
+    '% FLA means percent of full load amps.',
+    'On this YORK YMC2, the gauge marked % FLA shows the motor current of CH-01 as a trainer-model value.',
+    'OptiView also shows input current as % FLA.',
+    'The value is shown on the motor screen.',
+  ].join(' ')
+  const fenced = `\`\`\`json\n${JSON.stringify({
+    answer: recorded,
+    cites: ['glossary:fla', 'info:gauge-rla'],
+    tools: [],
+  })}\n\`\`\``
+  let calls = 0
+  const result = await handleChat(
+    { question: 'What does % FLA mean on a YORK YMC2 chiller?', snapshot: { view: 'optiview', unit: 'CH-01', model: 'YMC2' }, round: 0 },
+    {
+      ...deps(async () => {
+        calls += 1
+        if (calls > 1) throw new Error('rewrite')
+        return { text: fenced, provider: 'claude', model: 'claude-haiku-5-5' }
+      }),
+      search: () => chunks,
+    },
+  )
+  assert.equal(calls, 1)
+  assert.equal(result.body.status, 'answer')
+  if (result.body.status !== 'answer') return
+  assert.notEqual(result.body.answer, NO_ANSWER)
+  assert.match(result.body.answer, /percent of full load amps/)
+  assert.match(result.body.answer, /CH-01/)
+  assert.equal(result.body.answer.includes('is shown'), false)
+  const loose = '{"answer":"% FLA means percent of full load amps. On this YMC², OptiView shows motor current and input current as % FLA. In this trainer the gauge marked % FLA is the motor current of CH-01.", "cites":[glossary:fla, info:gauge-rla], "tools":[plant.getSnapshot]}'
+  const plain = await handleChat(
+    { question: 'What does % FLA mean on a YORK YMC2 chiller?', snapshot: { view: 'optiview', unit: 'CH-01', model: 'YMC2' }, round: 0 },
+    {
+      ...deps(async () => ({ text: loose, provider: 'claude', model: 'claude-haiku-5-5' })),
+      search: () => chunks,
+    },
+  )
+  assert.equal(plain.body.status, 'answer')
+  if (plain.body.status !== 'answer') return
+  assert.match(plain.body.answer, /percent of full load amps/)
+  assert.equal(plain.body.answer.includes('{"answer"'), false)
 })
 
 test('cascade fallthrough still answers', async () => {

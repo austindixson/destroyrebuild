@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { cliStarted, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
+import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
 import { cursorBinIsGrok, probeAndLogClis, smokeVerdict } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
@@ -107,12 +107,18 @@ test('fast guard: grok uses a prompt file, an isolated home, and compat scanners
       YORK_PROXY_SECRET: 'proxy-secret-value',
       YORK_CANARY: 'york-canary-marker',
       GROK_CLAUDE_HOOKS_ENABLED: '1',
+      PWD: '/Users/ghost128/york-api',
+      OLDPWD: '/Users/ghost128',
+      INIT_CWD: '/Users/ghost128/york-api',
     }, 'darwin')
     assert.equal(launch.cmd, process.execPath)
     assert.notEqual(launch.cmd, 'sandbox-exec')
     assert.equal(launch.input, '')
     assert.equal(launch.env.TMPDIR, join(dir, 'tmp'))
     assert.equal(existsSync(launch.env.TMPDIR ?? ''), true)
+    assert.equal(launch.env.PWD, dir)
+    assert.equal(launch.env.OLDPWD, undefined)
+    assert.equal(launch.env.INIT_CWD, undefined)
     assert.ok(launch.args.includes('--sandbox'))
     assert.ok(launch.args.includes('york'))
     assert.ok(launch.args.includes('dontAsk'))
@@ -297,9 +303,19 @@ test('fast guard: a short proxy secret is refused and the only-tier header needs
   assert.equal(yorkOnlyFrom({ 'x-york-only': 'grok', 'x-york-proxy-secret': 'nope-not-the-secret' }, secret, allow, '127.0.0.1'), null)
   assert.equal(yorkOnlyFrom({ 'x-york-only': 'grok' }, '', allow, '127.0.0.1'), null)
   assert.equal(yorkOnlyFrom({ 'x-york-only': 'shell', 'x-york-proxy-secret': secret }, secret, allow, '127.0.0.1'), null)
-  const child = providerChildEnv({ HOME: '/Users/ghost128', YORK_CANARY: 'york-canary-marker', YORK_PROXY_SECRET: secret })
+  const child = providerChildEnv({
+    HOME: '/Users/ghost128',
+    YORK_CANARY: 'york-canary-marker',
+    YORK_PROXY_SECRET: secret,
+    PWD: '/Users/ghost128/york-api',
+    OLDPWD: '/tmp',
+    INIT_CWD: '/Users/ghost128/york-api',
+  })
   assert.equal(child.YORK_CANARY, undefined)
   assert.equal(child.HOME, '/Users/ghost128')
+  assert.equal(child.PWD, undefined)
+  assert.equal(child.OLDPWD, undefined)
+  assert.equal(child.INIT_CWD, undefined)
 })
 
 test('fast guard: agent that resolves to grok stays off', async () => {
@@ -360,17 +376,18 @@ test('fast guard: sandbox probe fails closed and does not write a home canary of
 })
 
 test('fast guard: deadlines cover grok then claude then cursor', () => {
-  assert.equal(REQUEST_MS, 110_000)
+  assert.equal(REQUEST_MS, 135_000)
   assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= REQUEST_MS)
   const shared = tierBudgetMs({ YORK_CODEX: '1' })
   assert.ok(shared.grok + shared.claude + shared.cursor + shared.codex <= REQUEST_MS)
   const loop = readFileSync(fileURLToPath(new URL('../../york-chiller/src/chat/loop.ts', import.meta.url)), 'utf8')
-  assert.match(loop, /ABORT_MS = 120_000/)
+  assert.match(loop, /ABORT_MS = 145_000/)
   const caddy = readFileSync(fileURLToPath(new URL('../../Caddyfile', import.meta.url)), 'utf8')
   assert.match(caddy, /\{http\.request\.header\.X-Real-IP\}/)
   assert.equal(caddy.includes('header_up -X-Real-IP'), false)
   assert.equal(caddy.includes('{remote_host}'), false)
   assert.match(caddy, /request_header -X-York-Only/)
+  assert.match(caddy, /response_header_timeout 155s/)
   const install = readFileSync(fileURLToPath(new URL('../scripts/install-mac.sh', import.meta.url)), 'utf8')
   assert.match(install, /umask 077/)
   assert.match(install, /chmod 600/)
@@ -455,6 +472,8 @@ test('fast guard: claude and cursor link the login keychain and drop CLAUDE_CONF
     assert.equal(claude.env.HOME, join(dir, 'home'))
     assert.equal(claude.env.CLAUDE_CONFIG_DIR, undefined)
     assert.equal(claude.env.TMPDIR, join(dir, 'tmp'))
+  assert.equal(claude.env.PWD, dir)
+  assert.equal(claude.env.OLDPWD, undefined)
     assert.equal(existsSync(claude.env.TMPDIR ?? ''), true)
     assert.ok(claude.args.includes('--tools'))
     assert.equal(claude.args[claude.args.indexOf('--tools') + 1], '')
@@ -477,6 +496,7 @@ test('fast guard: claude and cursor link the login keychain and drop CLAUDE_CONF
       assert.equal(cursor.env.CURSOR_CONFIG_DIR, join(cursorDir, 'home', '.cursor'))
       assert.equal(cursor.env.CLAUDE_CONFIG_DIR, undefined)
       assert.equal(cursor.env.TMPDIR, join(cursorDir, 'tmp'))
+      assert.equal(cursor.env.PWD, cursorDir)
       const cursorLink = join(cursorDir, 'home', 'Library', 'Keychains', 'login.keychain-db')
       assert.equal(lstatSync(cursorLink).isSymbolicLink(), true)
       assert.equal(realpathSync(cursorLink), realpathSync(keychain))
@@ -498,14 +518,34 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(cliStarted({ code: 1, stdout: '', stderr: 'Operation not permitted' }), false)
   assert.equal(cliStarted({ code: 1, stdout: 'hall', stderr: 'Error: Permission denied' }), true)
   assert.equal(cliStarted({ code: 1, stdout: '', stderr: 'Error: Permission denied' }), true)
-  const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false, 45_000)
+  assert.equal(hasToolRecord('<invoke_tool name="WebFetch">'), false)
+  assert.equal(hasToolRecord('Error: Permission denied'), true)
+  assert.equal(deniedToolAttempt('User cancelled the execution for tool write'), true)
+  assert.equal(deniedToolAttempt('readPermissionDenied'), true)
+  assert.equal(deniedToolAttempt('Command blocked by permissions configuration'), true)
+  assert.equal(deniedToolAttempt('WebFetch: isolated server'), true)
+  assert.equal(deniedToolAttempt('rejected: User Rejected'), true)
+  assert.equal(searchContained('Grep on /etc/passwd returned no matches (tool is workspace-scoped). Glob on /etc returned 0 paths'), true)
+  assert.equal(claudeNoTools('{"tools":[],"mcp_servers":[]}', []), true)
+  assert.equal(claudeNoTools('plain text', ['--tools', '']), true)
+  assert.equal(isRefusal('I will not read those files.'), true)
+  assert.equal(isRefusal('% FLA means percent of full load amps.'), false)
+  const missed = smokeVerdict(71, '', 'sandbox-exec: execvp() of grok failed: No such file or directory', false, 60_000)
   assert.equal(missed.ok, false)
   assert.match(missed.reason, /exit=71/)
   assert.match(missed.reason, /execvp/)
-  assert.deepEqual(smokeVerdict(0, 'hall', '', false, 45_000), { ok: true, reason: 'answered' })
-  assert.deepEqual(smokeVerdict(1, '', '', true, 45_000), { ok: false, reason: 'timeout budget=45000' })
-  assert.equal(smokeVerdict(0, '', '', false, 45_000).ok, false)
-  assert.equal(smokeVerdict(0, 'Not logged in', '', false, 15_000).ok, false)
+  assert.deepEqual(smokeVerdict(0, 'YORKOK.', '', false, 60_000), { ok: true, reason: 'answered' })
+  assert.equal(smokeVerdict(0, 'The token is yorkok', '', false, 60_000).reason, 'answered')
+  assert.equal(smokeVerdict(0, 'hall', '', false, 60_000).ok, false)
+  const synonym = smokeVerdict(0, 'corridor', '', false, 50_000)
+  assert.equal(synonym.ok, false)
+  assert.match(synonym.reason, /^smoke-mismatch /)
+  assert.match(synonym.reason, /corridor/)
+  assert.equal(synonym.reason.includes('Reply with exactly'), false)
+  assert.deepEqual(smokeVerdict(1, '', '', true, 60_000), { ok: false, reason: 'timeout budget=60000' })
+  assert.equal(smokeVerdict(0, '', '', false, 60_000).ok, false)
+  assert.match(smokeVerdict(0, '', '', false, 60_000).reason, /^smoke-mismatch/)
+  assert.equal(smokeVerdict(0, 'Not logged in', '', false, 20_000).ok, false)
   const signedOut = smokeVerdict(1, '', 'Not signed in', false, 15_000)
   assert.equal(signedOut.ok, false)
   assert.match(signedOut.reason, /Not signed in/)

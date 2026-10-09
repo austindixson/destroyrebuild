@@ -14,15 +14,30 @@ function sourcesFor(ids: string[], chunks: Chunk[]): ChatSource[] {
     .map((chunk) => ({ id: chunk.id, title: chunk.title, href: chunk.href }))
 }
 
+function matchedCite(id: string, allowed: Set<string>): string {
+  if (allowed.has(id)) return id
+  const prefixed = `trainer:${id}`
+  return allowed.has(prefixed) ? prefixed : ''
+}
+
+/** One passive or long sentence must not discard the rest of a real answer. */
+function dropSteSentences(text: string): string {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter((sentence) => sentence.length > 0 && steHits(sentence).length === 0)
+    .join(' ')
+}
+
 export function polishAnswer(raw: string, citeIds: string[], chunks: Chunk[], snapshot: unknown): { answer: string; sources: ChatSource[] } {
   const allowed = new Set(chunks.map((chunk) => chunk.id))
-  const knownCites = citeIds.filter((id) => allowed.has(id))
+  const knownCites = citeIds.map((id) => matchedCite(id, allowed)).filter(Boolean)
   const stripped = stripMarkers(yorkFlaWording(raw), allowed)
   const cites = stripped.cites.length > 0 ? stripped.cites : knownCites
   const traced = dropUntracedNumbers(stripped.text, corpusFor(snapshot, chunks.filter((chunk) => cites.includes(chunk.id))))
-  const labeled = labelLiveNumbers(traced)
-  if (!labeled || steHits(labeled).length > 0) return { answer: '', sources: [] }
-  return { answer: labeled, sources: sourcesFor(cites, chunks) }
+  const clear = dropSteSentences(labelLiveNumbers(traced))
+  if (!clear) return { answer: '', sources: [] }
+  return { answer: clear, sources: sourcesFor(cites, chunks) }
 }
 
 export async function finishAnswer(

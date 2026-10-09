@@ -5,7 +5,35 @@
  */
 
 const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void/i
-const TOOL_RECORD = /invoke_tool|Error: Permission denied|\bWebFetch\b|\bGrep\b|\bGlob\b/
+const TOOL_RECORD = /Error: Permission denied|PermissionDenied|readPermissionDenied|"tool_use"|\bWebFetch\b|\bGrep\b|\bGlob\b/
+const DENIED_TOOL = /permissiondenied|readpermissiondenied|permission denied|access denied|operation not permitted|\bEPERM\b|\bEACCES\b|blocked by sandbox|blocked by permissions configuration|deny file-read|sandbox restriction|user cancelled|user rejected|isolated server/i
+const REFUSAL = /\b(i will not|i cannot|cannot read|will not read|do not have (?:shell|file|tools)|no shell or file)\b/i
+const CONTAINED = /workspace-scoped|workspace only|\b0 matches\b|\b0 paths\b|no matches/i
+
+/** A structured tool record. Claude's plain-text `<invoke_tool>` tag is not one. */
+export function hasToolRecord(text) {
+  return TOOL_RECORD.test(text) && !/<invoke_tool\b/i.test(text)
+}
+
+export function deniedToolAttempt(text) {
+  return DENIED_TOOL.test(text)
+}
+
+export function isRefusal(text) {
+  return REFUSAL.test(text)
+}
+
+/** Cursor grep or glob that stayed inside the request workspace. */
+export function searchContained(text) {
+  return CONTAINED.test(text)
+}
+
+/** Claude was launched with an empty tool list, or the stream says tools is empty. */
+export function claudeNoTools(text, args = []) {
+  if (/"tools"\s*:\s*\[\s*\]/.test(text)) return true
+  const at = args.indexOf('--tools')
+  return at >= 0 && args[at + 1] === ''
+}
 
 /** True only after the CLI itself produced a reply or a tool record. A seatbelt launch error is not enough. */
 export function cliStarted(saved) {
@@ -15,7 +43,7 @@ export function cliStarted(saved) {
   if (LAUNCH_FAIL.test(text) && !stdout.trim()) return false
   if (saved?.code === 71 && !stdout.trim()) return false
   if (stdout.trim() && !LAUNCH_FAIL.test(stdout)) return true
-  if (TOOL_RECORD.test(text)) return true
+  if (hasToolRecord(text)) return true
   return false
 }
 

@@ -51,7 +51,7 @@ export interface AskInput {
 
 const MAX_ROUNDS = 6
 const SLOW_MS = 12_000
-export const ABORT_MS = 120_000
+export const ABORT_MS = 145_000
 const WRITE_CAP = 3
 
 function gateOf(name: string): 'R' | 'W' | 'C' | null {

@@ -25,8 +25,11 @@ export const CLAUDE_CLI_MIN = '2.1.293'
 export const CURSOR_CLI_MIN = '2026.07.17'
 export const GROK_CLI_MIN = '1.0.50'
 
-const SMOKE_PROMPT: LlmRequest = { system: 'Reply with one word.', user: 'hall' }
-const SMOKE_WORD = /\bhall\b/i
+const SMOKE_TOKEN = 'YORKOK'
+const SMOKE_PROMPT: LlmRequest = {
+  system: 'Reply with exactly this token and nothing else: YORKOK',
+  user: SMOKE_TOKEN,
+}
 const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void|Not logged in|Authentication required|Couldn't start/i
 
 const CLAUDE_MIN = [2, 1, 293] as const
@@ -156,10 +159,15 @@ export async function probeAndLogClis(
   if (platform === 'darwin') await smokeClis(env)
 }
 
-/** True when stdout is a finished reply that contains the smoke word. */
+/** True when the reply contains the smoke token. Case and surrounding punctuation do not matter. */
 export function smokeAnswerOk(stdout: string): boolean {
-  const text = replyText(stdout)
-  return SMOKE_WORD.test(text)
+  const text = replyText(stdout).replace(/^[\s"'`.,:;!?()[\]{}]+|[\s"'`.,:;!?()[\]{}]+$/g, '')
+  return new RegExp(SMOKE_TOKEN, 'i').test(text)
+}
+
+function smokeSample(stdout: string): string {
+  const text = replyText(stdout).replace(/\s+/g, ' ').trim()
+  return redactReason(text).slice(0, 40)
 }
 
 export interface SmokeVerdict {
@@ -185,6 +193,7 @@ export function smokeVerdict(
   const reason = `exit=${code ?? 'null'} stderr=${redactReason(stderr)}`
   if (launchFailed(code, stdout, stderr)) return { ok: false, reason }
   if (code === 0 && smokeAnswerOk(stdout)) return { ok: true, reason: 'answered' }
+  if (code === 0) return { ok: false, reason: `smoke-mismatch ${smokeSample(stdout)}` }
   return { ok: false, reason }
 }
 

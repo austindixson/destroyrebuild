@@ -193,12 +193,15 @@ export const nodeRunner: ProcessRunner = {
   },
 }
 
-/** The signed-in user environment, minus the proxy secret and canary. Launch helpers replace HOME. */
+const CWD_LEAK = new Set(['PWD', 'OLDPWD', 'INIT_CWD'])
+
+/** The signed-in user environment, minus the proxy secret, the canary, and the caller's cwd. */
 export function providerChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue
     if (key === 'YORK_PROXY_SECRET' || key === 'YORK_CANARY') continue
+    if (CWD_LEAK.has(key)) continue
     next[key] = value
   }
   return next
@@ -501,6 +504,10 @@ function dropKeys(env: NodeJS.ProcessEnv, keys: readonly string[]): NodeJS.Proce
   return next
 }
 
+function requestEnv(env: NodeJS.ProcessEnv, dir: string, extra: NodeJS.ProcessEnv, drop: readonly string[] = []): NodeJS.ProcessEnv {
+  return dropKeys(childEnv(env, { ...extra, PWD: dir }), drop)
+}
+
 /** Exit code plus the first stderr line. Stdout is omitted so the prompt stays out of the log. */
 export function failureReason(code: number, stderr: string): string {
   return `exit=${code} stderr=${redactReason(stderr)}`
@@ -558,7 +565,7 @@ export async function prepareGrokLaunch(
   return {
     cmd: bin,
     args: grokArgs(promptFile),
-    env: childEnv(env, {
+    env: requestEnv(env, dir, {
       ...GROK_COMPAT_OFF,
       HOME: homeDir,
       GROK_HOME: grokHome,
@@ -589,12 +596,12 @@ export async function prepareClaudeLaunch(
   return {
     cmd: bin,
     args: claudeArgs(CLAUDE_MODEL),
-    env: dropKeys(childEnv(env, {
+    env: requestEnv(env, dir, {
       CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
       HOME: homeDir,
       TMPDIR: tmpDir,
       XDG_CONFIG_HOME: join(homeDir, '.config'),
-    }), ['CLAUDE_CONFIG_DIR']),
+    }, ['CLAUDE_CONFIG_DIR']),
     cwd: dir,
     input: promptOf(req),
   }
@@ -616,12 +623,12 @@ export async function prepareCursorLaunch(
   return {
     cmd: bin,
     args: cursorArgs(CURSOR_MODEL, dir),
-    env: dropKeys(childEnv(env, {
+    env: requestEnv(env, dir, {
       HOME: homeDir,
       TMPDIR: tmpDir,
       CURSOR_CONFIG_DIR: configDir,
       XDG_CONFIG_HOME: join(homeDir, '.config'),
-    }), ['CLAUDE_CONFIG_DIR']),
+    }, ['CLAUDE_CONFIG_DIR']),
     cwd: dir,
     input: promptOf(req),
   }
@@ -645,12 +652,12 @@ export async function prepareCodexLaunch(
   return {
     cmd: bin,
     args: codexArgs(),
-    env: dropKeys(childEnv(env, {
+    env: requestEnv(env, dir, {
       HOME: homeDir,
       TMPDIR: tmpDir,
       CODEX_HOME: join(homeDir, '.codex'),
       XDG_CONFIG_HOME: join(homeDir, '.config'),
-    }), ['CLAUDE_CONFIG_DIR']),
+    }, ['CLAUDE_CONFIG_DIR']),
     cwd: dir,
     input: promptOf(req),
   }

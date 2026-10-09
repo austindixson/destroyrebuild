@@ -13,7 +13,7 @@ import type { Chunk, LlmAnswer, LlmRequest } from './types.ts'
 
 const chunks = index as Chunk[]
 const MAX_BODY = 200_000
-export const REQUEST_MS = 110_000
+export const REQUEST_MS = 135_000
 
 const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
 

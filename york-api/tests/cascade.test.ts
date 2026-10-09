@@ -66,16 +66,16 @@ test('local CLIs are the cascade and codex stays off until asked', () => {
   assert.equal(grok.includes('-p'), false)
   assert.equal(grokLaunchArgsOk(grok), true)
   assert.equal(grokLaunchArgsOk(['-p']), false)
-  assert.equal(GROK_BUDGET_MS, 45_000)
-  assert.equal(CLAUDE_BUDGET_MS, 15_000)
+  assert.equal(GROK_BUDGET_MS, 60_000)
+  assert.equal(CLAUDE_BUDGET_MS, 20_000)
   assert.equal(CURSOR_BUDGET_MS, 50_000)
   assert.equal(CODEX_BUDGET_MS, 10_000)
-  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= 110_000)
+  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= 135_000)
   const off = tierBudgetMs({})
-  assert.deepEqual(off, { grok: 45_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
+  assert.deepEqual(off, { grok: 60_000, claude: 20_000, cursor: 50_000, codex: 10_000 })
   const on = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.deepEqual(on, { grok: 35_000, claude: 10_000, cursor: 50_000, codex: 10_000 })
-  assert.ok(on.grok + on.claude + on.cursor + on.codex <= 110_000)
+  assert.deepEqual(on, { grok: 55_000, claude: 15_000, cursor: 50_000, codex: 10_000 })
+  assert.ok(on.grok + on.claude + on.cursor + on.codex <= 135_000)
   const runner = {
     async run() {
       return { code: 0, stdout: 'The hall is stable.', stderr: '' }
