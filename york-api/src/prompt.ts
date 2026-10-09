@@ -8,6 +8,7 @@ const SYSTEM = [
   'Do not add a plant fact that those sources omit.',
   'Call every live number a trainer-model value.',
   'Name a live value in plain words, such as "IT load 4.2 MW". Do not write a raw field name such as itLoadMw.',
+  'Name the loop with every pressure. Chilled-water differential pressure, condenser-water differential pressure, and condenser pressure are different readings.',
   'Use % FLA for chiller motor current only. A valve uses % open. A fan uses % speed. Do not use %RLA or %TSLA.',
   'Use short active sentences. Do not use contractions.',
   'Do not invent a manual, a form number, or a page number.',
@@ -63,12 +64,17 @@ function recordList(value: unknown): Record<string, unknown>[] {
 
 const PLANT_TEXT = new Set(['reason', 'ch01', 'ch02', 'units', 'alarm', 'weather'])
 
+function pressureKey(key: string): string {
+  if (key === 'chwTargetPsi') return 'chwDpTargetPsi'
+  return key
+}
+
 function numericReadings(plant: Record<string, unknown>): Record<string, number> {
   const out: Record<string, number> = {}
   for (const [key, value] of Object.entries(plant)) {
     if (PLANT_TEXT.has(key)) continue
     if (typeof value !== 'number' || !Number.isFinite(value)) continue
-    out[key] = value
+    out[pressureKey(key)] = value
   }
   return out
 }
@@ -93,7 +99,7 @@ function chillerRows(snapshot: Record<string, unknown>, plant: Record<string, un
   return units.map((unit) => chillerRow(unit, plant))
 }
 
-/** Follow-up readings: chiller rows, numeric plant values, and the active alarm. */
+/** Follow-up readings. Pressures use chwDpPsi, chwDpTargetPsi, cwDpPsi, and condPsig on each chiller row. */
 function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
   const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
   const readings: Record<string, unknown> = { units: chillerRows(snapshot, plant), ...numericReadings(plant) }

@@ -6,9 +6,15 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Y
+
+- A checklist marker is not rewritten. A reading such as 4.2 or 9.5 stays as written. A dropped step still takes its marker and the Reason after it. Gaps in the numbers stay.
+- A heading on its own line stays apart from the next numbered step.
+- A follow-up names chilled-water differential pressure, its target, condenser-water differential pressure, and condenser pressure as separate readings. Every pressure names its loop.
+
 ### 2026-10-09 — YORK-8X
 
-- A checklist marker stays with its step. A dropped step takes that marker and the Reason after it. The steps that remain are numbered from 1.
+- A checklist marker stays with its step. A dropped step takes that marker and the Reason after it.
 - A follow-up gives claude at least 36 s. When a later tier can still run, claude also receives the spare time in front of that tier.
 - A follow-up snapshot includes blocksWrites, the incident, and condenser pressure on each chiller row.
 

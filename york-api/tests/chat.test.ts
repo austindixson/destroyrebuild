@@ -363,8 +363,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /% speed/)
   assert.match(round1.user, /chiller motor current only/)
   assert.match(round1.user, /% open/)
-  assert.equal(promptBytes(round1), 1974)
-  assert.equal(promptBytes(round0), 3199)
+  assert.equal(promptBytes(round1), 2132)
+  assert.equal(promptBytes(round0), 3357)
   assert.equal(round1.user.length, 551)
   assert.equal(round0.user.length, 2002)
 })
@@ -380,6 +380,7 @@ test('a follow-up prompt keeps the chiller row, differential pressure, hall retu
       lchltSet: 44,
       chwDpPsi: 9.5,
       chwTargetPsi: 18,
+      cwDpPsi: 12.6,
       reason: 'The hall is hot because the valve is pinched.',
       ch01: { mode: 'run', rla: 34 },
     },
@@ -398,7 +399,10 @@ test('a follow-up prompt keeps the chiller row, differential pressure, hall retu
   assert.match(prompt.user, /"mode":"run"/)
   assert.match(prompt.user, /"rla":34/)
   assert.match(prompt.user, /"chwDpPsi":9\.5/)
-  assert.match(prompt.user, /"chwTargetPsi":18/)
+  assert.match(prompt.user, /"chwDpTargetPsi":18/)
+  assert.equal(prompt.user.includes('"chwTargetPsi"'), false)
+  assert.match(prompt.user, /"cwDpPsi":12\.6/)
+  assert.match(prompt.system, /Name the loop with every pressure/)
   assert.match(prompt.user, /"hallReturnF":85/)
   assert.match(prompt.user, /"lchltSet":44/)
   assert.match(prompt.user, /34%/)
@@ -748,7 +752,35 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
   const list = '1. Open the valve. 2. Start the spare. 3. Read the hall.'
   assert.equal(dropUntracedNumbers(list, ''), list)
   assert.equal(dropUntracedNumbers('3. The count is 9.', ''), '')
-  assert.equal(dropUntracedNumbers('3. The count is 9.', '9 rows'), '1. The count is 9.')
+  assert.equal(dropUntracedNumbers('3. The count is 9.', '9 rows'), '3. The count is 9.')
   assert.equal(dropUntracedNumbers('The reading is 9.5 psi.', ''), '')
-  assert.equal(dropUntracedNumbers('4. A. 5. B 1.8 psi. Reason: C. 6. D.', ''), '1. A. 2. D.')
+  assert.equal(dropUntracedNumbers('4. A. 5. B 1.8 psi. Reason: C. 6. D.', ''), '4. A. 6. D.')
+  assert.equal(dropUntracedNumbers('Heading:\n1. A. 2. B.', ''), 'Heading:\n1. A. 2. B.')
+  assert.equal(dropUntracedNumbers('Heading:\n1. A. 2. B 1.8. 3. C.', ''), 'Heading:\n1. A. 3. C.')
+  assert.equal(dropUntracedNumbers('Load. 4.2 MW now. 1. A.', '4.2'), 'Load. 4.2 MW now. 1. A.')
+  assert.equal(dropUntracedNumbers('9.5 psi is low. 1. A.', '9.5'), '9.5 psi is low. 1. A.')
+})
+
+const NUMBER_TOKEN = /(?<![A-Za-z0-9-])\d+(?:\.\d+)?(?![A-Za-z0-9])/g
+
+test('a number token in the output keeps the value it had in the input', () => {
+  const cases = [
+    ['4.2 MW runs now.', '4.2'],
+    ['9.5 psi is the dP.', '9.5'],
+    ['Load. 4.2 MW now. 1. A.', '4.2'],
+    ['9.5 psi is low. 1. A.', '9.5'],
+    ['Heading:\n1. A. 2. B.', ''],
+    ['Heading:\n1. A. 2. B 1.8. 3. C.', ''],
+    ['4. A. 5. B 1.8 psi. Reason: C. 6. D.', ''],
+    ['1. Open the valve. 2. Start the spare. 3. Read the hall.', ''],
+    ['3. The count is 9.', '9 rows'],
+    ['The count is 2.', '12 rows'],
+  ]
+  for (const [input, corpus] of cases) {
+    const out = dropUntracedNumbers(input ?? '', corpus ?? '')
+    const source = new Set(input?.match(NUMBER_TOKEN) ?? [])
+    for (const token of out.match(NUMBER_TOKEN) ?? []) {
+      assert.equal(source.has(token), true, `${token} in ${JSON.stringify(out)}`)
+    }
+  }
 })

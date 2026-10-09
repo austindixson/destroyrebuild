@@ -1,5 +1,5 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
-import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
+import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, labelLiveNumbers, stripMarkers, yorkFlaWording } from './guard.ts'
 import { containsSecretMaterial, redactReason } from './leak.ts'
 import { OPEN_DECLINE } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
@@ -122,8 +122,8 @@ function ownsStep(owner: string, kept: Set<string>): boolean {
   if (kept.has(owner)) return true
   const tail = ` ${owner}`
   for (const sentence of kept) {
-    if (!sentence.endsWith(tail)) continue
-    if (/^\d+\.$/.test(sentence.slice(0, sentence.length - tail.length))) return true
+    if (!isStepMarker(sentence)) continue
+    if (sentence.slice(sentence.indexOf('.') + 1) === tail) return true
   }
   return false
 }

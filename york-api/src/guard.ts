@@ -28,34 +28,56 @@ export function stripMarkers(text: string, allowed: Set<string>): { text: string
   return { text: cleaned.replace(/\s{2,}/g, ' ').trim(), cites }
 }
 
+/** A sentence end, or a newline that sits in front of a step marker. */
+const SENTENCE_GAP = /((?<=[.!?])\s+|\n+(?=\d+\.\s))/
+
+/** "5." or "5. " is a checklist marker. "4.2" and "9.5" are readings. */
+const STEP_MARKER = /^\d+\.(?=\s|$)/
+
+export function isStepMarker(sentence: string): boolean {
+  return STEP_MARKER.test(sentence)
+}
+
+const BARE_STEP = /^\d+\.$/
+
+type Piece = { text: string; sep: string }
+
 function sentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
+  return splitPieces(text).map((part) => part.text)
+}
+
+function splitPieces(text: string): Piece[] {
+  const parts = text.split(SENTENCE_GAP)
+  const out: Piece[] = []
+  for (let i = 0; i < parts.length; i += 2) {
+    const sentence = parts[i]?.trim() ?? ''
+    if (!sentence) continue
+    out.push({ text: sentence, sep: parts[i + 1] ?? '' })
+  }
+  return out
 }
 
 function numberTokens(text: string): string[] {
   return text.match(NUMBER_TOKEN) ?? []
 }
 
-const BARE_STEP = /^\d+\.$/
-
 /** A leading "3." or "3. " is a checklist marker, not a live reading. */
 function checkedNumbers(sentence: string): string[] {
   if (BARE_STEP.test(sentence)) return []
-  return numberTokens(sentence.replace(/^\d+\.\s/, ''))
+  const marker = STEP_MARKER.exec(sentence)
+  const body = marker ? sentence.slice(marker[0].length) : sentence
+  return numberTokens(body)
 }
 
 /** A bare "5." belongs to the next sentence. They stay or go together. */
-function joinedSteps(parts: string[]): string[] {
-  const out: string[] = []
+function joinedSteps(parts: Piece[]): Piece[] {
+  const out: Piece[] = []
   for (let i = 0; i < parts.length; i += 1) {
     const part = parts[i]
     if (!part) continue
     const next = parts[i + 1]
-    if (BARE_STEP.test(part) && next && !BARE_STEP.test(next)) {
-      out.push(`${part} ${next}`)
+    if (BARE_STEP.test(part.text) && next && !BARE_STEP.test(next.text)) {
+      out.push({ text: `${part.text}${part.sep}${next.text}`, sep: next.sep })
       i += 1
       continue
     }
@@ -64,28 +86,30 @@ function joinedSteps(parts: string[]): string[] {
   return out
 }
 
-function withoutUntraced(steps: string[], known: Set<string>): string[] {
-  const kept: string[] = []
+function withoutUntraced(steps: Piece[], known: Set<string>): Piece[] {
+  const kept: Piece[] = []
   for (let i = 0; i < steps.length; i += 1) {
     const sentence = steps[i]
     if (!sentence) continue
-    if (checkedNumbers(sentence).every((num) => known.has(num))) {
+    if (checkedNumbers(sentence.text).every((num) => known.has(num))) {
       kept.push(sentence)
       continue
     }
     const next = steps[i + 1]
-    if (/^\d+\./.test(sentence) && next?.startsWith('Reason:')) i += 1
+    if (STEP_MARKER.test(sentence.text) && next?.text.startsWith('Reason:')) i += 1
   }
   return kept
 }
 
-function renumberSteps(kept: string[]): string[] {
-  let n = 0
-  return kept.map((sentence) => {
-    if (!/^\d+\./.test(sentence)) return sentence
-    n += 1
-    return sentence.replace(/^\d+\./, `${n}.`)
-  })
+function joinPieces(parts: Piece[]): string {
+  let out = ''
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]
+    if (!part) continue
+    out += part.text
+    if (i < parts.length - 1) out += part.sep
+  }
+  return out
 }
 
 function oddQuotes(sentence: string): boolean {
@@ -103,8 +127,8 @@ export function dropUnmatchedQuotes(text: string): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  const kept = withoutUntraced(joinedSteps(sentences(text)), known)
-  return renumberSteps(kept).join(' ')
+  const kept = withoutUntraced(joinedSteps(splitPieces(text)), known)
+  return joinPieces(kept)
 }
 
 export function labelLiveNumbers(text: string): string {
