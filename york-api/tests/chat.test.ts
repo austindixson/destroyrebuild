@@ -314,7 +314,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
     [{ id: 'trainer:glossary:n-plus-1', title: 'N+1', href: '/york-chiller/#trainer:glossary:n-plus-1', text: 'long passage' }],
   )
   assert.equal(follow.round, 1)
-  assert.match(follow.user, /Snapshot delta:/)
+  assert.match(follow.user, /Snapshot:\n/)
+  assert.equal(follow.user.includes('Snapshot delta:'), false)
   assert.match(follow.user, /"action":"setValve"/)
   assert.equal(follow.user.includes('Passages:'), false)
   assert.equal(follow.user.includes('long passage'), false)
@@ -348,7 +349,9 @@ test('the example shows one tool object and says to leave tools empty', () => {
   }, found)
   const promptBytes = (prompt: { system: string; user: string }) => `${prompt.system}\n\n${prompt.user}`.length
   assert.equal(round1.user.includes('Passages:'), false)
-  assert.match(round1.user, /Snapshot delta:/)
+  assert.match(round1.user, /Snapshot:\n/)
+  assert.equal(round1.user.includes('Snapshot delta:'), false)
+  assert.match(round1.user, /"id":"CH-01"/)
   assert.match(round1.user, /Tool results:/)
   assert.match(round1.user, /Use active voice/)
   assert.match(round1.user, /25 words/)
@@ -360,10 +363,42 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /% speed/)
   assert.match(round1.user, /chiller motor current only/)
   assert.match(round1.user, /% open/)
-  assert.equal(promptBytes(round1), 2072)
+  assert.equal(promptBytes(round1), 2045)
   assert.equal(promptBytes(round0), 3199)
-  assert.equal(round1.user.length, 649)
+  assert.equal(round1.user.length, 622)
   assert.equal(round0.user.length, 2002)
+})
+
+test('a follow-up prompt keeps the chiller row, differential pressure, hall return, and LCHLT setpoint', () => {
+  const snapshot = {
+    view: 'home',
+    units: [{ id: 'CH-01', mode: 'run', rla: 34, running: true }],
+    plant: {
+      hallReturnF: 85,
+      lchltSet: 44,
+      chwDpPsi: 9.5,
+      chwTargetPsi: 18,
+      ch01: { mode: 'run', rla: 34 },
+    },
+    shown: { 'kpi.ch01Fla': '34%' },
+  }
+  const prompt = buildPrompt({
+    question: 'What is the motor current and the CHW differential pressure?',
+    previousQuestions: [],
+    history: [],
+    snapshot,
+    round: 1,
+    toolResults: [],
+  }, [])
+  assert.match(prompt.user, /"id":"CH-01"/)
+  assert.match(prompt.user, /"mode":"run"/)
+  assert.match(prompt.user, /"rla":34/)
+  assert.match(prompt.user, /"chwDpPsi":9\.5/)
+  assert.match(prompt.user, /"chwTargetPsi":18/)
+  assert.match(prompt.user, /"hallReturnF":85/)
+  assert.match(prompt.user, /"lchltSet":44/)
+  assert.match(prompt.user, /34%/)
+  assert.equal(prompt.user.includes('Snapshot delta:'), false)
 })
 
 test('trouble symptoms are labeled examples in the index', () => {
@@ -699,4 +734,9 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
   assert.equal(dropUntracedNumbers('CH-01 is online.', ''), 'CH-01 is online.')
   assert.equal(dropUntracedNumbers('The count is 2.', '2 rows'), 'The count is 2.')
   assert.equal(dropUntracedNumbers('The count is 2.', '12 rows'), '')
+  const list = '1. Open the valve. 2. Start the spare. 3. Read the hall.'
+  assert.equal(dropUntracedNumbers(list, ''), list)
+  assert.equal(dropUntracedNumbers('3. The count is 9.', ''), '3.')
+  assert.equal(dropUntracedNumbers('3. The count is 9.', '9 rows'), '3. The count is 9.')
+  assert.equal(dropUntracedNumbers('The reading is 9.5 psi.', ''), '')
 })

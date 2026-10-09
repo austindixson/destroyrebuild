@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8V
+
+- A follow-up sends the full screen snapshot. Chiller rows, differential pressure, hall return, and the LCHLT setpoint stay in the prompt.
+- A request turned away for too many calls in flight logs `york-api chat busy reason=inflight`.
+- A checklist marker such as "3." is not an untraced number.
+
 ### 2026-10-09 — YORK-8U
 
 - % FLA is for chiller motor current only. A valve uses % open. A fan uses % speed.

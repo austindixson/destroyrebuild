@@ -278,9 +278,20 @@ test('the in-flight cap rejects a second LLM call', async () => {
   }
   const first = handleChat({ question: 'One', snapshot: {} }, deps(complete, { inflight }))
   await waitFor(() => started === 1)
-  const second = await handleChat({ question: 'Two', snapshot: {} }, deps(complete, { inflight }))
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  let second: Awaited<ReturnType<typeof handleChat>>
+  try {
+    second = await handleChat({ question: 'Two', snapshot: {} }, deps(complete, { inflight }))
+  } finally {
+    console.log = log
+  }
   assert.equal(second.body.status, 'unavailable')
   assert.equal(started, 1)
+  assert.match(lines.join('\n'), /york-api chat busy reason=inflight/)
   release()
   const done = await first
   assert.equal(done.body.status, 'answer')

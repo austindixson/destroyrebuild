@@ -185,7 +185,10 @@ export async function handleChat(raw: unknown, deps: ChatDeps): Promise<{ http: 
 
 function holdInflight(inflight: Inflight | undefined): { ok: boolean; release(): void } {
   if (!inflight) return { ok: true, release() {} }
-  if (!inflight.tryAcquire()) return { ok: false, release() {} }
+  if (!inflight.tryAcquire()) {
+    console.log('york-api chat busy reason=inflight')
+    return { ok: false, release() {} }
+  }
   return { ok: true, release: () => inflight.release() }
 }
 

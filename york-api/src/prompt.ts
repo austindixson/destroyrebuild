@@ -44,50 +44,12 @@ export const N_PLUS_ONE_LINE = [
   '85 MW covers 80 MW.',
 ].join(' ')
 
-const DELTA_KEYS = [
-  't',
-  'itLoadMw',
-  'runningCapacityMw',
-  'unmetMw',
-  'hallSupplyF',
-  'lchltAct',
-  'oatF',
-  'alarm',
-  'chwValvePct',
-  'cwValvePct',
-  'glycolValvePct',
-] as const
-
 function passage(chunk: Chunk): string {
   return `[${chunk.id}] ${chunk.title}: ${chunk.text.slice(0, 700)}`
 }
 
-function unitDelta(value: unknown): unknown[] | null {
-  if (!Array.isArray(value)) return null
-  return value.slice(0, 8).map((item) => {
-    if (!item || typeof item !== 'object') return item
-    const row = item as Record<string, unknown>
-    return { id: row.id, running: row.running, capacityMw: row.capacityMw, mode: row.mode }
-  })
-}
-
-function plantFields(plant: Record<string, unknown>): Record<string, unknown> {
-  const picked: Record<string, unknown> = {}
-  for (const key of DELTA_KEYS) {
-    if (key in plant) picked[key] = plant[key]
-  }
-  const units = unitDelta(plant.units)
-  if (units) picked.units = units
-  return picked
-}
-
-function plantDelta(snapshot: Record<string, unknown>): string {
-  const out: Record<string, unknown> = { blocksWrites: snapshot.blocksWrites === true }
-  if (snapshot.incident) out.incident = snapshot.incident
-  if (typeof snapshot.chaosLabel === 'string') out.chaosLabel = snapshot.chaosLabel
-  const plant = snapshot.plant
-  if (plant && typeof plant === 'object' && !Array.isArray(plant)) out.plant = plantFields(plant as Record<string, unknown>)
-  return JSON.stringify(out)
+function snapshotJson(snapshot: Record<string, unknown>): string {
+  return JSON.stringify(snapshot).slice(0, 12000)
 }
 
 function toolResultLines(req: ChatRequest, limit: number): string {
@@ -103,7 +65,7 @@ function toolResultLines(req: ChatRequest, limit: number): string {
 
 function followUpUser(req: ChatRequest): string {
   const results = toolResultLines(req, 1600)
-  return [FOLLOW_VOICE, `Question: ${req.question}`, `Snapshot delta:\n${plantDelta(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
+  return [FOLLOW_VOICE, `Question: ${req.question}`, `Snapshot:\n${snapshotJson(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
 }
 
 function firstUser(req: ChatRequest, chunks: Chunk[]): string {
@@ -117,7 +79,7 @@ function firstUser(req: ChatRequest, chunks: Chunk[]): string {
     `Question: ${req.question}`,
     `Earlier questions: ${req.previousQuestions.slice(-6).join(' | ')}`,
     history ? `History:\n${history}` : '',
-    `Snapshot:\n${JSON.stringify(req.snapshot).slice(0, 12000)}`,
+    `Snapshot:\n${snapshotJson(req.snapshot)}`,
     `Passages:\n${passages.join('\n')}`,
     `Tools:\n${toolLines()}`,
     results ? `Tool results:\n${results}` : '',

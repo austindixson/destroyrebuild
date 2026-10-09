@@ -39,6 +39,12 @@ function numberTokens(text: string): string[] {
   return text.match(NUMBER_TOKEN) ?? []
 }
 
+/** A leading "3." or "3. " is a checklist marker, not a live reading. */
+function checkedNumbers(sentence: string): string[] {
+  if (/^\d+\.$/.test(sentence)) return []
+  return numberTokens(sentence.replace(/^\d+\.\s/, ''))
+}
+
 function oddQuotes(sentence: string): boolean {
   let count = 0
   for (const ch of sentence) {
@@ -54,7 +60,7 @@ export function dropUnmatchedQuotes(text: string): string {
 
 export function dropUntracedNumbers(text: string, corpus: string): string {
   const known = new Set(numberTokens(corpus))
-  const kept = sentences(text).filter((sentence) => numberTokens(sentence).every((num) => known.has(num)))
+  const kept = sentences(text).filter((sentence) => checkedNumbers(sentence).every((num) => known.has(num)))
   return kept.join(' ')
 }
 
