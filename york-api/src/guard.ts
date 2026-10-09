@@ -412,20 +412,30 @@ function hashLevel(text: string): number | null {
   return marks[1].length
 }
 
-/** An hour line such as "Hour 0 to 1" is a sub-heading when it sits under a heading. */
+/** An hour line such as "Hour 0 to 1" can be a sub-heading. */
 function isHourLabel(text: string): boolean {
   if (/[.!?]$/.test(text) || /:\s*\S/.test(text)) return false
   if (wordCount(text) > HEADING_LIMIT) return false
   return /^(?:hours?\b|after\b|every\b|at hour\b|within\b)/i.test(text) && /\d/.test(text)
 }
 
+/** Content follows an hour label when the next line is a step or a sentence. */
+function followedByContent(raw: Piece[], index: number): boolean {
+  for (let j = index + 1; j < raw.length; j += 1) {
+    const part = raw[j]
+    if (!part) continue
+    if (isHourLabel(part.text) && atLineStart(raw, j)) continue
+    return !isHeading(part.text)
+  }
+  return false
+}
+
 function pieceIsHeading(raw: Piece[], index: number): boolean {
   const part = raw[index]
   if (!part) return false
   if (isHeading(part.text)) return true
-  if (!isHourLabel(part.text)) return false
-  const prev = raw[index - 1]
-  return !!prev && (isHeading(prev.text) || isHourLabel(prev.text))
+  if (!isHourLabel(part.text) || !atLineStart(raw, index)) return false
+  return followedByContent(raw, index)
 }
 
 /** A plain heading sits under every markdown level. */
@@ -655,9 +665,54 @@ function selectPieces(steps: Piece[], keep: (text: string) => boolean, style: Dr
 /** Keep the separators, including a newline after a period. A dropped step takes its marker. */
 export function dropKeptPieces(text: string, keep: (sentence: string) => boolean, style: DropStyle = 'span'): string {
   const raw = joinedSteps(splitPieces(text))
-  const selected = selectPieces(raw, keep, style)
-  const kept = style === 'bullet-sentence' ? dropEmptyHeadings(raw, selected) : selected
-  return joinPieces(kept)
+  return joinPieces(selectPieces(raw, keep, style))
+}
+
+function peeled(text: string): string {
+  return text.replace(/^(?:-\s+)?(?:[^:\n]{1,80}:\s+)?/, '')
+}
+
+function textsAlign(rawText: string, nextText: string): boolean {
+  return nextText === rawText || peeled(nextText) === rawText
+}
+
+function alignedKept(raw: Piece[], next: Piece[]): Piece[] {
+  const kept: Piece[] = []
+  let cursor = 0
+  for (let i = 0; i < raw.length; i += 1) {
+    const part = raw[i]
+    const match = next[cursor]
+    if (!part || !match || !textsAlign(part.text, match.text)) continue
+    kept.push(part)
+    cursor += 1
+  }
+  return kept
+}
+
+/**
+ * Drop headings whose section is empty in the filtered reply.
+ * The scope is the original reply, so a later filter can empty a section.
+ */
+export function applyEmptyHeadings(rawText: string, filtered: string): string {
+  const raw = joinedSteps(splitPieces(rawText))
+  const next = joinedSteps(splitPieces(filtered))
+  const stayed = new Set(dropEmptyHeadings(raw, alignedKept(raw, next)))
+  const out: Piece[] = []
+  let cursor = 0
+  for (let i = 0; i < raw.length; i += 1) {
+    const part = raw[i]
+    const match = next[cursor]
+    if (!part || !match || !textsAlign(part.text, match.text)) continue
+    cursor += 1
+    if (pieceIsHeading(raw, i) && !stayed.has(part)) continue
+    out.push(match)
+  }
+  while (cursor < next.length) {
+    const extra = next[cursor]
+    if (extra) out.push(extra)
+    cursor += 1
+  }
+  return joinPieces(out)
 }
 
 function joinPieces(parts: Piece[]): string {

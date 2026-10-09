@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { polishAnswer } from '../src/finish.ts'
 
 /**
- * Permanent D8–D27 examples. Each row is the raw reply and the text the full
+ * Permanent D8–D30 examples. Each row is the raw reply and the text the full
  * guard keeps when the corpus is the real home snapshot from real-snapshot.mjs.
  */
 const rows = [
@@ -50,6 +50,11 @@ const rows = [
   ['d27-title-blank', '# Eight-hour checklist\n\n## Shift start\n1. Check pump 3 (untraced)\n\n## Mid shift\n2. Log it', '# Eight-hour checklist\n\n## Mid shift\n2. Log it Live numbers are trainer-model values.'],
   ['d11-schedule', 'Hour 2 to 4. Check the tower every 2 hours.', 'Hour 2 to 4. Check the tower every 2 hours. Live numbers are trainer-model values.'],
   ['d11-command-follows-step', '1. A.\n2. The count is 9.\nStart it later.\n3. C.', '1. A.\n3. C. Live numbers are trainer-model values.'],
+  ['d16r2-bold', '**Eight-hour checklist**\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', '**Eight-hour checklist**\nMid shift\n2. Log it Live numbers are trainer-model values.'],
+  ['d16r2-bold-blank', '**Eight-hour checklist**\n\n**Shift start**', '**Eight-hour checklist**'],
+  ['d28-hour-after-prose', 'The hall is warm.\nHour 0 to 1\n1. ok\nHour 1 to 2\n2. Check pump 3', 'The hall is warm.\nHour 0 to 1\n1. ok Live numbers are trainer-model values.'],
+  ['d29-passive-section', '**Pumps**\n- The valve was opened by the operator.\n\n**Chillers**\n- CH-01 runs.', '**Chillers**\n- CH-01 runs.'],
+  ['d29-quote-section', 'ALARMS\nThe alarm says "Low head.\nCHILLERS\n- Open the valve.', 'CHILLERS\n- Open the valve.'],
 ] as const
 
 function realHomeSnapshot(): { view: string; plant: { chwValvePct: number } } {
@@ -60,7 +65,7 @@ function realHomeSnapshot(): { view: string; plant: { chwValvePct: number } } {
   return body.snapshot
 }
 
-test('guard table keeps every D8 to D27 example against the real snapshot', () => {
+test('guard table keeps every D8 to D30 example against the real snapshot', () => {
   const snapshot = realHomeSnapshot()
   assert.equal(snapshot.view, 'home')
   assert.equal(typeof snapshot.plant.chwValvePct, 'number')

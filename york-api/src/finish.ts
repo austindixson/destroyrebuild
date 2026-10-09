@@ -1,5 +1,5 @@
 import { LIVE_LABEL, NO_ANSWER } from './copy.ts'
-import { dropKeptPieces, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, joinSentencePieces, labelLiveNumbers, sentencePieces, stripMarkers, yorkFlaWording } from './guard.ts'
+import { applyEmptyHeadings, dropKeptPieces, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, isStepMarker, joinSentencePieces, labelLiveNumbers, sentencePieces, stripMarkers, yorkFlaWording } from './guard.ts'
 import { containsSecretMaterial, redactLog } from './leak.ts'
 import { OPEN_DECLINE, withNPlusOne } from './prompt.ts'
 import { steHits } from './steRuntime.ts'
@@ -187,7 +187,8 @@ export function polishAnswer(
   )
   const quoted = dropUnmatchedQuotes(traced)
   const ste = dropSteSentences(dropMisusedFla(quoted))
-  const clear = restoreDecline(labelLiveNumbers(dropOrphanReasons(stripped.text, ste)), raw, caseOpen(snapshot))
+  const shaped = applyEmptyHeadings(stripped.text, dropOrphanReasons(stripped.text, ste))
+  const clear = restoreDecline(labelLiveNumbers(shaped), raw, caseOpen(snapshot))
   if (!withoutLabel(clear)) {
     return { answer: '', sources: [], empty: wipedReason(stripped.text, traced, quoted, ste, raw) }
   }

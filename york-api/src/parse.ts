@@ -221,10 +221,33 @@ function ledPlan(text: string): Record<string, unknown> | null {
   return row
 }
 
+/** A short lead-in shares the object's line. A glued quote and a longer sentence do not. */
+function separatedLead(text: string, span: Brace): boolean {
+  if (ownLine(text, span)) return false
+  const lead = leadText(text, span)
+  if (lead.length === 0 || lead.length > LEAD_LIMIT) return false
+  return /\s$/.test(text.slice(0, span.start))
+}
+
+function sameLineTrail(text: string, span: Brace): boolean {
+  const line = text.slice(span.end).split('\n')[0] ?? ''
+  return line.trim().length > 0
+}
+
+/** One plan object beside a short lead-in needs JSON again instead of a raw reply. */
+function inlinePlanRetry(text: string): boolean {
+  const closed = planSpans(text)
+  if (closed.length > 1) return false
+  const span = closed[0] ?? unclosedPlan(text)
+  if (!span || !separatedLead(text, span)) return false
+  return !sameLineTrail(text, span)
+}
+
 /** A broken, unclosed, or repeated plan object inside the lead and trail limits needs another JSON reply. */
 export function jsonRetryNeeded(text: string): boolean {
   const body = replyBody(text)
   if (wholeObject(body)) return false
+  if (inlinePlanRetry(body)) return true
   const open = unclosedAtLine(body)
   const closed = planSpans(body)
   if (closed.length > 1) return true
@@ -242,6 +265,7 @@ export function parseModelPlan(text: string): ModelPlan {
   if (whole) return planFromJson(whole)
   const led = ledPlan(body)
   if (led) return planFromJson(led)
+  if (inlinePlanRetry(body)) return prosePlan('')
   if (body.startsWith('{')) {
     const answer = quotedAnswer(body)
     if (answer) return prosePlan(answer)

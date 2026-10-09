@@ -6,6 +6,15 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z13
+
+- Empty headings are judged once, after the number, quote, % FLA, and STE filters, against the original reply. "**Pumps**" drops when its sentence is passive and "**Chillers**" keeps "- CH-01 runs." An ALARMS section whose quote is unmatched drops.
+- A plan object on the same line as a short lead-in, including an unclosed object, asks for JSON again. "Sure. {"answer":"A."}" is that case. A longer sentence that quotes JSON stays prose and does not ask again.
+- An hour label that starts a line and has a step under it is a sub-heading, including when a sentence sits above it. "Hour 1 to 2" drops when its step is untraced. "Hour 0 to 1" stays with "1. ok".
+- A bold title stays when a later subsection keeps text. "**Eight-hour checklist**" stays above "Mid shift". A blank line before an empty "**Shift start**" keeps the title and drops the empty heading.
+- "I will check the alarms." on the line before a tool object is a tool call.
+- The section heading instruction stays one short sentence. Round 0 prompt growth from the line before that sentence is 71 bytes.
+
 ### 2026-10-09 — YORK-8Z12
 
 - A plan object with lead-in or trailing text is read only when that object starts at the beginning of a line and ends at the end of a line, or when it is fenced. "The model replied {"answer":"x"} last time. CH-01 runs at 34% FLA." stays prose. "To read alarms, send {"tools":[...]} to the tool." stays prose and runs no tool. "Here is my reply:" and "Sure." before an object on the next line still parse. "Thanks." on the next line still parses.

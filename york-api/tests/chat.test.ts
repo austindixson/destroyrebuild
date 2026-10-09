@@ -9,7 +9,7 @@ import { buildPrompt, jsonWithin, N_PLUS_ONE_LINE } from '../src/prompt.ts'
 import { MAX_TOOL_ROUND, planTurn } from '../src/turn.ts'
 import { LIVE_LABEL, NO_ANSWER } from '../src/copy.ts'
 import { finishAnswer, loggableRaw, polishAnswer } from '../src/finish.ts'
-import { dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
+import { applyEmptyHeadings, dropMisusedFla, dropUnmatchedQuotes, dropUntracedNumbers, labelLiveNumbers } from '../src/guard.ts'
 import { steHits } from '../src/steRuntime.ts'
 import { searchChunks } from '../src/rag.ts'
 import type { Chunk, LlmAnswer, LlmRequest } from '../src/types.ts'
@@ -369,8 +369,8 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round1.system, /State only a target that the data shows/)
   assert.match(round0.system, /computed number may appear only with its work shown/)
   assert.match(round0.system, /17 - 9\.5 = 7\.5/)
-  assert.equal(promptBytes(round1), 2546)
-  assert.equal(promptBytes(round0), 3771)
+  assert.equal(promptBytes(round1), 2513)
+  assert.equal(promptBytes(round0), 3738)
   assert.equal(round1.user.length, 569)
   assert.equal(round0.user.length, 2020)
 })
@@ -833,23 +833,24 @@ test('a computed number stays only with a correct equation in the same sentence'
   assert.equal(dropUntracedNumbers('1. The count is 99. Reason: the hall is warm. 2. Stay.', ''), '2. Stay.')
 })
 
+function shapedNumbers(text: string, corpus = ''): string {
+  return applyEmptyHeadings(text, dropUntracedNumbers(text, corpus))
+}
+
 test('stacked headings and a heading above a blank line stay', () => {
   const stacked = 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(stacked, ''), stacked)
+  assert.equal(shapedNumbers(stacked), stacked)
   const parent = 'Eight-hour checklist\nShift start\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(parent, ''), parent)
+  assert.equal(shapedNumbers(parent), parent)
   const nested = '# Eight-hour checklist\n## Shift start\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(nested, ''), nested)
+  assert.equal(shapedNumbers(nested), nested)
   assert.equal(
-    dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
+    shapedNumbers('Eight-hour checklist\n\n1. Open the valve.'),
     'Eight-hour checklist\n\n1. Open the valve.',
   )
-  assert.equal(
-    dropUntracedNumbers('Eight-hour checklist\nShift start\nThe count is 99.', ''),
-    '',
-  )
+  assert.equal(shapedNumbers('Eight-hour checklist\nShift start\nThe count is 99.'), '')
   const later = 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it'
-  assert.equal(dropUntracedNumbers(later, ''), 'Eight-hour checklist\nMid shift\n2. Log it')
+  assert.equal(shapedNumbers(later), 'Eight-hour checklist\nMid shift\n2. Log it')
 })
 
 test('schedule words do not empty an answer', () => {
@@ -985,25 +986,25 @@ test('heading scope follows one level rule', () => {
     ['hour-body', 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.', 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'],
     ['emptied-parent', 'Eight-hour checklist\nShift start\nThe count is 99.', ''],
   ] as const
-  for (const [name, raw, out] of rows) assert.equal(dropUntracedNumbers(raw, ''), out, name)
+  for (const [name, raw, out] of rows) assert.equal(shapedNumbers(raw), out, name)
 })
 
 test('an empty heading drops when its section lost its text', () => {
-  assert.equal(dropUntracedNumbers('PUMPS', ''), '')
-  assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'PUMPS\nFANS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'PUMPS\nCHILLERS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n- Open the valve.', ''), 'PUMPS\nCHILLERS\n- Open the valve.')
+  assert.equal(shapedNumbers('PUMPS'), '')
+  assert.equal(shapedNumbers('PUMPS\n1. Open the valve.\n\nFANS'), 'PUMPS\n1. Open the valve.')
+  assert.equal(shapedNumbers('PUMPS\nFANS\n1. Open the valve.'), 'PUMPS\nFANS\n1. Open the valve.')
+  assert.equal(shapedNumbers('PUMPS\nCHILLERS\n1. Open the valve.'), 'PUMPS\nCHILLERS\n1. Open the valve.')
+  assert.equal(shapedNumbers('PUMPS\nCHILLERS\n- Open the valve.'), 'PUMPS\nCHILLERS\n- Open the valve.')
   assert.equal(
-    dropUntracedNumbers('PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.', ''),
+    shapedNumbers('PUMPS\nThe count is 99.\nCHILLERS\n1. Open the valve.'),
     'CHILLERS\n1. Open the valve.',
   )
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), 'PUMPS')
-  assert.equal(dropUntracedNumbers('**Pumps**', ''), '')
-  assert.equal(dropUntracedNumbers('**Pumps**\n1. Open the valve.', ''), '**Pumps**\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('**Pumps**\nThe count is 99.', ''), '')
+  assert.equal(shapedNumbers('PUMPS\nFANS'), 'PUMPS')
+  assert.equal(shapedNumbers('**Pumps**'), '')
+  assert.equal(shapedNumbers('**Pumps**\n1. Open the valve.'), '**Pumps**\n1. Open the valve.')
+  assert.equal(shapedNumbers('**Pumps**\nThe count is 99.'), '')
   const bold = '**Pumps**\nCHILLERS\n1. Open the valve.'
-  assert.equal(dropUntracedNumbers(bold, ''), bold)
+  assert.equal(shapedNumbers(bold), bold)
 })
 
 test('a heading or label is exempt from the STE passive check', () => {
