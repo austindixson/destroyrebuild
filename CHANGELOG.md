@@ -6,6 +6,15 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z7
+
+- A heading has a body only when real content sits under it before the next heading of the same or higher level. "PUMPS" above "CHILLERS" is dropped. An empty "**Pumps**" is dropped. A "#" heading above a "##" heading that has a step stays.
+- An equation uses × and ÷ before + and −, and it accepts parentheses. "(4.2 + 5 * 2 = 14.2)" stays. "= 18.4" is dropped.
+- Grok startup asks "What is 2 + 3? Answer with the number only." and looks for 5 in the text events. A failure is tried once more. A grok reprobe uses the same waits as claude: 60 s, 2 min, 5 min, then every 10 min.
+- Stream parsing is only for that startup launch. A chat reply stays the raw text, including several JSON lines.
+- "Please run /login", "not logged in", and "invalid api key" are sign-in errors, with the same 10 min wait.
+- A label moves only onto a sentence that continues the same topic. "The hall is warm." does not take the previous label. A newline does not carry the label.
+
 ### 2026-10-09 — YORK-8Z6
 
 - Grok startup reads the tool list from the available_commands event and joins text events for the smoke token. The end event does not decide either check.

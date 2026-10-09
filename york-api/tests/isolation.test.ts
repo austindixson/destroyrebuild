@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
 import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeReprobeDelay, cursorBinIsGrok, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, smokeVerdict, startClaudeReprobe } from '../src/cliVersions.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, probeAndLogClis, recoverClaude, recoverGrok, retryOnce, smokeVerdict, startClaudeReprobe, startGrokReprobe } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
@@ -24,6 +24,7 @@ import {
   prepareGrokLaunch,
   providerChildEnv,
   failureReason,
+  grokStreamText,
   replyText,
   timeoutReason,
 } from '../src/providers.ts'
@@ -414,33 +415,58 @@ test('fast guard: deadlines cover grok then claude then cursor', () => {
   assert.deepEqual(followed.timedOut, ['grok'])
   const emptyTools = [
     '{"type":"available_commands","tools":[],"commands":[]}',
+    '{"type":"thought","data":"15"}',
+    '{"type":"text","data":"5"}',
+    '{"type":"usage","inputTokens":1,"outputTokens":1}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
+  ].join('\n')
+  const offeredTools = [
+    '{"type":"available_commands","tools":["read_file"],"commands":[]}',
+    '{"type":"text","data":"5"}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
+  ].join('\n')
+  const answered = smokeVerdict(0, emptyTools, '', false, 70_000)
+  assert.equal(answered.ok, false)
+  assert.deepEqual(grokStartupVerdict(answered, emptyTools), { ok: true, reason: 'answered' })
+  assert.equal(grokSmokeAnswerOk(emptyTools), true)
+  assert.equal(grokToolsEmpty(offeredTools), false)
+  assert.equal(grokToolsEmpty('{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}'), false)
+  assert.equal(replyText(emptyTools), emptyTools)
+  assert.equal(grokStreamText(emptyTools), '5')
+  assert.equal(grokStreamText(emptyTools).includes('15'), false)
+  const fifteen = emptyTools.replace('"data":"5"', '"data":"15"')
+  assert.equal(grokSmokeAnswerOk(fifteen), false)
+  assert.equal(grokStartupVerdict(smokeVerdict(0, fifteen, '', false, 70_000), fifteen).ok, false)
+  const thoughtFive = [
+    '{"type":"available_commands","tools":[],"commands":[]}',
+    '{"type":"thought","data":"5"}',
+    '{"type":"usage","inputTokens":1,"outputTokens":1}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
+  ].join('\n')
+  assert.equal(grokSmokeAnswerOk(thoughtFive), false)
+  assert.deepEqual(grokStartupVerdict(smokeVerdict(0, offeredTools, '', false, 70_000), offeredTools), { ok: false, reason: 'tools' })
+  const joined = [
     '{"type":"text","data":"YORK"}',
     '{"type":"text","data":"OK"}',
     '{"type":"thought","data":"Analyzing the directory structure..."}',
     '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
   ].join('\n')
-  const offeredTools = [
-    '{"type":"available_commands","tools":["read_file"],"commands":[]}',
-    '{"type":"text","data":"YORKOK"}',
-    '{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}',
-  ].join('\n')
-  const answered = smokeVerdict(0, emptyTools, '', false, 70_000)
-  assert.deepEqual(grokStartupVerdict(answered, emptyTools), { ok: true, reason: 'answered' })
-  assert.equal(grokToolsEmpty(offeredTools), false)
-  assert.equal(grokToolsEmpty('{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}'), false)
-  assert.equal(replyText(emptyTools), 'YORKOK')
-  assert.equal(replyText(emptyTools).includes('Analyzing'), false)
+  assert.equal(grokStreamText(joined), 'YORKOK')
+  assert.equal(grokStreamText(joined).includes('Analyzing'), false)
   const resultStream = [
     '{"type":"text","data":"YORK"}',
     '{"type":"text","data":"OK"}',
     '{"type":"result","subtype":"success","is_error":false,"result":"The hall is stable.","stop_reason":"end_turn"}',
   ].join('\n')
-  assert.equal(replyText(resultStream), 'The hall is stable.')
+  assert.equal(replyText(resultStream), resultStream)
+  assert.equal(grokStreamText(resultStream), 'The hall is stable.')
   const plainLines = '{"answer":"The hall is stable.","cites":[],"tools":[]}\n{"answer":"Supply is 42.5 psig.","cites":[],"tools":[]}'
   assert.equal(replyText(plainLines), plainLines)
-  assert.equal(smokeVerdict(0, '{"type":"thought","data":"YORKOK"}\n{"type":"text","data":"no"}\n{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}', '', false, 1_000).ok, false)
+  assert.equal(grokStreamText(plainLines), '')
+  const thoughtToken = '{"type":"thought","data":"YORKOK"}\n{"type":"text","data":"no"}\n{"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789"}'
+  assert.equal(grokStartupVerdict(smokeVerdict(0, thoughtToken, '', false, 1_000), thoughtToken).ok, false)
   assert.equal(failureReason(1, '', 'Error: not logged in'), 'exit=1 stderr= stdout=Error: not logged in')
-  assert.deepEqual(grokStartupVerdict(answered, 'YORKOK.'), { ok: false, reason: 'tools' })
+  assert.deepEqual(grokStartupVerdict({ ok: false, reason: 'timeout budget=1000' }, emptyTools), { ok: false, reason: 'timeout budget=1000' })
   assert.deepEqual(grokStartupVerdict({ ok: false, reason: 'exit=1 stderr=' }, ''), { ok: false, reason: 'exit=1 stderr=' })
   const smokeArgs = grokSmokeArgs(grokArgs('probe'))
   assert.equal(smokeArgs.at(-2), '--output-format')
@@ -733,6 +759,12 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
   assert.equal(claudeReprobeDelay(3, ''), 600_000)
   assert.equal(claudeReprobeDelay(9, ''), 600_000)
   assert.equal(claudeReprobeDelay(1, 'exit=1 stderr=OAuth session expired'), 600_000)
+  assert.equal(claudeNeedsSignIn('Please run /login'), true)
+  assert.equal(claudeNeedsSignIn('Error: not logged in'), true)
+  assert.equal(claudeNeedsSignIn('invalid api key'), true)
+  assert.equal(claudeNeedsSignIn('exit=1 stderr='), false)
+  assert.equal(claudeReprobeDelay(0, 'Please run /login'), 600_000)
+  assert.equal(claudeReprobeDelay(2, 'invalid api key'), 600_000)
   const timer = startClaudeReprobe({ YORK_CLAUDE_CLI: 'ready' })
   clearTimeout(timer)
   const lines: string[] = []
@@ -752,6 +784,50 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
     console.log = log
   }
   assert.match(lines.join('\n'), /claude needs sign-in/)
+})
+
+test('grok smoke retries once and reprobes on the claude backoff', async () => {
+  let calls = 0
+  const retried = await retryOnce(async () => {
+    calls += 1
+    return calls === 1 ? { ok: false, reason: 'smoke-mismatch' } : { ok: true, reason: 'answered' }
+  })
+  assert.equal(calls, 2)
+  assert.equal(retried.ok, true)
+  const once = await retryOnce(async () => {
+    calls += 1
+    return { ok: true, reason: 'answered' }
+  })
+  assert.equal(calls, 3)
+  assert.equal(once.ok, true)
+  const timer = startGrokReprobe({ YORK_GROK_CLI: 'ready' })
+  clearTimeout(timer)
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  try {
+    const env: NodeJS.ProcessEnv = { YORK_GROK_CLI: 'unavailable' }
+    let during = ''
+    const still = await recoverGrok(env, async () => {
+      during = env.YORK_GROK_CLI ?? 'cleared'
+      return { ok: false, reason: 'exit=1 stderr=Please run /login' }
+    })
+    assert.equal(still?.ok, false)
+    assert.equal(during, 'unavailable')
+    assert.equal(env.YORK_GROK_CLI, 'unavailable')
+    const back = await recoverGrok(env, async () => ({ ok: true, reason: 'answered' }))
+    assert.equal(back?.ok, true)
+    assert.equal(env.YORK_GROK_CLI, 'ready')
+  } finally {
+    console.log = log
+  }
+  assert.match(lines.join('\n'), /grok needs sign-in/)
+  const ready: NodeJS.ProcessEnv = { YORK_GROK_CLI: 'ready' }
+  const skipped = await recoverGrok(ready, async () => ({ ok: false, reason: 'not logged in' }))
+  assert.equal(skipped, null)
+  assert.equal(ready.YORK_GROK_CLI, 'ready')
 })
 
 test('a grok chat reply keeps every plain JSON line', async () => {

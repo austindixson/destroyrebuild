@@ -780,13 +780,15 @@ test('a computed number stays only with a correct equation in the same sentence'
   assert.equal(dropUntracedNumbers('1. The count is 99. Reason: the hall is warm. 2. Stay.', ''), '2. Stay.')
 })
 
-test('stacked headings and a heading above a blank line stay', () => {
+test('a same-level heading is not a body, and a deeper heading is', () => {
   const stacked = 'Eight-hour checklist\nHour 0 to 1\n1. Open the valve.'
   assert.equal(dropUntracedNumbers(stacked, ''), stacked)
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\nShift start\n1. Open the valve.', ''),
-    'Eight-hour checklist\nShift start\n1. Open the valve.',
+    'Shift start\n1. Open the valve.',
   )
+  const nested = '# Eight-hour checklist\n## Shift start\n1. Open the valve.'
+  assert.equal(dropUntracedNumbers(nested, ''), nested)
   assert.equal(
     dropUntracedNumbers('Eight-hour checklist\n\n1. Open the valve.', ''),
     'Eight-hour checklist\n\n1. Open the valve.',
@@ -905,11 +907,15 @@ test('unit ids are not live numbers and corpus checks use number tokens', () => 
 
 const NUMBER_TOKEN = /(?<![\d.])-?\d+(?:\.\d+)?/g
 
-test('an empty heading stops at the next heading', () => {
+test('an empty heading stops at the next heading of the same level', () => {
   assert.equal(dropUntracedNumbers('PUMPS', ''), '')
   assert.equal(dropUntracedNumbers('PUMPS\n1. Open the valve.\n\nFANS', ''), 'PUMPS\n1. Open the valve.')
-  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'PUMPS\nFANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nFANS\n1. Open the valve.', ''), 'FANS\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('PUMPS\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
   assert.equal(dropUntracedNumbers('PUMPS\nFANS', ''), '')
+  assert.equal(dropUntracedNumbers('**Pumps**', ''), '')
+  assert.equal(dropUntracedNumbers('**Pumps**\n1. Open the valve.', ''), '**Pumps**\n1. Open the valve.')
+  assert.equal(dropUntracedNumbers('**Pumps**\nCHILLERS\n1. Open the valve.', ''), 'CHILLERS\n1. Open the valve.')
 })
 
 test('a heading or label is exempt from the STE passive check', () => {
@@ -946,9 +952,21 @@ test('a dropped bullet sentence keeps its label on the next sentence', () => {
     dropUntracedNumbers('- 0 to 1 h: The count is 99. Open the valve.', ''),
     '- 0 to 1 h: Open the valve.',
   )
+  assert.equal(
+    dropUntracedNumbers('- Chilled-water loop: valve at 99.\nThe hall is warm.', ''),
+    '- The hall is warm.',
+  )
+  assert.equal(
+    dropUntracedNumbers('Chilled-water loop: valve at 99. The hall is warm.', ''),
+    'The hall is warm.',
+  )
+  assert.equal(
+    dropUntracedNumbers('- Chilled-water loop: valve at 99.\nOpen the valve.', ''),
+    '- Open the valve.',
+  )
 })
 
-test('an equation is the whole left side, evaluated left to right', () => {
+test('an equation uses multiply and divide before add and subtract', () => {
   const chain = 'The balance is 5 (5 + 5 - 5 = 5).'
   assert.equal(dropUntracedNumbers(chain, '5'), chain)
   assert.equal(dropUntracedNumbers('The balance is 6 (5 + 5 - 5 = 6).', '5'), '')
@@ -957,6 +975,11 @@ test('an equation is the whole left side, evaluated left to right', () => {
   assert.equal(dropUntracedNumbers('The product is 14 (2 * 3 + 4 = 14).', '2 3 4'), '')
   const carried = 'CHW dP is 7.5 psi below target (17 - 9.5 + 0 = 7.5).'
   assert.equal(dropUntracedNumbers(carried, '17 9.5 0'), carried)
+  const mixed = 'The product is 14.2 (4.2 + 5 * 2 = 14.2).'
+  assert.equal(dropUntracedNumbers(mixed, '4.2 5 2'), mixed)
+  assert.equal(dropUntracedNumbers('The product is 18.4 (4.2 + 5 * 2 = 18.4).', '4.2 5 2'), '')
+  const grouped = 'The product is 18.4 ((4.2 + 5) * 2 = 18.4).'
+  assert.equal(dropUntracedNumbers(grouped, '4.2 5 2'), grouped)
 })
 
 test('unicode math symbols count in an equation', () => {

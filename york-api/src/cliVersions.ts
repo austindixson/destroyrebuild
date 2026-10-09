@@ -16,6 +16,7 @@ import {
   prepareGrokLaunch,
   failureReason,
   grokAdvertisedTools,
+  grokStreamText,
   replyText,
   timeoutReason,
 } from './providers.ts'
@@ -31,6 +32,10 @@ const SMOKE_TOKEN = 'YORKOK'
 const SMOKE_PROMPT: LlmRequest = {
   system: 'Reply with exactly this token and nothing else: YORKOK',
   user: SMOKE_TOKEN,
+}
+const GROK_SMOKE_PROMPT: LlmRequest = {
+  system: 'You answer short arithmetic questions.',
+  user: 'What is 2 + 3? Answer with the number only.',
 }
 const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void|Not logged in|Authentication required|Couldn't start/i
 
@@ -173,9 +178,18 @@ export function grokSmokeArgs(args: string[]): string[] {
   return [...args, '--output-format', 'streaming-json']
 }
 
+/** The grok smoke answer is the number 5 in a text event. A thought does not count. */
+export function grokSmokeAnswerOk(stdout: string): boolean {
+  const text = grokStreamText(stdout).replace(/^[\s"'`.,:;!?()[\]{}]+|[\s"'`.,:;!?()[\]{}]+$/g, '')
+  return /(?<![\d.])5(?![\d.])/.test(text)
+}
+
+/** A missing smoke token is rechecked as the number 5. A timeout or a bad exit stays a failure. */
 export function grokStartupVerdict(verdict: SmokeVerdict, stdout: string): SmokeVerdict {
-  if (!verdict.ok) return verdict
-  if (grokToolsEmpty(stdout)) return verdict
+  const mismatch = verdict.reason.startsWith('smoke-mismatch')
+  if (!verdict.ok && !mismatch) return verdict
+  if (!grokSmokeAnswerOk(stdout)) return mismatch ? verdict : { ok: false, reason: 'smoke-mismatch' }
+  if (grokToolsEmpty(stdout)) return { ok: true, reason: 'answered' }
   return { ok: false, reason: 'tools' }
 }
 
@@ -232,7 +246,14 @@ export const CLAUDE_REPROBE_STEPS_MS = [60_000, 120_000, 300_000, 600_000] as co
 const CLAUDE_AUTH_REPROBE_MS = 600_000
 
 export function claudeNeedsSignIn(reason: string): boolean {
-  return reason.includes('OAuth session expired')
+  return /oauth session expired|please run \/login|not logged in|invalid api key/i.test(reason)
+}
+
+/** One more try after a failed probe. A success returns on the first call. */
+export async function retryOnce(probe: () => Promise<SmokeVerdict>): Promise<SmokeVerdict> {
+  const first = await probe()
+  if (first.ok) return first
+  return probe()
 }
 
 export function claudeReprobeDelay(attempt: number, reason: string): number {
@@ -302,11 +323,47 @@ export async function recoverClaude(
   return verdict
 }
 
-export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
+async function grokPrepare(env: NodeJS.ProcessEnv, dir: string): Promise<Awaited<ReturnType<typeof prepareGrokLaunch>>> {
+  const launch = await prepareGrokLaunch(dir, GROK_SMOKE_PROMPT, env)
+  return { ...launch, args: grokSmokeArgs(launch.args) }
+}
+
+/** Two tries. The second runs after a failure has marked grok unavailable. */
+async function grokSmoke(env: NodeJS.ProcessEnv, force = false): Promise<SmokeVerdict | null> {
+  if (!force && env.YORK_GROK_CLI === 'unavailable') return null
+  const verdict = await retryOnce(async () => {
+    const result = await smokeOne(env, 'grok', 'YORK_GROK_CLI', (dir) => grokPrepare(env, dir), true)
+    return result ?? { ok: false, reason: 'unavailable' }
+  })
+  if (verdict.ok) delete env.YORK_GROK_CLI
+  return verdict
+}
+
+/** When grok was unavailable, a later success marks it ready. */
+export async function recoverGrok(
+  env: NodeJS.ProcessEnv,
+  probe?: () => Promise<SmokeVerdict>,
+): Promise<SmokeVerdict | null> {
+  if (env.YORK_GROK_CLI !== 'unavailable') return null
+  const verdict = probe ? await probe() : await grokSmoke(env, true)
+  if (!verdict?.ok) {
+    if (verdict) env.YORK_GROK_CLI = 'unavailable'
+    if (verdict && claudeNeedsSignIn(verdict.reason)) console.log('york-api cli grok needs sign-in')
+    return verdict ?? null
+  }
+  env.YORK_GROK_CLI = 'ready'
+  console.log('york-api cli grok status=ready reason=recovered')
+  return verdict
+}
+
+function armReprobe(
+  env: NodeJS.ProcessEnv,
+  recover: (probeEnv: NodeJS.ProcessEnv) => Promise<SmokeVerdict | null>,
+): ReturnType<typeof setTimeout> {
   let attempt = 0
   const arm = (delay: number): ReturnType<typeof setTimeout> => {
     const timer = setTimeout(() => {
-      void recoverClaude(env).then((verdict) => {
+      void recover(env).then((verdict) => {
         if (!verdict || verdict.ok) {
           attempt = 0
           return
@@ -321,12 +378,17 @@ export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): Return
   return arm(claudeReprobeDelay(0, ''))
 }
 
+export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
+  return armReprobe(env, (probeEnv) => recoverClaude(probeEnv))
+}
+
+export function startGrokReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
+  return armReprobe(env, (probeEnv) => recoverGrok(probeEnv))
+}
+
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
   const jobs = [
-    smokeOne(env, 'grok', 'YORK_GROK_CLI', async (dir) => {
-      const launch = await prepareGrokLaunch(dir, SMOKE_PROMPT, env)
-      return { ...launch, args: grokSmokeArgs(launch.args) }
-    }),
+    grokSmoke(env),
     smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env)),
     smokeOne(env, 'cursor', 'YORK_CURSOR_CLI', (dir) => prepareCursorLaunch(dir, SMOKE_PROMPT, env)),
   ]

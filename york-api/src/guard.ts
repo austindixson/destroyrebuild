@@ -124,12 +124,14 @@ function shown(value: number, places: number): string {
   return (Math.round(value * factor) / factor).toFixed(places)
 }
 
-const NUM = String.raw`[-\u2212]?\d+(?:\.\d+)?`
-const OP_SOURCE = String.raw`[+\-\u2212*\u00d7/\u00f7]`
-const EQUATION_SOURCE = String.raw`(?<![\d.])(${NUM}(?:\s*${OP_SOURCE}\s*${NUM})+)\s*=\s*(${NUM})`
+const NUM_RE = /^[-\u2212]?\d+(?:\.\d+)?/
+const MUL_OPS = '*\u00d7/\u00f7'
+const ADD_OPS = '+\u2212-'
 
 type Op = '+' | '-' | '*' | '/'
-type Chain = { nums: string[]; ops: Op[]; result: string }
+type Expr = { kind: 'num'; token: string } | { kind: 'bin'; op: Op; left: Expr; right: Expr }
+type Parsed = { expr: Expr; consumed: number }
+type Equation = { expr: Expr; result: string }
 
 function canonNum(token: string): string {
   return token.replaceAll('\u2212', '-')
@@ -171,66 +173,150 @@ function applyOp(op: Op, left: number, right: number): number | null {
   }
 }
 
-function readChain(match: RegExpMatchArray): Chain | null {
-  const left = match[1]
-  const result = match[2]
-  if (!left || !result) return null
-  const parts = left.split(new RegExp(String.raw`\s*(${OP_SOURCE})\s*`)).filter((part) => part.length > 0)
-  if (parts.length < 3 || parts.length % 2 === 0) return null
-  const nums: string[] = []
-  const ops: Op[] = []
-  for (let i = 0; i < parts.length; i += 1) {
-    const part = parts[i] ?? ''
-    if (i % 2 === 0) {
-      nums.push(part)
+function skipSpace(source: string): number {
+  return /^\s*/.exec(source)?.[0].length ?? 0
+}
+
+function parseUnary(source: string): Parsed | null {
+  const gap = skipSpace(source)
+  const body = source.slice(gap)
+  if (body.startsWith('(')) {
+    const inner = parseAdd(body.slice(1))
+    if (!inner) return null
+    const closeGap = skipSpace(body.slice(1 + inner.consumed))
+    if (!body.slice(1 + inner.consumed + closeGap).startsWith(')')) return null
+    return { expr: inner.expr, consumed: gap + 1 + inner.consumed + closeGap + 1 }
+  }
+  const num = NUM_RE.exec(body)
+  if (!num?.[0]) return null
+  return { expr: { kind: 'num', token: num[0] }, consumed: gap + num[0].length }
+}
+
+function takeOp(source: string, ops: string): { op: Op; consumed: number } | null {
+  const gap = skipSpace(source)
+  const ch = source.slice(gap, gap + 1)
+  if (!ch || !ops.includes(ch)) return null
+  const op = asOp(ch)
+  if (!op) return null
+  return { op, consumed: gap + 1 }
+}
+
+function foldOps(source: string, ops: string, parseNext: (source: string) => Parsed | null): Parsed | null {
+  const first = parseNext(source)
+  if (!first) return null
+  let left = first
+  while (source.length > left.consumed) {
+    const found = takeOp(source.slice(left.consumed), ops)
+    if (!found) return left
+    const right = parseNext(source.slice(left.consumed + found.consumed))
+    if (!right) return left
+    left = {
+      expr: { kind: 'bin', op: found.op, left: left.expr, right: right.expr },
+      consumed: left.consumed + found.consumed + right.consumed,
+    }
+  }
+  return left
+}
+
+function parseMul(source: string): Parsed | null {
+  return foldOps(source, MUL_OPS, parseUnary)
+}
+
+function parseAdd(source: string): Parsed | null {
+  return foldOps(source, ADD_OPS, parseMul)
+}
+
+function parseEquation(source: string): { expr: Expr; result: string; consumed: number } | null {
+  const left = parseAdd(source)
+  if (!left) return null
+  const rest = source.slice(left.consumed)
+  const gap = skipSpace(rest)
+  if (!rest.slice(gap).startsWith('=')) return null
+  const after = rest.slice(gap + 1)
+  const numGap = skipSpace(after)
+  const num = NUM_RE.exec(after.slice(numGap))
+  if (!num?.[0]) return null
+  return { expr: left.expr, result: num[0], consumed: left.consumed + gap + 1 + numGap + num[0].length }
+}
+
+function equationAt(text: string, index: number): boolean {
+  const ch = text[index] ?? ''
+  return ch === '(' || ch === '-' || ch === '\u2212' || /\d/.test(ch)
+}
+
+function equationsIn(text: string): Equation[] {
+  const found: Equation[] = []
+  let i = 0
+  while (i < text.length) {
+    const prev = i > 0 ? text[i - 1] ?? '' : ''
+    if ((prev && /[\d.]/.test(prev)) || !equationAt(text, i)) {
+      i += 1
       continue
     }
-    const op = asOp(part)
-    if (!op) return null
-    ops.push(op)
+    const parsed = parseEquation(text.slice(i))
+    if (!parsed) {
+      i += 1
+      continue
+    }
+    found.push({ expr: parsed.expr, result: parsed.result })
+    i += parsed.consumed
   }
-  return { nums, ops, result }
+  return found
 }
 
-function chainValue(chain: Chain): number | null {
-  const first = chain.nums[0]
-  if (!first) return null
-  let value = Number(canonNum(first))
-  if (!Number.isFinite(value)) return null
-  for (let i = 0; i < chain.ops.length; i += 1) {
-    const op = chain.ops[i]
-    const raw = chain.nums[i + 1]
-    if (!op || !raw) return null
-    const right = Number(canonNum(raw))
-    if (!Number.isFinite(right)) return null
-    const next = applyOp(op, value, right)
-    if (next === null) return null
-    value = next
+function exprValue(expr: Expr): number | null {
+  switch (expr.kind) {
+    case 'num': {
+      const value = Number(canonNum(expr.token))
+      return Number.isFinite(value) ? value : null
+    }
+    case 'bin': {
+      const left = exprValue(expr.left)
+      const right = exprValue(expr.right)
+      if (left === null || right === null) return null
+      return applyOp(expr.op, left, right)
+    }
+    default: {
+      const unexpected: never = expr
+      return unexpected
+    }
   }
-  return value
 }
 
-function chainPlaces(nums: string[]): number {
+function exprTokens(expr: Expr, out: string[]): void {
+  if (expr.kind === 'num') {
+    out.push(expr.token)
+    return
+  }
+  exprTokens(expr.left, out)
+  exprTokens(expr.right, out)
+}
+
+function exprPlaces(expr: Expr): number {
+  const tokens: string[] = []
+  exprTokens(expr, tokens)
   let places = 0
-  for (const num of nums) places = Math.max(places, decimalPlaces(num))
+  for (const token of tokens) places = Math.max(places, decimalPlaces(token))
   return places
 }
 
-function inputsKnown(chain: Chain, known: Set<string>): boolean {
-  for (const num of chain.nums) {
-    if (!known.has(canonNum(num))) return false
+function inputsKnown(expr: Expr, known: Set<string>): boolean {
+  const tokens: string[] = []
+  exprTokens(expr, tokens)
+  for (const token of tokens) {
+    if (!known.has(canonNum(token))) return false
   }
   return true
 }
 
 /** The result keeps at least as many decimal places as any input. */
-function workIsRight(chain: Chain, known: Set<string>): number | null {
-  if (!inputsKnown(chain, known)) return null
-  const value = chainValue(chain)
+function workIsRight(equation: Equation, known: Set<string>): number | null {
+  if (!inputsKnown(equation.expr, known)) return null
+  const value = exprValue(equation.expr)
   if (value === null) return null
-  const places = decimalPlaces(chain.result)
-  if (places < chainPlaces(chain.nums)) return null
-  if (canonNum(chain.result) !== shown(value, places)) return null
+  const places = decimalPlaces(equation.result)
+  if (places < exprPlaces(equation.expr)) return null
+  if (canonNum(equation.result) !== shown(value, places)) return null
   return value
 }
 
@@ -242,26 +328,19 @@ function coversToken(token: string, result: string, value: number): boolean {
   return shownToken === shown(value, places)
 }
 
-function equationMatches(text: string): RegExpMatchArray[] {
-  return [...text.matchAll(new RegExp(EQUATION_SOURCE, 'g'))]
-}
-
 /** A computed number stays only when this sentence shows that equation. */
 function equationAllows(text: string, token: string, known: Set<string>): boolean {
-  for (const match of equationMatches(text)) {
-    const chain = readChain(match)
-    if (!chain) continue
-    const value = workIsRight(chain, known)
+  for (const equation of equationsIn(text)) {
+    const value = workIsRight(equation, known)
     if (value === null) continue
-    if (coversToken(token, chain.result, value)) return true
+    if (coversToken(token, equation.result, value)) return true
   }
   return false
 }
 
 function badEquation(text: string, known: Set<string>): boolean {
-  for (const match of equationMatches(text)) {
-    const chain = readChain(match)
-    if (chain && workIsRight(chain, known) === null) return true
+  for (const equation of equationsIn(text)) {
+    if (workIsRight(equation, known) === null) return true
   }
   return false
 }
@@ -327,11 +406,21 @@ function skipDroppedStep(steps: Piece[], index: number): number {
   return next
 }
 
-/** A heading has a body when the next section does, including a sub-heading that has one. */
+/** Fewer hashes sit above a sub-heading. A plain heading and a bold heading share one level. */
+function headingLevel(text: string): number {
+  const marks = /^(#{1,6})(?:\s|$)/.exec(text.trim())
+  return marks?.[1] ? marks[1].length : 7
+}
+
+/** Real content under this heading, before the next heading of the same or higher level. */
 function sectionHasBody(parts: Piece[], index: number): boolean {
+  const origin = parts[index]
+  if (!origin) return false
+  const level = headingLevel(origin.text)
   for (let j = index + 1; j < parts.length; j += 1) {
     const piece = parts[j]
     if (!piece) continue
+    if (isHeading(piece.text) && headingLevel(piece.text) <= level) return false
     if (isHeading(piece.text)) return sectionHasBody(parts, j)
     return true
   }
@@ -367,8 +456,22 @@ function graftLineLabel(steps: Piece[], index: number, keep: (text: string) => b
   const label = origin ? lineLabel(origin.text) : ''
   if (!label) return
   const target = nextKeptOnLine(steps, index, keep)
-  if (!target || target.text.startsWith(`${label} `)) return
+  if (!target || !continuesTopic(target.text) || target.text.startsWith(`${label} `)) return
   target.text = `${label} ${target.text}`
+}
+
+/** A new "The … is" sentence is its own topic. The label stays off it. */
+function continuesTopic(sentence: string): boolean {
+  const text = sentence.replace(/^-\s+/, '').trim()
+  if (/^The\b/i.test(text) && /\b(?:is|are|was|were)\b/i.test(text)) return false
+  return true
+}
+
+function carriedLabel(steps: Piece[], index: number, label: string): string {
+  const bridge = steps[index - 1]
+  const piece = steps[index]
+  if (!bridge || !piece || bridge.sep.includes('\n') || !continuesTopic(piece.text)) return ''
+  return label
 }
 
 /** A heading with no step or bullet left under it is an empty label. */
@@ -410,7 +513,7 @@ function graftBullet(steps: Piece[], index: number, keep: (text: string) => bool
   for (let j = index + 1; j < end; j += 1) {
     const piece = steps[j]
     if (!piece || isListMarker(piece.text) || !keep(piece.text)) continue
-    piece.text = withBullet(piece.text, label)
+    piece.text = withBullet(piece.text, carriedLabel(steps, j, label))
     return j
   }
   return -1

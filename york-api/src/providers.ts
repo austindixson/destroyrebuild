@@ -454,13 +454,16 @@ function streamReply(text: string): string | null {
   return joinedTextEvents(events)
 }
 
-/** A reply that is only reasoning_effort tags is an empty failure. A grok stream joins its text events. */
+/** Joined text from a streaming-json launch. A chat reply stays on replyText. */
+export function grokStreamText(stdout: string): string {
+  return streamReply(stdout.trim()) ?? ''
+}
+
+/** A reply that is only reasoning_effort tags is an empty failure. */
 export function replyText(stdout: string): string {
   const text = stdout.trim()
   if (!text) return ''
   if (/^(?:\s*<reasoning_effort>\s*\d*\s*<\/reasoning_effort>\s*)+$/i.test(text)) return ''
-  const streamed = streamReply(text)
-  if (streamed !== null) return streamed
   return text
 }
 
