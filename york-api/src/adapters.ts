@@ -19,6 +19,7 @@ import {
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
 export const GROK_BUDGET_MS = 70_000
+/** Round 0 keeps this 15 s cap when cursor can take its full budget afterward. */
 export const CLAUDE_BUDGET_MS = 15_000
 export const CURSOR_BUDGET_MS = 50_000
 export const CODEX_BUDGET_MS = 10_000

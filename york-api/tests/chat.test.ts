@@ -363,9 +363,9 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /% speed/)
   assert.match(round1.user, /chiller motor current only/)
   assert.match(round1.user, /% open/)
-  assert.equal(promptBytes(round1), 2045)
+  assert.equal(promptBytes(round1), 1974)
   assert.equal(promptBytes(round0), 3199)
-  assert.equal(round1.user.length, 622)
+  assert.equal(round1.user.length, 551)
   assert.equal(round0.user.length, 2002)
 })
 
@@ -378,9 +378,11 @@ test('a follow-up prompt keeps the chiller row, differential pressure, hall retu
       lchltSet: 44,
       chwDpPsi: 9.5,
       chwTargetPsi: 18,
+      reason: 'The hall is hot because the valve is pinched.',
       ch01: { mode: 'run', rla: 34 },
     },
     shown: { 'kpi.ch01Fla': '34%' },
+    optiLog: ['CH-01 is online. The BMS link is a simulation.'],
   }
   const prompt = buildPrompt({
     question: 'What is the motor current and the CHW differential pressure?',
@@ -399,6 +401,10 @@ test('a follow-up prompt keeps the chiller row, differential pressure, hall retu
   assert.match(prompt.user, /"lchltSet":44/)
   assert.match(prompt.user, /34%/)
   assert.equal(prompt.user.includes('Snapshot delta:'), false)
+  assert.equal(prompt.user.includes('kpi.ch01Fla'), false)
+  assert.equal(prompt.user.includes('pinched'), false)
+  assert.equal(prompt.user.includes('BMS link'), false)
+  assert.equal(prompt.user.includes('"ch01"'), false)
 })
 
 test('trouble symptoms are labeled examples in the index', () => {

@@ -48,8 +48,64 @@ function passage(chunk: Chunk): string {
   return `[${chunk.id}] ${chunk.title}: ${chunk.text.slice(0, 700)}`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function recordList(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  const out: Record<string, unknown>[] = []
+  for (const item of value) {
+    if (isRecord(item)) out.push(item)
+  }
+  return out
+}
+
+const PLANT_TEXT = new Set(['reason', 'ch01', 'ch02', 'units', 'alarm', 'weather'])
+
+function numericReadings(plant: Record<string, unknown>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(plant)) {
+    if (PLANT_TEXT.has(key)) continue
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    out[key] = value
+  }
+  return out
+}
+
+function chillerRow(unit: Record<string, unknown>, plant: Record<string, unknown>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  if (typeof unit.id === 'string') row.id = unit.id
+  if (typeof unit.mode === 'string') row.mode = unit.mode
+  if (typeof unit.rla === 'number') {
+    row.rla = unit.rla
+    row.fla = `${unit.rla}%`
+  }
+  if (typeof plant.lchltAct === 'number') row.lchltAct = plant.lchltAct
+  if (typeof plant.lchltSet === 'number') row.lchltSet = plant.lchltSet
+  return row
+}
+
+function chillerRows(snapshot: Record<string, unknown>, plant: Record<string, unknown>): Record<string, unknown>[] {
+  const listed = recordList(snapshot.units)
+  const units = listed.length > 0 ? listed : recordList(plant.units)
+  return units.map((unit) => chillerRow(unit, plant))
+}
+
+/** Follow-up readings: chiller rows, numeric plant values, and the active alarm. */
+function readingsSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const plant = isRecord(snapshot.plant) ? snapshot.plant : {}
+  const readings: Record<string, unknown> = { units: chillerRows(snapshot, plant), ...numericReadings(plant) }
+  if (typeof plant.alarm === 'string' && plant.alarm.length > 0) readings.alarm = plant.alarm
+  return readings
+}
+
 function snapshotJson(snapshot: Record<string, unknown>): string {
   return JSON.stringify(snapshot).slice(0, 12000)
+}
+
+function readingsJson(snapshot: Record<string, unknown>): string {
+  return JSON.stringify(readingsSnapshot(snapshot)).slice(0, 12000)
 }
 
 function toolResultLines(req: ChatRequest, limit: number): string {
@@ -65,7 +121,7 @@ function toolResultLines(req: ChatRequest, limit: number): string {
 
 function followUpUser(req: ChatRequest): string {
   const results = toolResultLines(req, 1600)
-  return [FOLLOW_VOICE, `Question: ${req.question}`, `Snapshot:\n${snapshotJson(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
+  return [FOLLOW_VOICE, `Question: ${req.question}`, `Snapshot:\n${readingsJson(req.snapshot)}`, `Tool results:\n${results}`].join('\n\n')
 }
 
 function firstUser(req: ChatRequest, chunks: Chunk[]): string {

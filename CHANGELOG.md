@@ -6,6 +6,12 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8W
+
+- A follow-up sends chiller rows, numeric plant readings, and the active alarm. The OptiView log, the reason text, the shown strings, and the duplicate chiller blocks stay off that prompt.
+- A follow-up gives claude the time left minus 1 s when no later tier can take its full budget after the 30 s cap.
+- On round 0, claude keeps 15 s when cursor's 50 s still fits after that cap. When cursor's 50 s does not fit, cursor is skipped and claude gets the time left minus 1 s.
+
 ### 2026-10-09 — YORK-8V
 
 - A follow-up sends the full screen snapshot. Chiller rows, differential pressure, hall return, and the LCHLT setpoint stay in the prompt.

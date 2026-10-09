@@ -328,10 +328,6 @@ test('cursor runs when 49503 ms remain and it is the last tier', async () => {
           calls.push('grok')
           return 'The hall is stable.'
         }, true, GROK_BUDGET_MS),
-        adapter('claude', 'claude-haiku-5-5', async () => {
-          calls.push('claude')
-          throw new Error('timeout budget=15000')
-        }, true, CLAUDE_BUDGET_MS),
         adapter('cursor', 'auto', async () => {
           calls.push('cursor')
           return 'The hall is stable.'
@@ -427,7 +423,9 @@ test('run 13 starts the follow-up on claude and skips grok after its timeout', a
   )
   assert.equal(second.provider, 'claude')
   assert.deepEqual(calls, ['claude'])
-  assert.equal(roundBudgetMs(round1.signal, CLAUDE_BUDGET_MS, 1, 'claude'), FOLLOW_CLAUDE_MS)
+  const room = roundBudgetMs(round1.signal, CLAUDE_BUDGET_MS, 1, 'claude')
+  assert.ok(room > 58_000)
+  assert.ok(room <= 59_000)
   assert.equal(roundBudgetMs(round1.signal, GROK_BUDGET_MS, 1, 'grok'), 0)
 })
 
@@ -435,6 +433,7 @@ test('run 14 skips grok and cursor when 14700 ms remain after claude', async () 
   const calls: string[] = []
   const controller = new AbortController()
   stampDeadline(controller.signal, Date.now() + 73_000)
+  let lead = 0
   await assert.rejects(
     () => cascade(
       [
@@ -444,8 +443,9 @@ test('run 14 skips grok and cursor when 14700 ms remain after claude', async () 
         }, true, GROK_BUDGET_MS),
         adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
           calls.push('claude')
+          lead = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude')
           stampDeadline(signal, Date.now() + 14_700)
-          throw new Error('timeout budget=30000')
+          throw new Error(`timeout budget=${lead}`)
         }, true, CLAUDE_BUDGET_MS),
         adapter('cursor', 'auto', async () => {
           calls.push('cursor')
@@ -455,8 +455,10 @@ test('run 14 skips grok and cursor when 14700 ms remain after claude', async () 
       { system: 'sys', user: 'user', round: 1, tier: 'grok' },
       controller.signal,
     ),
-    /timeout budget=30000/,
+    (err: unknown) => err instanceof Error && err.message === `timeout budget=${lead}`,
   )
+  assert.ok(lead > 71_000)
+  assert.ok(lead <= 72_000)
   assert.deepEqual(calls, ['claude'])
   assert.equal(roundBudgetMs(controller.signal, CURSOR_BUDGET_MS, 1, 'cursor'), 0)
   assert.equal(roundBudgetMs(controller.signal, GROK_BUDGET_MS, 1, 'grok'), 0)
@@ -471,8 +473,8 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
   try {
     const short = new AbortController()
     stampDeadline(short.signal, Date.now() + 58_000)
-    assert.equal(roundBudgetMs(short.signal, CLAUDE_BUDGET_MS, 1, 'claude'), FOLLOW_CLAUDE_MS)
     const shortCalls: string[] = []
+    let shortLead = 0
     await assert.rejects(
       () => cascade(
         [
@@ -482,8 +484,9 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
           }, true, GROK_BUDGET_MS),
           adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
             shortCalls.push('claude')
-            stampDeadline(signal, Date.now() + 28_000)
-            throw new Error('timeout budget=30000')
+            shortLead = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude')
+            stampDeadline(signal, Date.now() + 1_000)
+            throw new Error(`timeout budget=${shortLead}`)
           }, true, CLAUDE_BUDGET_MS),
           adapter('cursor', 'auto', async () => {
             shortCalls.push('cursor')
@@ -493,8 +496,10 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
         { system: 'sys', user: 'user', round: 1, tier: 'claude' },
         short.signal,
       ),
-      /timeout budget=30000/,
+      (err: unknown) => err instanceof Error && err.message === `timeout budget=${shortLead}`,
     )
+    assert.ok(shortLead > 56_000)
+    assert.ok(shortLead <= 57_000)
     assert.deepEqual(shortCalls, ['claude'])
     const cursorRoom = new AbortController()
     stampDeadline(cursorRoom.signal, Date.now() + 82_000)
@@ -507,6 +512,7 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
         }, true, GROK_BUDGET_MS),
         adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
           cursorCalls.push('claude')
+          assert.equal(roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude'), FOLLOW_CLAUDE_MS)
           stampDeadline(signal, Date.now() + 52_000)
           throw new Error('timeout budget=30000')
         }, true, CLAUDE_BUDGET_MS),
@@ -547,6 +553,111 @@ test('run 15 starts on claude and runs cursor only when 50 s remain', async () =
     console.log = log
   }
   assert.match(lines.join('\n'), /york-api follow tier=grok/)
+})
+
+test('run 16 keeps claude at 15 s when cursor still fits after a grok timeout', async () => {
+  const calls: string[] = []
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 140_000)
+  const result = await cascade(
+    [
+      adapter('grok', GROK_MODEL, async (_req, signal) => {
+        calls.push('grok')
+        stampDeadline(signal, Date.now() + 66_000)
+        throw new Error('timeout budget=70000')
+      }, true, GROK_BUDGET_MS),
+      adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
+        calls.push('claude')
+        assert.equal(roundBudgetMs(signal, CLAUDE_BUDGET_MS, 0, 'claude'), CLAUDE_BUDGET_MS)
+        stampDeadline(signal, Date.now() + 51_000)
+        throw new Error('timeout budget=15000')
+      }, true, CLAUDE_BUDGET_MS),
+      adapter('cursor', 'auto', async () => {
+        calls.push('cursor')
+        return 'The hall is stable.'
+      }, true, CURSOR_BUDGET_MS),
+    ],
+    { system: 'sys', user: 'user', round: 0 },
+    controller.signal,
+  )
+  assert.equal(result.provider, 'cursor')
+  assert.deepEqual(calls, ['grok', 'claude', 'cursor'])
+})
+
+test('run 17 gives claude the time left when cursor cannot fit after a grok timeout', async () => {
+  const calls: string[] = []
+  const lines: string[] = []
+  const log = console.log
+  console.log = (msg?: unknown) => {
+    lines.push(String(msg))
+  }
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 140_000)
+  let lead = 0
+  try {
+    await assert.rejects(
+      () => cascade(
+        [
+          adapter('grok', GROK_MODEL, async (_req, signal) => {
+            calls.push('grok')
+            stampDeadline(signal, Date.now() + 64_000)
+            throw new Error('timeout budget=70000')
+          }, true, GROK_BUDGET_MS),
+          adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
+            calls.push('claude')
+            lead = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 0, 'claude')
+            throw new Error(`timeout budget=${lead}`)
+          }, true, CLAUDE_BUDGET_MS),
+          adapter('cursor', 'auto', async () => {
+            calls.push('cursor')
+            return 'The hall is stable.'
+          }, true, CURSOR_BUDGET_MS),
+        ],
+        { system: 'sys', user: 'user', round: 0 },
+        controller.signal,
+      ),
+      (err: unknown) => err instanceof Error && err.message === `timeout budget=${lead}`,
+    )
+  } finally {
+    console.log = log
+  }
+  assert.ok(lead > 62_000)
+  assert.ok(lead <= 63_000)
+  assert.deepEqual(calls, ['grok', 'claude'])
+  assert.match(lines.join('\n'), /york-api cli cursor skipped reason=budget remaining=/)
+})
+
+test('run 18 gives a follow-up claude the time left when the 30 s cap leaves no later tier', async () => {
+  const calls: string[] = []
+  const controller = new AbortController()
+  stampDeadline(controller.signal, Date.now() + 65_000)
+  let lead = 0
+  await assert.rejects(
+    () => cascade(
+      [
+        adapter('grok', GROK_MODEL, async () => {
+          calls.push('grok')
+          return 'The hall is stable.'
+        }, true, GROK_BUDGET_MS),
+        adapter('claude', 'claude-haiku-5-5', async (_req, signal) => {
+          calls.push('claude')
+          lead = roundBudgetMs(signal, CLAUDE_BUDGET_MS, 1, 'claude')
+          stampDeadline(signal, Date.now() + 1_000)
+          throw new Error(`timeout budget=${lead}`)
+        }, true, CLAUDE_BUDGET_MS),
+        adapter('cursor', 'auto', async () => {
+          calls.push('cursor')
+          return 'The hall is stable.'
+        }, true, CURSOR_BUDGET_MS),
+      ],
+      { system: 'sys', user: 'user', round: 1, tier: 'claude' },
+      controller.signal,
+    ),
+    (err: unknown) => err instanceof Error && err.message === `timeout budget=${lead}`,
+  )
+  assert.ok(lead > 63_000)
+  assert.ok(lead <= 64_000)
+  assert.deepEqual(calls, ['claude'])
 })
 
 test('a follow-up tier must be known and cannot override the only-tier header', () => {

@@ -54,24 +54,73 @@ function claudeFirst(adapters: Adapter[], req: LlmRequest): Adapter[] {
 /** A last tier starts on the time left when at least this much remains. */
 export const LAST_TIER_FLOOR_MS = 40_000
 
-/** Follow-up cap for claude. Round 0 still uses the 15 s tier budget. */
+/** Follow-up cap for claude when a later tier can still take its full budget. */
 export const FOLLOW_CLAUDE_MS = 30_000
 
 const FOLLOW_SLACK_MS = 1_000
 
-/** Round 0 uses the tier budget. A follow-up gives claude at most 30 s, and every other tier its full budget or nothing. */
-export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, tierId = ''): number {
-  if (!round || round < 1) return tierMs
-  if (tierId === 'claude') return followClaudeMs(signal)
-  const left = remainingMs(signal)
-  if (!Number.isFinite(left) || left >= tierMs) return tierMs
-  return 0
+/** True when this follow-up or round-0 claude turn should take the time left minus 1 s. */
+const claudeRest = new WeakMap<AbortSignal, boolean>()
+
+function slackRoom(left: number): number {
+  return Math.max(0, Math.floor(left) - FOLLOW_SLACK_MS)
+}
+
+function laterFullFits(later: Adapter[], left: number, leadMs: number): boolean {
+  if (!Number.isFinite(left)) return true
+  for (const item of later) {
+    const budget = item.budgetMs
+    if (!item.enabled() || !budget) continue
+    if (left - leadMs >= budget) return true
+  }
+  return false
+}
+
+function openLater(later: Adapter[], round: number, skip: readonly string[]): Adapter[] {
+  if (round < 1) return later
+  return later.filter((item) => !skip.includes(item.id))
 }
 
 function followClaudeMs(signal: AbortSignal): number {
   const left = remainingMs(signal)
   if (!Number.isFinite(left)) return FOLLOW_CLAUDE_MS
-  return Math.min(FOLLOW_CLAUDE_MS, Math.max(0, Math.floor(left) - FOLLOW_SLACK_MS))
+  const room = slackRoom(left)
+  if (claudeRest.get(signal) === true) return room
+  return Math.min(FOLLOW_CLAUDE_MS, room)
+}
+
+function claudeBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined): number {
+  if (round && round >= 1) return followClaudeMs(signal)
+  if (claudeRest.get(signal) !== true) return tierMs
+  const left = remainingMs(signal)
+  if (!Number.isFinite(left)) return tierMs
+  return slackRoom(left)
+}
+
+/** Round 0 uses the tier budget. A follow-up claude takes 30 s when a later tier fits after that cap, and the time left minus 1 s when none does. */
+export function roundBudgetMs(signal: AbortSignal, tierMs: number, round: number | undefined, tierId = ''): number {
+  if (tierId === 'claude') return claudeBudgetMs(signal, tierMs, round)
+  if (!round || round < 1) return tierMs
+  const left = remainingMs(signal)
+  if (!Number.isFinite(left) || left >= tierMs) return tierMs
+  return 0
+}
+
+/** Arms the claude remainder. Round 0 returns true when cursor's full budget cannot follow the 15 s cap. */
+function armClaude(signal: AbortSignal, adapter: Adapter, later: Adapter[], round: number | undefined, skip: readonly string[]): boolean {
+  if (adapter.id !== 'claude') return false
+  const step = round ?? 0
+  const left = remainingMs(signal)
+  if (step >= 1) {
+    claudeRest.set(signal, !laterFullFits(openLater(later, step, skip), left, FOLLOW_CLAUDE_MS))
+    return false
+  }
+  const cursor = later.find((item) => item.id === 'cursor' && item.enabled())
+  const cursorMs = cursor?.budgetMs ?? 0
+  const lead = adapter.budgetMs ?? 0
+  const rest = cursorMs > 0 && Number.isFinite(left) && left - lead < cursorMs
+  claudeRest.set(signal, rest)
+  return rest
 }
 
 /** The last enabled tier runs on the time left when that remainder is at least 40 s. */
@@ -110,11 +159,15 @@ function followOver(adapter: Adapter, signal: AbortSignal, round: number | undef
   return true
 }
 
-function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, req: LlmRequest): boolean {
+function overBudget(adapter: Adapter, later: Adapter[], signal: AbortSignal, req: LlmRequest, skipCursor: boolean): boolean {
   const budget = adapter.budgetMs
   if (!budget) return false
   if ((req.round ?? 0) >= 1) return followOver(adapter, signal, req.round)
   const left = remainingMs(signal)
+  if (skipCursor && adapter.id === 'cursor') {
+    console.log(`york-api cli ${adapter.id} skipped reason=budget remaining=${left}`)
+    return true
+  }
   if (lastTierRuns(later, left)) return false
   const short = adapter.id === 'claude'
     ? skipClaude(later, left, budget)
@@ -167,6 +220,7 @@ export async function cascade(adapters: Adapter[], req: LlmRequest, signal: Abor
   const order = orderFor(adapters, req)
   const timedOut = [...(req.timedOut ?? [])]
   let lastError = 'no provider'
+  let skipCursor = false
   for (let index = 0; index < order.length; index += 1) {
     const adapter = order[index]
     if (!adapter) continue
@@ -177,7 +231,8 @@ export async function cascade(adapters: Adapter[], req: LlmRequest, signal: Abor
       continue
     }
     const later = order.slice(index + 1)
-    if (overBudget(adapter, later, signal, req)) continue
+    if (overBudget(adapter, later, signal, req, skipCursor)) continue
+    if (armClaude(signal, adapter, later, req.round, timedOut)) skipCursor = true
     const hold = claim(adapter)
     if (!hold) continue
     try {
