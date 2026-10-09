@@ -133,7 +133,8 @@ function ownsStep(owner: string, kept: Set<string>): boolean {
 }
 
 function reasonKept(sentences: string[], index: number, kept: Set<string>): boolean {
-  if (index <= 0) return false
+  if (index < 0) return false
+  if (index === 0) return true
   const owner = sentences[index - 1] ?? ''
   if (!owner || isReason(owner)) return false
   return ownsStep(owner, kept)

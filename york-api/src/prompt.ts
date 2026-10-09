@@ -41,6 +41,8 @@ export const N_PLUS_ONE_LINE = [
   '[trainer:glossary:n-plus-1] N+1: nPlusOneSpareUnits is the count of chillers that can run, minus 1.',
   'A chiller can run when it is running, or when its mode is lead, lag, or standby.',
   'That count is a number of units. It is not megawatts. It is not a holds verdict.',
+  'N+1 holds when the available chillers minus the largest one still cover the load.',
+  'The answer must say "N+1 holds" or "N+1 does not hold" and show its work.',
 ].join(' ')
 
 function passage(chunk: Chunk): string {

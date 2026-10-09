@@ -290,7 +290,10 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(prompt.user, /number of units/)
   assert.match(prompt.user, /not megawatts/)
   assert.match(prompt.user, /not a holds verdict/)
-  assert.equal(prompt.user.includes('N+1 holds.'), false)
+  assert.match(prompt.user, /N\+1 holds when the available chillers minus the largest one still cover the load/)
+  assert.match(prompt.user, /"N\+1 holds"/)
+  assert.match(prompt.user, /"N\+1 does not hold"/)
+  assert.match(prompt.user, /show its work/)
   assert.equal(prompt.user.includes('17 times 5 MW is 85 MW'), false)
   assert.match(prompt.system, /itLoadMw/)
   assert.equal(prompt.openCase, false)
@@ -375,9 +378,9 @@ test('the example shows one tool object and says to leave tools empty', () => {
   assert.match(round0.system, /Do not write trainer-model value in an equation/)
   assert.match(round0.system, /3 or more sections/)
   assert.equal(promptBytes(round1), 2540)
-  assert.equal(promptBytes(round0), 3617)
+  assert.equal(promptBytes(round0), 3773)
   assert.equal(round1.user.length, 574)
-  assert.equal(round0.user.length, 1877)
+  assert.equal(round0.user.length, 2033)
 })
 
 test('a follow-up prompt keeps the chiller row, differential pressure, hall return, and LCHLT setpoint', () => {

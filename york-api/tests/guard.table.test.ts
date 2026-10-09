@@ -35,6 +35,10 @@ const rows = [
   ['b10-mw-kept', '(5 MW - 4.2 MW = 0.8 MW)', '(5 MW - 4.2 MW = 0.8 MW) Live numbers are trainer-model values.'],
   ['b10-mixed-units', '5 MW + 3 psi = 8', ''],
   ['b10-unparsed-equals', 'The gap is 5 foo = 3.', ''],
+  ['z16-result-unit', '5 - 4.2 = 0.8 MW', '5 - 4.2 = 0.8 MW Live numbers are trainer-model values.'],
+  ['z16-gauge-diff', '52 psig - 17 psig = 35 psi', '52 psig - 17 psig = 35 psi Live numbers are trainer-model values.'],
+  ['z16-gauge-as-psig', '52 psig - 17 psig = 35 psig', ''],
+  ['z16-missing-result-unit', '5 MW - 4.2 MW = 0.8', ''],
   ['d16-shift-start', 'Eight-hour checklist\nShift start\n1. Open the valve.', 'Eight-hour checklist\nShift start\n1. Open the valve. Live numbers are trainer-model values.'],
   ['d16r2-later-section', 'Eight-hour checklist\nShift start\n1. Check pump 3 (untraced)\nMid shift\n2. Log it', 'Eight-hour checklist\nMid shift\n2. Log it Live numbers are trainer-model values.'],
   ['d21-caps-stack', 'CHECKLIST\nSHIFT START\n1. Open the valve.', 'CHECKLIST\nSHIFT START\n1. Open the valve. Live numbers are trainer-model values.'],
@@ -76,5 +80,54 @@ test('guard table keeps every D8 to D30 example against the real snapshot', () =
   assert.equal(typeof snapshot.plant.chwValvePct, 'number')
   for (const [name, raw, out] of rows) {
     assert.equal(polishAnswer(raw, [], [], snapshot).answer, out, name)
+  }
+})
+
+const LIVE = ' Live numbers are trainer-model values.'
+
+/** Readings for D34 and the unit rules. 34 and 40 are absent from the home snapshot. */
+const ruledSnapshot = {
+  units: [{ id: 'CH-01', running: true, mode: 'lead', rla: 34, capacityMw: 5 }],
+  plant: {
+    itLoadMw: 4.2,
+    chwValvePct: 40,
+    chwDpPsi: 52,
+    chwDpTargetPsi: 42.5,
+    towerFanPct: 2,
+    condTons: 500,
+    span: 1000,
+    noise: 9.2,
+    extra: 3,
+    other: 8,
+    head: 17,
+    gap: 9.5,
+  },
+}
+
+const ruled = [
+  ['d34-since-t', 'CH-01 runs at 34% FLA since t=0.', `CH-01 runs at 34% FLA since t=0.${LIVE}`],
+  ['d34-valve-t', 'The CHW valve went to 40% open at t=0.', `The CHW valve went to 40% open at t=0.${LIVE}`],
+  ['d34-rla', 'CH-01 runs at 34% FLA with rla=34.', `CH-01 runs at 34% FLA with rla=34.${LIVE}`],
+  ['d34-reason-t', 'Reason: The logged command set 40% open at t=0.', `Reason: The logged command set 40% open at t=0.${LIVE}`],
+  ['d34-key-value', 'The gap is 5 foo = 3.', `The gap is 5 foo = 3.${LIVE}`],
+  ['z16-result-only', '5 - 4.2 = 0.8 MW', `5 - 4.2 = 0.8 MW${LIVE}`],
+  ['z16-psig-diff', '52 psig - 42.5 psig = 9.5 psi', `52 psig - 42.5 psig = 9.5 psi${LIVE}`],
+  ['z16-unitless-mul', '500 tons * 2 = 1000 tons', `500 tons * 2 = 1000 tons${LIVE}`],
+  ['z16-unitless-mul-left', '2 * 500 tons = 1000 tons', `2 * 500 tons = 1000 tons${LIVE}`],
+  ['z16-unitless-div', '1000 tons / 2 = 500 tons', `1000 tons / 2 = 500 tons${LIVE}`],
+  ['z16-same-add', '5 psig + 4.2 psig = 9.2 psig', `5 psig + 4.2 psig = 9.2 psig${LIVE}`],
+  ['z16-mixed-add', '5 MW + 3 psi = 8', ''],
+  ['z16-gauge-result-psig', '52 psig - 42.5 psig = 9.5 psig', ''],
+  ['z16-bare-result', '5 MW - 4.2 MW = 0.8', ''],
+  ['z16-add-bare-result', '5 MW + 3 MW = 8', ''],
+  ['z16-mixed-mul', '500 tons * 2 psi = 1000 psi', ''],
+  ['z16-one-sided-add', '5 MW + 4.2 = 9.2 MW', ''],
+  ['z16-leftover-op', 'The gap is 5 + 4.2 foo = 9.2.', ''],
+  ['z16-wrong-psi', '(17 psi - 9.5 psi = 9.5 psi)', ''],
+] as const
+
+test('guard table keeps t=N, key=value, a gauge difference, a result unit, and a unitless factor', () => {
+  for (const [name, raw, out] of ruled) {
+    assert.equal(polishAnswer(raw, [], [], ruledSnapshot).answer, out, name)
   }
 })

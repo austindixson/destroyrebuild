@@ -6,6 +6,16 @@ Newest entries are first. Each entry comes from the commits on that pull request
 
 Commits on this branch run from 2026-10-08 through 2026-10-09, starting at `3a45cf9`. york-api serves the trainer chat from the signed-in CLIs.
 
+### 2026-10-09 — YORK-8Z16
+
+- An equals sign drops a sentence when an arithmetic operator (+, −, -, *, ×, /, ÷) sits between numbers before that equals, in the same parenthesis or clause. "CH-01 runs at 34% FLA since t=0." stays. "The CHW valve went to 40% open at t=0." stays. "CH-01 runs at 34% FLA with rla=34." stays. "Reason: The logged command set 40% open at t=0." stays. "The gap is 5 foo = 3." stays when 5 and 3 are live. "The gap is 5 + 4.2 foo = 9.2." drops. A Reason sentence that opens the answer stays.
+- psig minus psig may equal psi. "52 psig - 42.5 psig = 9.5 psi" stays when 52 and 42.5 are live. "52 psig - 17 psig = 35 psi" stays on the home snapshot. "52 psig - 17 psig = 35 psig" drops.
+- A unitless expression may put the unit on the result only. "5 - 4.2 = 0.8 MW" stays. "5 MW - 4.2 MW = 0.8" drops. "(5 MW - 4.2 MW = 0.8 MW)" stays.
+- A unitless multiplier or divisor keeps the other unit. "500 tons * 2 = 1000 tons" stays. "2 * 500 tons = 1000 tons" stays. "1000 tons / 2 = 500 tons" stays. Addition and subtraction still require the same unit on both sides. "5 MW + 3 psi = 8" drops. "500 tons * 2 psi = 1000 psi" drops.
+- N+1 holds when the available chillers minus the largest one still cover the load. nPlusOneSpareUnits remains the count of chillers that can run, minus 1. That field is a unit count. The answer must say "N+1 holds" or "N+1 does not hold" and show its work.
+- The grok sandbox check expects "/tmp" on the deny list when the request directory is outside /tmp, and absent when the request directory is under /tmp.
+- Round 0 prompt is 3773 bytes, 156 bytes above the previous prompt. Round 1 stays 2540 bytes. User text is 2033 and 574.
+
 ### 2026-10-09 — YORK-8Z15
 
 - An equation accepts an optional unit after each operand and after the result: MW, kW, psi, psig, F, °F, %, gpm, tons, or A. psi and psig stay distinct. °F and F are the same unit. Every unit in the equation must match. "(5 MW - 4.2 MW = 0.8 MW)" stays when 5 and 4.2 are live readings. "(17 psi - 9.5 psi = 9.5 psi)" is dropped. "N+1 spare is 5 MW (5 MW + 5 MW = 5 MW)" is dropped. "5 MW + 3 psi = 8" is dropped. An equals sign between numbers that does not parse drops that sentence.

@@ -141,7 +141,14 @@ const UNIT_CANON: Record<string, string> = {
   '%': '%',
   A: 'A',
 }
-const LEFTOVER_EQ = /(?:^|[^\d.])[-\u2212]?\d+(?:\.\d+)?[^\d.\n]{0,80}=\s*[-\u2212]?\d/
+/** Clause and parenthesis boundaries. A decimal point stays inside a number. */
+const CLAUSE_SPLIT = /\.(?!\d)|[()!?;,]/
+/**
+ * A leftover equals is an equation when an arithmetic operator sits between
+ * numbers before it, inside the same parenthesis or clause. A key=value pair
+ * and t=N are not equations.
+ */
+const ARITH_EQ = /\d(?:\.\d+)?\s*[+\u2212*\u00d7/\u00f7-]\s*[-\u2212]?\d(?:\.\d+)?[^=]*=\s*[-\u2212]?\d/
 
 type Op = '+' | '-' | '*' | '/'
 type Expr = { kind: 'num'; token: string; unit: string } | { kind: 'bin'; op: Op; left: Expr; right: Expr }
@@ -317,26 +324,67 @@ function blankEquations(text: string): string {
 }
 
 function leftoverEquals(text: string): boolean {
-  return LEFTOVER_EQ.test(blankEquations(text))
+  return blankEquations(text).split(CLAUSE_SPLIT).some((part) => ARITH_EQ.test(part))
 }
 
-function collectUnits(expr: Expr, out: string[]): void {
-  if (expr.kind === 'num') {
-    out.push(expr.unit)
-    return
+function subtractUnit(left: string, right: string): string | null {
+  if (left === 'psig' && right === 'psig') return 'psi'
+  return left === right ? left : null
+}
+
+function divideUnit(left: string, right: string): string | null {
+  if (right === '') return left
+  if (left === right) return ''
+  return null
+}
+
+function factorUnit(op: '*' | '/', left: string, right: string): string | null {
+  if (op === '/') return divideUnit(left, right)
+  if (left === '') return right
+  if (right === '') return left
+  if (left !== right) return null
+  return left
+}
+
+function combineUnits(op: Op, left: string, right: string): string | null {
+  switch (op) {
+    case '+':
+      return left === right ? left : null
+    case '-':
+      return subtractUnit(left, right)
+    case '*':
+    case '/':
+      return factorUnit(op, left, right)
+    default: {
+      const unexpected: never = op
+      return unexpected
+    }
   }
-  collectUnits(expr.left, out)
-  collectUnits(expr.right, out)
 }
 
-/** A unit on any side requires that same unit on every operand and on the result. */
+function exprUnit(expr: Expr): string | null {
+  switch (expr.kind) {
+    case 'num':
+      return expr.unit
+    case 'bin': {
+      const left = exprUnit(expr.left)
+      const right = exprUnit(expr.right)
+      if (left === null || right === null) return null
+      return combineUnits(expr.op, left, right)
+    }
+    default: {
+      const unexpected: never = expr
+      return unexpected
+    }
+  }
+}
+
+/** The result uses the expression unit. A unitless expression may name that unit on the result only. */
 function unitsMatch(equation: Equation): boolean {
-  const units: string[] = []
-  collectUnits(equation.expr, units)
-  units.push(equation.unit)
-  const named = units.find((unit) => unit.length > 0) ?? ''
-  if (named.length === 0) return true
-  return units.every((unit) => unit === named)
+  const unit = exprUnit(equation.expr)
+  if (unit === null) return false
+  if (unit === '') return true
+  return equation.unit === unit
 }
 
 function exprValue(expr: Expr): number | null {
