@@ -1,8 +1,6 @@
 import { cascade, roundBudgetMs, type Adapter } from './cascade.ts'
 import {
-  CLAUDE_MODEL,
   CODEX_MODEL,
-  completeClaude,
   completeCodex,
   completeCursor,
   completeGrok,
@@ -18,15 +16,13 @@ import {
 } from './providers.ts'
 import type { LlmAnswer, LlmRequest } from './types.ts'
 
-export const GROK_BUDGET_MS = 70_000
-/** Round 0 keeps this 15 s cap when cursor can take its full budget afterward. */
-export const CLAUDE_BUDGET_MS = 15_000
-export const CURSOR_BUDGET_MS = 50_000
+export const GROK_BUDGET_MS = 90_000
+export const CURSOR_BUDGET_MS = 40_000
 export const CODEX_BUDGET_MS = 10_000
 
 export { roundBudgetMs }
 
-const CLI_TIERS = ['grok', 'claude', 'cursor', 'codex'] as const
+const CLI_TIERS = ['grok', 'cursor', 'codex'] as const
 
 export function readTier(value: string): CliTier | null {
   for (const tier of CLI_TIERS) {
@@ -56,15 +52,15 @@ export function priorTimeouts(value: unknown): CliTier[] {
   return out
 }
 
-/** Codex off is 70/15/50. Codex on takes 10 s from grok: 60/15/50/10. Both fit in 135 s. */
-export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; claude: number; cursor: number; codex: number } {
+/** Codex off is 90/40. Codex on takes 10 s from grok: 80/40/10. Both fit in 135 s. */
+export function tierBudgetMs(env: NodeJS.ProcessEnv): { grok: number; cursor: number; codex: number } {
   if (env.YORK_CODEX === '1') {
-    return { grok: 60_000, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
+    return { grok: 80_000, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
   }
-  return { grok: GROK_BUDGET_MS, claude: CLAUDE_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
+  return { grok: GROK_BUDGET_MS, cursor: CURSOR_BUDGET_MS, codex: CODEX_BUDGET_MS }
 }
 
-export type CliTier = 'grok' | 'claude' | 'cursor' | 'codex'
+export type CliTier = 'grok' | 'cursor' | 'codex'
 
 function tierConcurrency(env: NodeJS.ProcessEnv, id: CliTier): number {
   const raw = env[`YORK_${id.toUpperCase()}_CONCURRENCY`]
@@ -72,10 +68,8 @@ function tierConcurrency(env: NodeJS.ProcessEnv, id: CliTier): number {
   switch (id) {
     case 'grok':
       return 2
-    case 'claude':
-      return 3
     case 'cursor':
-      return 1
+      return 2
     case 'codex':
       return 1
     default: {
@@ -114,14 +108,6 @@ export function buildAdapters(env: NodeJS.ProcessEnv, run: ProcessRunner, only?:
       limit: tierConcurrency(env, 'grok'),
       enabled: () => selected('grok') && cliOn(env, 'YORK_GROK_CLI') && grokLaunchArgsOk(grokArgs('probe')),
       complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.grok, req.round, 'grok'), (limited) => completeGrok(req, limited, run, env)),
-    },
-    {
-      id: 'claude',
-      model: CLAUDE_MODEL,
-      budgetMs: budget.claude,
-      limit: tierConcurrency(env, 'claude'),
-      enabled: () => selected('claude') && cliOn(env, 'YORK_CLAUDE_CLI'),
-      complete: (req, signal) => within(signal, roundBudgetMs(signal, budget.claude, req.round, 'claude'), (limited) => completeClaude(req, limited, run, env)),
     },
     {
       id: 'cursor',

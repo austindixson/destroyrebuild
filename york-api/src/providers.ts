@@ -7,7 +7,6 @@ import { resolvedPath, serverGroupId } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 export const GROK_MODEL = 'grok-4.7'
-export const CLAUDE_MODEL = 'claude-haiku-5-5'
 export const CURSOR_MODEL = 'auto'
 export const CODEX_MODEL = 'codex'
 export const CLI_STDOUT_MAX_BYTES = 256 * 1024
@@ -327,25 +326,6 @@ export function grokHomeReadDeny(grokHome: string): string {
   return `Read(${grokHome}/**)`
 }
 
-export function claudeArgs(model: string): string[] {
-  return [
-    '-p',
-    '--safe-mode',
-    '--no-session-persistence',
-    '--model',
-    model,
-    '--strict-mcp-config',
-    '--mcp-config',
-    '{"mcpServers":{}}',
-    '--output-format',
-    'text',
-    '--max-turns',
-    '1',
-    '--tools',
-    '',
-  ]
-}
-
 export function cursorArgs(model: string, workspace: string): string[] {
   return ['-p', '--model', model, '--mode', 'ask', '--output-format', 'text', '--sandbox', 'enabled', '--trust', '--workspace', workspace]
 }
@@ -591,23 +571,6 @@ async function linkAuth(sourceDir: string, destDir: string, names: readonly stri
   }
 }
 
-/**
- * Ghost128 stores the Claude account in ~/.claude.json. The login secrets
- * stay in the macOS login keychain. There is no ~/.claude/.credentials.json.
- */
-async function copyClaudeAccount(realHome: string, homeDir: string): Promise<void> {
-  const source = join(realHome, '.claude.json')
-  try {
-    const info = await lstat(source)
-    if (!info.isFile() && !info.isSymbolicLink()) return
-    const dest = join(homeDir, '.claude.json')
-    await copyFile(source, dest)
-    await chmod(dest, 0o600)
-  } catch {
-    // The account file is absent. Keychain login may still work.
-  }
-}
-
 /** A copy, not a symlink. The seatbelt denies the real home, so a symlink would miss. */
 async function copyAuth(sourceDir: string, destDir: string, names: readonly string[]): Promise<void> {
   await mkdir(destDir, { recursive: true })
@@ -635,7 +598,7 @@ async function isolatedHome(dir: string): Promise<string> {
 }
 
 /**
- * A temp HOME hides the login keychain. Claude and Cursor find
+ * A temp HOME hides the login keychain. Cursor and Codex find
  * login.keychain-db by path under HOME/Library/Keychains.
  */
 export async function linkLoginKeychain(realHome: string, homeDir: string): Promise<void> {
@@ -747,35 +710,6 @@ export async function prepareGrokLaunch(
   }
 }
 
-export async function prepareClaudeLaunch(
-  dir: string,
-  req: LlmRequest,
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform = process.platform,
-): Promise<CliLaunch> {
-  void platform
-  const realHome = resolvedPath(env.HOME ?? '')
-  const homeDir = await isolatedHome(dir)
-  const tmpDir = await requestTmp(dir)
-  const bin = env.CLAUDE_BIN || 'claude'
-  if (realHome) {
-    await copyClaudeAccount(realHome, homeDir)
-    await linkLoginKeychain(realHome, homeDir)
-  }
-  return {
-    cmd: bin,
-    args: claudeArgs(CLAUDE_MODEL),
-    env: requestEnv(env, dir, {
-      CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
-      HOME: homeDir,
-      TMPDIR: tmpDir,
-      XDG_CONFIG_HOME: join(homeDir, '.config'),
-    }, ['CLAUDE_CONFIG_DIR']),
-    cwd: dir,
-    input: promptOf(req),
-  }
-}
-
 export async function prepareCursorLaunch(
   dir: string,
   req: LlmRequest,
@@ -853,15 +787,6 @@ export async function completeGrok(
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
   return completePrepared('york-grok-', (dir) => prepareGrokLaunch(dir, req, env), signal, run)
-}
-
-export async function completeClaude(
-  req: LlmRequest,
-  signal: AbortSignal,
-  run: ProcessRunner,
-  env: NodeJS.ProcessEnv,
-): Promise<string> {
-  return completePrepared('york-claude-', (dir) => prepareClaudeLaunch(dir, req, env), signal, run)
 }
 
 function cursorConfig(): { sandbox: Record<string, unknown>; cli: Record<string, unknown> } {

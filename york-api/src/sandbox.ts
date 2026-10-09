@@ -283,7 +283,6 @@ export function applySandboxProbe(env: NodeJS.ProcessEnv, result: SandboxProbeRe
     console.log(`york-api sandbox status=unavailable reason=${result.reason}`)
     env.YORK_SANDBOX = 'unavailable'
     env.YORK_GROK_CLI = 'unavailable'
-    env.YORK_CLAUDE_CLI = 'unavailable'
     env.YORK_CURSOR_CLI = 'unavailable'
     env.YORK_CODEX_CLI = 'unavailable'
     cliDownHook?.(env)

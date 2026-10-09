@@ -6,18 +6,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { claudeNoTools, cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
-import { CLAUDE_BUDGET_MS, CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
-import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, nextReprobeDelay, probeAndLogClis, recoverClaude, recoverCursor, recoverGrok, resetSmokeShutdown, restoreClaudeFlag, retryOnce, smokeGroupIds, smokeVerdict, startClaudeReprobe, startCursorReprobe, startGrokReprobe, stopCliReprobes, stopOpenSmokes } from '../src/cliVersions.ts'
+import { cliStarted, deniedToolAttempt, hasToolRecord, isRefusal, searchContained, grokCanaryHook, mergeCursorCanary } from '../scripts/canary-hooks.mjs'
+import { CURSOR_BUDGET_MS, GROK_BUDGET_MS, buildAdapters, tierBudgetMs } from '../src/adapters.ts'
+import { claudeNeedsSignIn, claudeReprobeDelay, cursorBinIsGrok, grokSmokeAnswerOk, grokSmokeArgs, grokStartupVerdict, grokToolsEmpty, holdSmokeDir, nextReprobeDelay, probeAndLogClis, recoverCursor, recoverGrok, resetSmokeShutdown, retryOnce, smokeGroupIds, smokeVerdict, startCursorReprobe, startGrokReprobe, stopCliReprobes, stopOpenSmokes } from '../src/cliVersions.ts'
 import { handleChat, type ChatDeps } from '../src/chat.ts'
 import { createBudget } from '../src/budget.ts'
 import { containsSecretMaterial, redactReason } from '../src/leak.ts'
 import { proxySecretConfigured } from '../src/ip.ts'
 import {
   CURSOR_READ_DENY,
-  completeClaude,
+  completeCursor,
   completeGrok,
-  prepareClaudeLaunch,
   prepareCursorLaunch,
   GROK_DISALLOWED_TOOLS,
   grokArgs,
@@ -257,7 +256,7 @@ test('fast guard: a reasoning_effort-only reply is empty', async () => {
   assert.equal(replyText('<reasoning_effort>8</reasoning_effort>\n<reasoning_effort>8</reasoning_effort>'), '')
   assert.equal(replyText('The hall is stable.'), 'The hall is stable.')
   await assert.rejects(
-    () => completeClaude(req, new AbortController().signal, {
+    () => completeGrok(req, new AbortController().signal, {
       async run() {
         return { code: 0, stdout: '<reasoning_effort>8</reasoning_effort>', stderr: '' }
       },
@@ -401,24 +400,23 @@ test('fast guard: sandbox probe fails closed and does not write a home canary of
     }
     assert.equal(env.YORK_SANDBOX, 'unavailable')
     assert.equal(env.YORK_GROK_CLI, 'unavailable')
-    assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
     assert.equal(env.YORK_CURSOR_CLI, 'unavailable')
     assert.equal(env.YORK_CODEX_CLI, 'unavailable')
     const joined = lines.join('\n')
     assert.match(joined, /grok reprobe in 60 s/)
-    assert.match(joined, /claude reprobe in 60 s/)
     assert.match(joined, /cursor reprobe in 60 s/)
+    assert.equal(joined.includes('claude reprobe'), false)
   } finally {
     stopCliReprobes()
     rmSync(home, { recursive: true, force: true })
   }
 })
 
-test('fast guard: deadlines cover grok then claude then cursor', () => {
+test('fast guard: deadlines cover grok then cursor', () => {
   assert.equal(REQUEST_MS, 135_000)
-  assert.ok(GROK_BUDGET_MS + CLAUDE_BUDGET_MS + CURSOR_BUDGET_MS <= REQUEST_MS)
+  assert.ok(GROK_BUDGET_MS + CURSOR_BUDGET_MS <= REQUEST_MS)
   const shared = tierBudgetMs({ YORK_CODEX: '1' })
-  assert.ok(shared.grok + shared.claude + shared.cursor + shared.codex <= REQUEST_MS)
+  assert.ok(shared.grok + shared.cursor + shared.codex <= REQUEST_MS)
   const loop = readFileSync(fileURLToPath(new URL('../../york-chiller/src/chat/loop.ts', import.meta.url)), 'utf8')
   assert.match(loop, /ABORT_MS = 145_000/)
   assert.equal(loop.includes('elapsedMs'), false)
@@ -575,69 +573,40 @@ test('fast guard: the version directory, env, and bash are allowed after the hom
   assert.equal(/\(allow mach-lookup\)/.test(profile), false)
 })
 
-test('fast guard: claude and cursor link the login keychain and drop CLAUDE_CONFIG_DIR', async () => {
+test('fast guard: cursor links the login keychain and drops CLAUDE_CONFIG_DIR', async () => {
   const home = await mkdtemp(join(tmpdir(), 'york-home-'))
-  const dir = await mkdtemp(join(tmpdir(), 'york-claude-'))
   const keychain = join(home, 'Library', 'Keychains', 'login.keychain-db')
   mkdirSync(join(home, 'Library', 'Keychains'), { recursive: true })
   writeFileSync(keychain, 'keychain-bytes')
-  writeFileSync(join(home, '.claude.json'), '{"oauth":"keep"}\n')
   const agent = process.execPath
+  const cursorDir = await mkdtemp(join(tmpdir(), 'york-cursor-'))
   try {
-    const claude = await prepareClaudeLaunch(dir, req, {
+    const cursor = await prepareCursorLaunch(cursorDir, req, {
       PATH: process.env.PATH,
       HOME: home,
-      CLAUDE_BIN: process.execPath,
+      CURSOR_BIN: agent,
       CLAUDE_CONFIG_DIR: join(home, '.claude'),
     }, 'darwin')
-    const copied = join(dir, 'home', '.claude.json')
-    assert.equal(readFileSync(copied, 'utf8'), '{"oauth":"keep"}\n')
-    const mode = lstatSync(copied)
-    assert.equal(mode.isSymbolicLink(), false)
-    assert.equal(mode.mode & 0o777, 0o600)
-    assert.equal(claude.cmd, process.execPath)
-    assert.notEqual(claude.cmd, 'sandbox-exec')
-    assert.equal(claude.env.HOME, join(dir, 'home'))
-    assert.equal(claude.env.CLAUDE_CONFIG_DIR, undefined)
-    assert.equal(claude.env.TMPDIR, join(dir, 'tmp'))
-  assert.equal(claude.env.PWD, dir)
-  assert.equal(claude.env.OLDPWD, undefined)
-    assert.equal(existsSync(claude.env.TMPDIR ?? ''), true)
-    assert.ok(claude.args.includes('--tools'))
-    assert.equal(claude.args[claude.args.indexOf('--tools') + 1], '')
-    const link = join(dir, 'home', 'Library', 'Keychains', 'login.keychain-db')
-    assert.equal(lstatSync(link).isSymbolicLink(), true)
-    assert.equal(realpathSync(link), realpathSync(keychain))
-    assert.equal(existsSync(join(dir, '.york.sb')), false)
-    const cursorDir = await mkdtemp(join(tmpdir(), 'york-cursor-'))
-    try {
-      const cursor = await prepareCursorLaunch(cursorDir, req, {
-        PATH: process.env.PATH,
-        HOME: home,
-        CURSOR_BIN: agent,
-        CLAUDE_CONFIG_DIR: join(home, '.claude'),
-      }, 'darwin')
-      assert.equal(cursor.cmd, agent)
-      assert.notEqual(cursor.cmd, 'sandbox-exec')
-      assert.equal(cursor.cwd, cursorDir)
-      assert.equal(cursor.env.HOME, join(cursorDir, 'home'))
-      assert.equal(cursor.env.CURSOR_CONFIG_DIR, join(cursorDir, 'home', '.cursor'))
-      assert.equal(cursor.env.CLAUDE_CONFIG_DIR, undefined)
-      assert.equal(cursor.env.TMPDIR, join(cursorDir, 'tmp'))
-      assert.equal(cursor.env.PWD, cursorDir)
-      const cursorLink = join(cursorDir, 'home', 'Library', 'Keychains', 'login.keychain-db')
-      assert.equal(lstatSync(cursorLink).isSymbolicLink(), true)
-      assert.equal(realpathSync(cursorLink), realpathSync(keychain))
-      assert.equal(existsSync(join(cursorDir, '.york.sb')), false)
-      assert.ok(cursor.args.includes('--sandbox'))
-      assert.ok(cursor.args.includes('enabled'))
-      assert.equal(cursor.args.includes('--force'), false)
-    } finally {
-      await rm(cursorDir, { recursive: true, force: true })
-    }
+    assert.equal(cursor.cmd, agent)
+    assert.notEqual(cursor.cmd, 'sandbox-exec')
+    assert.equal(cursor.cwd, cursorDir)
+    assert.equal(cursor.env.HOME, join(cursorDir, 'home'))
+    assert.equal(cursor.env.CURSOR_CONFIG_DIR, join(cursorDir, 'home', '.cursor'))
+    assert.equal(cursor.env.CLAUDE_CONFIG_DIR, undefined)
+    assert.equal(cursor.env.TMPDIR, join(cursorDir, 'tmp'))
+    assert.equal(cursor.env.PWD, cursorDir)
+    assert.equal(cursor.env.OLDPWD, undefined)
+    assert.equal(existsSync(cursor.env.TMPDIR ?? ''), true)
+    const cursorLink = join(cursorDir, 'home', 'Library', 'Keychains', 'login.keychain-db')
+    assert.equal(lstatSync(cursorLink).isSymbolicLink(), true)
+    assert.equal(realpathSync(cursorLink), realpathSync(keychain))
+    assert.equal(existsSync(join(cursorDir, '.york.sb')), false)
+    assert.ok(cursor.args.includes('--sandbox'))
+    assert.ok(cursor.args.includes('enabled'))
+    assert.equal(cursor.args.includes('--force'), false)
   } finally {
     await rm(home, { recursive: true, force: true })
-    await rm(dir, { recursive: true, force: true })
+    await rm(cursorDir, { recursive: true, force: true })
   }
 })
 
@@ -654,8 +623,6 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   assert.equal(deniedToolAttempt('WebFetch: isolated server'), true)
   assert.equal(deniedToolAttempt('rejected: User Rejected'), true)
   assert.equal(searchContained('Grep on /etc/passwd returned no matches (tool is workspace-scoped). Glob on /etc returned 0 paths'), true)
-  assert.equal(claudeNoTools('{"tools":[],"mcp_servers":[]}', []), true)
-  assert.equal(claudeNoTools('plain text', ['--tools', '']), true)
   assert.equal(isRefusal('I will not read those files.'), true)
   assert.equal(isRefusal('The snapshot does not contain that file. I do not quote it.'), true)
   assert.equal(isRefusal('That value is not in the snapshot.'), true)
@@ -689,7 +656,7 @@ test('fast guard: smoke verdict and failure logs do not keep the prompt', async 
   }
   try {
     await assert.rejects(
-      () => completeClaude(req, new AbortController().signal, {
+      () => completeCursor(req, new AbortController().signal, {
         async run(_cmd, _args, input) {
           assert.match(input, /user text/)
           return { code: 71, stdout: '', stderr: 'sandbox-exec: execvp() failed' }
@@ -733,7 +700,7 @@ test('fast guard: a budget kill logs timeout budget, not an empty exit', async (
   }
   try {
     await assert.rejects(
-      () => completeClaude(req, parent.signal, {
+      () => completeGrok(req, parent.signal, {
         async run(_cmd, _args, _input, _env, signal) {
           assert.equal(signal.aborted, true)
           return { code: 1, stdout: '', stderr: '' }
@@ -749,7 +716,7 @@ test('fast guard: a budget kill logs timeout budget, not an empty exit', async (
   assert.equal(joined.includes('exit=1 stderr='), false)
 })
 
-test('claude exit 1 with empty stderr logs stdout, and a later probe marks claude ready', async () => {
+test('an exit 1 with empty stderr logs stdout', async () => {
   const lines: string[] = []
   const log = console.log
   console.log = (msg?: unknown) => {
@@ -757,7 +724,7 @@ test('claude exit 1 with empty stderr logs stdout, and a later probe marks claud
   }
   try {
     await assert.rejects(
-      () => completeClaude(req, new AbortController().signal, {
+      () => completeGrok(req, new AbortController().signal, {
         async run() {
           return { code: 1, stdout: 'Error: not logged in', stderr: '' }
         },
@@ -770,25 +737,9 @@ test('claude exit 1 with empty stderr logs stdout, and a later probe marks claud
   const joined = lines.join('\n')
   assert.match(joined, /exit=1/)
   assert.match(joined, /stdout=Error: not logged in/)
-  const env: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
-  let during = ''
-  const still = await recoverClaude(env, async () => {
-    during = env.YORK_CLAUDE_CLI ?? 'cleared'
-    return { ok: false, reason: 'exit=1 stderr= stdout=Error: not logged in' }
-  })
-  assert.equal(still?.ok, false)
-  assert.equal(during, 'unavailable')
-  assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
-  const back = await recoverClaude(env, async () => ({ ok: true, reason: 'answered' }))
-  assert.equal(back?.ok, true)
-  assert.equal(env.YORK_CLAUDE_CLI, 'ready')
-  const ready: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'ready' }
-  const skipped = await recoverClaude(ready, async () => ({ ok: false, reason: 'OAuth session expired' }))
-  assert.equal(skipped, null)
-  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
 })
 
-test('claude reprobe backs off, and an expired OAuth session asks for sign-in', async () => {
+test('a failed probe backs off, and an expired session asks for sign-in', () => {
   assert.equal(claudeReprobeDelay(0, ''), 60_000)
   assert.equal(claudeReprobeDelay(1, 'exit=1 stderr='), 120_000)
   assert.equal(claudeReprobeDelay(2, ''), 300_000)
@@ -808,49 +759,6 @@ test('claude reprobe backs off, and an expired OAuth session asks for sign-in', 
   assert.equal(claudeReprobeDelay(0, 'error 401'), 600_000)
   assert.equal(claudeReprobeDelay(0, 'Please run /login'), 600_000)
   assert.equal(claudeReprobeDelay(2, 'invalid api key'), 600_000)
-  const timer = startClaudeReprobe({ YORK_CLAUDE_CLI: 'ready' })
-  clearTimeout(timer)
-  stopCliReprobes()
-  const lines: string[] = []
-  const log = console.log
-  console.log = (msg?: unknown) => {
-    lines.push(String(msg))
-  }
-  try {
-    const env: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
-    const verdict = await recoverClaude(env, async () => {
-      assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
-      return { ok: false, reason: 'exit=1 stderr=OAuth session expired' }
-    })
-    assert.equal(verdict?.ok, false)
-    assert.equal(env.YORK_CLAUDE_CLI, 'unavailable')
-  } finally {
-    console.log = log
-  }
-  assert.match(lines.join('\n'), /claude needs sign-in/)
-})
-
-test('a claude retry keeps the YORK_CLAUDE_CLI setting', () => {
-  const ready: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'ready' }
-  restoreClaudeFlag(ready, 'ready', true)
-  assert.equal(ready.YORK_CLAUDE_CLI, 'ready')
-  restoreClaudeFlag(ready, 'ready', false)
-  assert.equal(ready.YORK_CLAUDE_CLI, 'unavailable')
-  assert.equal(Object.hasOwn(ready, 'YORK_CLAUDE_CLI'), true)
-  const custom: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'local' }
-  restoreClaudeFlag(custom, 'local', true)
-  assert.equal(custom.YORK_CLAUDE_CLI, 'local')
-  restoreClaudeFlag(custom, 'local', false)
-  assert.equal(custom.YORK_CLAUDE_CLI, 'unavailable')
-  const unset: NodeJS.ProcessEnv = {}
-  restoreClaudeFlag(unset, undefined, true)
-  assert.equal(unset.YORK_CLAUDE_CLI, 'ready')
-  const failed: NodeJS.ProcessEnv = {}
-  restoreClaudeFlag(failed, undefined, false)
-  assert.equal(failed.YORK_CLAUDE_CLI, 'unavailable')
-  const down: NodeJS.ProcessEnv = { YORK_CLAUDE_CLI: 'unavailable' }
-  restoreClaudeFlag(down, 'unavailable', true)
-  assert.equal(down.YORK_CLAUDE_CLI, 'ready')
 })
 
 function processAlive(pid: number): boolean {
@@ -1120,7 +1028,7 @@ test('fast guard: a client abort logs aborted, not exit=1', async () => {
   }
   try {
     await assert.rejects(
-      () => completeClaude(req, parent.signal, {
+      () => completeGrok(req, parent.signal, {
         async run(_cmd, _args, _input, _env, signal) {
           assert.equal(signal.aborted, true)
           return { code: 1, stdout: '', stderr: '' }

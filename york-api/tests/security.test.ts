@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { claudeVersionOk, cliProbeEnv, cursorVersionOk, GROK_CLI_MAX, grokVersionAboveTested, grokVersionOk, readCliVersion } from '../src/cliVersions.ts'
+import { cliProbeEnv, cursorVersionOk, GROK_CLI_MAX, grokVersionAboveTested, grokVersionOk, readCliVersion } from '../src/cliVersions.ts'
 import { INCIDENT_KINDS } from '../../york-chiller/src/sim/plantSim.ts'
 import { buildAdapters } from '../src/adapters.ts'
 import { createBudget } from '../src/budget.ts'
@@ -18,9 +18,7 @@ import { TOOL_GATES } from '../src/gates.ts'
 import { createInflight } from '../src/inflight.ts'
 import { budgetKey, proxySecretOk, trustedClientIp } from '../src/ip.ts'
 import {
-  claudeArgs,
   CLI_STDOUT_MAX_BYTES,
-  completeClaude,
   completeCursor,
   cursorArgs,
   nodeRunner,
@@ -72,14 +70,6 @@ function childEnvironNode(): string {
     "if (fs.existsSync('/proc/self/environ')) process.stdout.write(fs.readFileSync('/proc/self/environ'));",
     "else process.stdout.write(Object.entries(process.env).map(([k,v])=>k+'='+v).join('\\0'));",
   ].join('')
-}
-
-function childEnvironShell(): string {
-  return [
-    'if [ -r /proc/self/environ ]; then cat /proc/self/environ;',
-    'else node -e \'process.stdout.write(Object.entries(process.env).map(([k,v])=>k+"="+v).join("\\0"))\';',
-    'fi',
-  ].join(' ')
 }
 
 function listen(server: Server): Promise<number> {
@@ -139,38 +129,6 @@ test('fast guard: a CLI child keeps the signed-in home and drops the proxy secre
   assert.equal(result.stdout.includes('proxy-secret'), false)
   assert.equal(result.stdout.includes('canary-secret'), true)
   assert.equal(result.stdout.includes('HOME=/Users/ghost128'), true)
-})
-
-test('fast guard: claude runs in a temp dir with a temp HOME', async () => {
-  const binDir = await mkdtemp(join(tmpdir(), 'york-bin-'))
-  const bin = join(binDir, 'fake-claude.sh')
-  writeFileSync(bin, `#!/bin/sh
-printf 'FILES:%s\\n' "$(ls -A | wc -l | tr -d ' ')"
-printf 'CWD:%s\\n' "$(pwd)"
-printf 'ARGS:%s\\n' "$*"
-${childEnvironShell()}
-`)
-  chmodSync(bin, 0o755)
-  try {
-    const text = await completeClaude(req, new AbortController().signal, nodeRunner, {
-      PATH: process.env.PATH,
-      HOME: '/Users/ghost128',
-      CLAUDE_BIN: bin,
-      YORK_PROXY_SECRET: 'proxy-secret',
-      CANARY: 'canary-secret',
-    })
-    assert.match(text, /--strict-mcp-config/)
-    assert.match(text, /--safe-mode/)
-    const cwdLine = text.split('\n').find((line) => line.startsWith('CWD:')) ?? ''
-    assert.match(cwdLine, /york-claude-/)
-    assert.notEqual(cwdLine.slice(4), process.cwd())
-    assert.equal(text.includes('proxy-secret'), false)
-    assert.equal(text.includes('canary-secret'), true)
-    assert.equal(text.includes('HOME=/Users/ghost128'), false)
-    assert.match(text, /HOME=\S+york-claude-\S+\/home/)
-  } finally {
-    await rm(binDir, { recursive: true, force: true })
-  }
 })
 
 test('fast guard: cursor config file includes the workspace boundary and vim mode', async () => {
@@ -451,9 +409,6 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
   assert.equal(cursorVersionOk('2026.07.17-anything'), true)
   assert.equal(cursorVersionOk('2026.07.16-aaaaaaa'), false)
   assert.equal(cursorVersionOk('2026.09.30-aaaaaaa'), true)
-  assert.equal(claudeVersionOk('2.1.293 (Claude Code)'), true)
-  assert.equal(claudeVersionOk('2.1.292'), false)
-  assert.equal(claudeVersionOk('claude-2.1.293'), false)
   assert.equal(grokVersionOk('grok 1.0.50 (abc) [stable]'), true)
   assert.equal(grokVersionOk('0.0.1\ngrok 1.0.50 (abc) [stable]'), true)
   assert.equal(grokVersionOk('grok 1.0.49 (abc) [stable]'), false)
@@ -470,9 +425,9 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
     HOME: '/Users/ghost128',
     YORK_PROXY_SECRET: 'nope',
     CURSOR_API_KEY: 'cursor-secret',
-    CLAUDE_BIN: '/bin/claude',
-  }, 'claude')
-  assert.equal(probed.CLAUDE_BIN, '/bin/claude')
+    CURSOR_BIN: '/bin/agent',
+  }, 'cursor')
+  assert.equal(probed.CURSOR_BIN, '/bin/agent')
   assert.equal(probed.HOME, '/Users/ghost128')
   assert.equal(probed.CURSOR_API_KEY, undefined)
   assert.equal(probed.YORK_PROXY_SECRET, undefined)
@@ -481,7 +436,7 @@ test('fast guard: version floors warn, and only a missing binary is off', () => 
     { async run() { return { code: 0, stdout: 'ok', stderr: '' } } },
   )
   assert.equal(adapters.find((item) => item.id === 'cursor')?.enabled(), false)
-  assert.equal(adapters.find((item) => item.id === 'claude')?.enabled(), true)
+  assert.equal(adapters.find((item) => item.id === 'grok')?.enabled(), true)
 })
 
 function groupScripts(dir: string, parentDiesOnTerm: boolean, parentExits: boolean): { parent: string; grand: string; childPid: string; grandPid: string } {
@@ -578,8 +533,9 @@ test('fast guard: the real-call checklist refuses to run on its own', () => {
   assert.match(source, /Grep/)
   assert.match(source, /Glob/)
   assert.match(source, /prepareCursorWorkspace/)
-  assert.match(source, /prepareClaudeLaunch/)
+  assert.match(source, /prepareCursorLaunch/)
   assert.match(source, /prepareGrokLaunch/)
+  assert.equal(source.includes('prepareClaudeLaunch'), false)
   assert.equal(source.includes('root:\\*:0:0'), true)
   assert.match(source, /X-York-Only/)
   assert.match(source, /permission denied/)
@@ -602,7 +558,6 @@ test('fast guard: the real-call checklist refuses to run on its own', () => {
   assert.match(source, /SKIP/)
   assert.match(source, /YORK_PEER_BUDGET_KEY/)
   assert.equal(source.includes("'x-york-client-ip': '203.0.113.11'"), false)
-  assert.equal(claudeArgs('claude-haiku-5-5').includes('--safe-mode'), true)
   assert.equal(cursorArgs('auto', '/tmp/york').includes('--force'), false)
   const blocked = spawnSync(process.execPath, [script], { encoding: 'utf8' })
   assert.notEqual(blocked.status, 0)

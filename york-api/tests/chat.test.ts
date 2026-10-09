@@ -61,13 +61,13 @@ test('a follow-up starts at the tier that answered and drops an unknown timeout'
   const first = await handleChat(
     { question: 'Read the alarms', snapshot: { plant: { hallSupplyF: 72 } }, round: 0 },
     deps(async () => ({
-      ...llm(JSON.stringify({ answer: '', cites: [], tools: [{ name: 'plant.getAlarms', args: {} }] }), 'claude'),
+      ...llm(JSON.stringify({ answer: '', cites: [], tools: [{ name: 'plant.getAlarms', args: {} }] }), 'cursor'),
       timedOut: ['grok'],
     })),
   )
   assert.equal(first.body.status, 'tools')
   if (first.body.status !== 'tools') return
-  assert.equal(first.body.tier, 'claude')
+  assert.equal(first.body.tier, 'cursor')
   assert.deepEqual(first.body.timedOut, ['grok'])
   const second = await handleChat(
     {
@@ -80,10 +80,10 @@ test('a follow-up starts at the tier that answered and drops an unknown timeout'
     },
     deps(async (prompt) => {
       seen = prompt
-      return llm('{"answer":"The hall is stable.","cites":[]}', 'claude')
+      return llm('{"answer":"The hall is stable.","cites":[]}', 'cursor')
     }),
   )
-  assert.equal(seen?.tier, 'claude')
+  assert.equal(seen?.tier, 'cursor')
   assert.deepEqual(seen?.timedOut, ['grok'])
   assert.equal(second.body.status, 'answer')
   const blocked = await handleChat(
@@ -94,7 +94,7 @@ test('a follow-up starts at the tier that answered and drops an unknown timeout'
       tier: 'grok',
       toolResults: [],
     },
-    { ...deps(async (prompt) => { seen = prompt; return llm('{"answer":"The hall is stable.","cites":[]}') }), only: 'claude' },
+    { ...deps(async (prompt) => { seen = prompt; return llm('{"answer":"The hall is stable.","cites":[]}') }), only: 'cursor' },
   )
   assert.equal(blocked.body.status, 'answer')
   assert.equal(seen?.tier, undefined)
@@ -171,7 +171,7 @@ test('the daily cap returns the same unavailable state', async () => {
   assert.equal(second.body.status, 'unavailable')
 })
 
-test('a recorded claude FLA reply stays an answer when one sentence fails STE', async () => {
+test('a recorded FLA reply stays an answer when one sentence fails STE', async () => {
   const chunks = searchChunks(index as Chunk[], 'What does % FLA mean on a YORK YMC2 chiller?')
   const recorded = [
     '% FLA means percent of full load amps.',
@@ -191,7 +191,7 @@ test('a recorded claude FLA reply stays an answer when one sentence fails STE', 
       ...deps(async () => {
         calls += 1
         if (calls > 1) throw new Error('rewrite')
-        return { text: fenced, provider: 'claude', model: 'claude-haiku-5-5' }
+        return { text: fenced, provider: 'grok', model: 'grok-4.7' }
       }),
       search: () => chunks,
     },
@@ -207,7 +207,7 @@ test('a recorded claude FLA reply stays an answer when one sentence fails STE', 
   const plain = await handleChat(
     { question: 'What does % FLA mean on a YORK YMC2 chiller?', snapshot: { view: 'optiview', unit: 'CH-01', model: 'YMC2' }, round: 0 },
     {
-      ...deps(async () => ({ text: loose, provider: 'claude', model: 'claude-haiku-5-5' })),
+      ...deps(async () => ({ text: loose, provider: 'grok', model: 'grok-4.7' })),
       search: () => chunks,
     },
   )
@@ -220,7 +220,7 @@ test('a recorded claude FLA reply stays an answer when one sentence fails STE', 
 const LONG_ACTION =
   '2 actions are in the action log after the operator set the CHW valve and the weather, and the trainer recorded each change with the actor and the time. Live numbers are trainer-model values.'
 
-test('a long claude action sentence is rewritten instead of the trainer-model label alone', async () => {
+test('a long action sentence is rewritten instead of the trainer-model label alone', async () => {
   let calls = 0
   const result = await handleChat(
     {
@@ -256,7 +256,7 @@ test('cascade fallthrough still answers', async () => {
     { question: 'Read the hall', snapshot: { plant: { hallSupplyF: 70 } }, round: 0 },
     deps((prompt, signal) => cascade([
       { id: 'grok', model: 'grok-4.7', enabled: () => true, complete: async () => { throw new Error('grok timeout') } },
-      { id: 'claude', model: 'claude-haiku-5-5', enabled: () => true, complete: async () => '' },
+      { id: 'spare', model: 'spare', enabled: () => true, complete: async () => '' },
       { id: 'cursor', model: 'auto', enabled: () => true, complete: async () => 'The hall supply is 70°F. This is a trainer-model value.' },
     ], prompt, signal)),
   )
@@ -542,10 +542,10 @@ test('prose that announces a tool is not an answer', async () => {
 })
 
 const GROK_LOG = '{"answer":"I need to read the action log before I can count the actions.","cites":[],"tools":["plant.getActionLog"]}'
-const CLAUDE_LOG = '{"answer":"You need to read it to answer how many actions are in the action log.","tools":[{"name":"plant.getActionLog","args":{}}]}'
+const OBJECT_LOG = '{"answer":"You need to read it to answer how many actions are in the action log.","tools":[{"name":"plant.getActionLog","args":{}}]}'
 
 test('an interim answer with tools returns the tool round', async () => {
-  for (const text of [GROK_LOG, CLAUDE_LOG]) {
+  for (const text of [GROK_LOG, OBJECT_LOG]) {
     const planned = planTurn(text, false)
     assert.equal(planned.kind, 'tools')
     if (planned.kind !== 'tools') return

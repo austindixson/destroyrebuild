@@ -47,9 +47,9 @@ export interface LlmRequest {
   system: string
   user: string
   round?: number
-  /** An open trouble case. The cascade calls claude before grok. */
+  /** An open trouble case. The cascade still starts on grok. */
   openCase?: boolean
-  /** Tier that answered the previous round. A follow-up logs it and still starts on claude. */
+  /** Tier that answered the previous round. A follow-up logs it and still starts on grok. */
   tier?: string
   timedOut?: string[]
 }

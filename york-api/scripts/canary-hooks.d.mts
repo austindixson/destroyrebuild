@@ -8,8 +8,6 @@ export function isRefusal(text: string): boolean
 
 export function searchContained(text: string): boolean
 
-export function claudeNoTools(text: string, args?: string[]): boolean
-
 export function grokCanaryHook(command: string): {
   hooks: {
     SessionStart: { hooks: { type: string; command: string }[] }[]

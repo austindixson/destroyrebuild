@@ -11,7 +11,6 @@ import {
   grokArgs,
   grokLaunchArgsOk,
   nodeRunner,
-  prepareClaudeLaunch,
   prepareCodexLaunch,
   prepareCursorLaunch,
   prepareGrokLaunch,
@@ -25,7 +24,6 @@ import { resolveBin, serverGroupId, setCliDownHook } from './sandbox.ts'
 import type { LlmRequest } from './types.ts'
 
 /** Log-and-warn floors. An older binary still serves. A missing binary does not. */
-export const CLAUDE_CLI_MIN = '2.1.293'
 export const CURSOR_CLI_MIN = '2026.07.17'
 export const GROK_CLI_MIN = '1.0.50'
 /** Highest grok build this tree was checked against. A newer build stays on and logs a warning. */
@@ -42,7 +40,6 @@ const GROK_SMOKE_PROMPT: LlmRequest = {
 }
 const LAUNCH_FAIL = /sandbox-exec:\s*execvp|No such file or directory|\bENOENT\b|wrapper skipped|profile void|Not logged in|Authentication required|Couldn't start/i
 
-const CLAUDE_MIN = [2, 1, 293] as const
 const CURSOR_MIN = [2026, 7, 17] as const
 const GROK_MIN = [1, 0, 50] as const
 const GROK_MAX = [1, 0, 50] as const
@@ -51,7 +48,6 @@ const SHARED_PROBE = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPD
 
 const OWN_PROBE: Record<string, readonly string[]> = {
   grok: ['GROK_BIN'],
-  claude: ['CLAUDE_BIN', 'CLAUDE_CONFIG_DIR'],
   cursor: ['CURSOR_BIN'],
   codex: ['CODEX_BIN', 'CODEX_HOME'],
 }
@@ -79,12 +75,6 @@ export function cursorVersionOk(text: string): boolean {
   const match = text.match(/(?:^|\D)(\d{4})\.(\d{2})\.(\d{2})\b/m)
   if (!match) return false
   return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CURSOR_MIN)
-}
-
-export function claudeVersionOk(text: string): boolean {
-  const match = text.match(/^\s*v?(\d+)\.(\d+)\.(\d+)\b/m)
-  if (!match) return false
-  return atLeast([Number(match[1]), Number(match[2]), Number(match[3])], CLAUDE_MIN)
 }
 
 function grokTriple(text: string): number[] | null {
@@ -162,7 +152,7 @@ export function readCliVersion(bin: string, env: NodeJS.ProcessEnv): Promise<str
   })
 }
 
-type CliFlag = 'YORK_GROK_CLI' | 'YORK_CLAUDE_CLI' | 'YORK_CURSOR_CLI' | 'YORK_CODEX_CLI'
+type CliFlag = 'YORK_GROK_CLI' | 'YORK_CURSOR_CLI' | 'YORK_CODEX_CLI'
 
 export async function probeAndLogClis(
   env: NodeJS.ProcessEnv,
@@ -171,7 +161,6 @@ export async function probeAndLogClis(
   const cursorBin = env.CURSOR_BIN || 'agent'
   await Promise.all([
     logOne(env, 'grok', env.GROK_BIN || 'grok', GROK_CLI_MIN, grokVersionOk, 'YORK_GROK_CLI'),
-    logOne(env, 'claude', env.CLAUDE_BIN || 'claude', CLAUDE_CLI_MIN, claudeVersionOk, 'YORK_CLAUDE_CLI'),
     logOne(env, 'cursor', cursorBin, CURSOR_CLI_MIN, cursorVersionOk, 'YORK_CURSOR_CLI', (text) => {
       const agentReal = resolveBin(cursorBin, env)
       const grokReal = resolveBin(env.GROK_BIN || 'grok', env)
@@ -264,7 +253,7 @@ function noteSmoke(env: NodeJS.ProcessEnv, name: string, flag: CliFlag, verdict:
   env[flag] = 'unavailable'
 }
 
-/** Waits after a failed claude probe: 60 s, 2 min, 5 min, then every 10 min. */
+/** Waits after a failed probe: 60 s, 2 min, 5 min, then every 10 min. */
 export const CLAUDE_REPROBE_STEPS_MS = [60_000, 120_000, 300_000, 600_000] as const
 
 const CLAUDE_AUTH_REPROBE_MS = 600_000
@@ -511,44 +500,6 @@ async function smokeOne(
   }
 }
 
-/** A failure sets unavailable. A success keeps a saved value and does not delete the key. */
-export function restoreClaudeFlag(env: NodeJS.ProcessEnv, saved: string | undefined, ok: boolean): void {
-  if (!ok) {
-    env.YORK_CLAUDE_CLI = 'unavailable'
-    return
-  }
-  env.YORK_CLAUDE_CLI = saved === undefined || saved === 'unavailable' ? 'ready' : saved
-}
-
-/** Two tries. The saved YORK_CLAUDE_CLI value stays in place. */
-async function claudeSmoke(env: NodeJS.ProcessEnv, force = false): Promise<SmokeVerdict | null> {
-  if (!force && env.YORK_CLAUDE_CLI === 'unavailable') return null
-  const saved = env.YORK_CLAUDE_CLI
-  const verdict = await retryOnce(async () => {
-    const result = await smokeOne(env, 'claude', 'YORK_CLAUDE_CLI', (dir) => prepareClaudeLaunch(dir, SMOKE_PROMPT, env), true)
-    return result ?? { ok: false, reason: 'unavailable' }
-  })
-  restoreClaudeFlag(env, saved, verdict.ok)
-  return verdict
-}
-
-/** When claude was unavailable, a later success marks it ready. */
-export async function recoverClaude(
-  env: NodeJS.ProcessEnv,
-  probe?: () => Promise<SmokeVerdict>,
-): Promise<SmokeVerdict | null> {
-  if (env.YORK_CLAUDE_CLI !== 'unavailable') return null
-  const verdict = probe ? await probe() : await claudeSmoke(env, true)
-  if (!verdict?.ok) {
-    if (verdict) env.YORK_CLAUDE_CLI = 'unavailable'
-    if (verdict && claudeNeedsSignIn(verdict.reason)) console.log('york-api cli claude needs sign-in')
-    return verdict ?? null
-  }
-  env.YORK_CLAUDE_CLI = 'ready'
-  console.log('york-api cli claude status=ready reason=recovered')
-  return verdict
-}
-
 async function grokPrepare(env: NodeJS.ProcessEnv, dir: string): Promise<Awaited<ReturnType<typeof prepareGrokLaunch>>> {
   const launch = await prepareGrokLaunch(dir, GROK_SMOKE_PROMPT, env)
   return { ...launch, args: grokSmokeArgs(launch.args) }
@@ -629,10 +580,6 @@ function armReprobe(
   return arm(claudeReprobeDelay(0, ''))
 }
 
-export function startClaudeReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
-  return armReprobe(env, 'claude', (probeEnv) => recoverClaude(probeEnv))
-}
-
 export function startGrokReprobe(env: NodeJS.ProcessEnv = process.env): ReturnType<typeof setTimeout> {
   return armReprobe(env, 'grok', (probeEnv) => recoverGrok(probeEnv))
 }
@@ -672,7 +619,6 @@ export function startCursorReprobe(env: NodeJS.ProcessEnv = process.env): Return
 async function smokeClis(env: NodeJS.ProcessEnv): Promise<void> {
   const jobs = [
     grokSmoke(env),
-    claudeSmoke(env),
     cursorSmoke(env),
   ]
   if (env.YORK_CODEX === '1') {
@@ -712,7 +658,6 @@ async function logOne(
 }
 
 setCliDownHook((env) => {
-  if (env.YORK_CLAUDE_CLI === 'unavailable') startClaudeReprobe(env)
   if (env.YORK_GROK_CLI === 'unavailable') startGrokReprobe(env)
   if (env.YORK_CURSOR_CLI === 'unavailable') startCursorReprobe(env)
 })

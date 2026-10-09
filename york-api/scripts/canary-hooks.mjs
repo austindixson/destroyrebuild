@@ -28,13 +28,6 @@ export function searchContained(text) {
   return CONTAINED.test(text)
 }
 
-/** Claude was launched with an empty tool list, or the stream says tools is empty. */
-export function claudeNoTools(text, args = []) {
-  if (/"tools"\s*:\s*\[\s*\]/.test(text)) return true
-  const at = args.indexOf('--tools')
-  return at >= 0 && args[at + 1] === ''
-}
-
 /** True only after the CLI itself produced a reply or a tool record. A seatbelt launch error is not enough. */
 export function cliStarted(saved) {
   const stdout = `${saved?.stdout ?? ''}`
