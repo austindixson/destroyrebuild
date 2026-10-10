@@ -2,6 +2,12 @@
 
 Newest entries are first. Add a new heading. Do not change old entries.
 
+## 2026-10-10 — PR #26 — FM-REBUILD-YORK-TM-1
+
+- The York trainer sidebar has a footer on every screen. The navigation above it scrolls, so the footer stays in view on a short window. At a width of 960px or less, the navigation note stays hidden and the footer stays shown.
+- The footer text is: This independent personal training project is not affiliated with, sponsored by, or endorsed by Johnson Controls. YORK, OptiView, YMC² and related marks belong to their owners. All plant values are a simulation for training only, so do not use them for real equipment decisions.
+- `york-chiller/README.md` has the same text under Disclaimer.
+
 ## 2026-10-09 — PR #25 — YORK-12
 
 - The lead package is the original 119,514-triangle mesh, meshopt compressed. The file is 6.8 MB. It was 13.6 MB.

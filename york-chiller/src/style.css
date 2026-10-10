@@ -98,7 +98,16 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow: hidden;
+}
+
+.sidebar-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .brand {
@@ -266,6 +275,15 @@ body::after {
   color: var(--muted);
   line-height: 1.4;
   padding: 6px;
+}
+
+.sidebar .app-foot {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.68rem;
+  line-height: 1.35;
 }
 
 .main {
@@ -2130,6 +2148,7 @@ label.info-host,
 .brand p,
 .view-head p,
 .nav-note,
+.app-foot,
 .empty-state,
 .mission p,
 .step p,

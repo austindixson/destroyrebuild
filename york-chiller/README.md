@@ -25,6 +25,10 @@ npm run dev
 
 Open `http://localhost:5173`.
 
+## Disclaimer
+
+This independent personal training project is not affiliated with, sponsored by, or endorsed by Johnson Controls. YORK, OptiView, YMC² and related marks belong to their owners. All plant values are a simulation for training only, so do not use them for real equipment decisions.
+
 ## Build
 
 ```bash

@@ -68,6 +68,9 @@ interface ExplorerSceneModule {
   ) => ChillerScene
 }
 
+const TRADEMARK_DISCLAIMER =
+  'This independent personal training project is not affiliated with, sponsored by, or endorsed by Johnson Controls. YORK, OptiView, YMC² and related marks belong to their owners. All plant values are a simulation for training only, so do not use them for real equipment decisions.'
+
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'home', label: 'Live plant', icon: 'home' },
   { id: 'plant', label: 'Cooling chain', icon: 'cycle' },
@@ -310,6 +313,7 @@ export class App {
     const rank = rankFor(pct, this.progress.xp)
     this.root.innerHTML = `
       <aside class="sidebar">
+        <div class="sidebar-scroll">
         <div class="brand">
           <div class="brand-mark"><span>YMC²</span></div>
           <div>
@@ -339,6 +343,8 @@ export class App {
           ).join('')}
         </nav>
         <p class="nav-note">Operate as if the hall is live. The topics are the YORK YMC² O&amp;M, N+1, the MOP, and the NOC.</p>
+        </div>
+        <footer class="app-foot">${TRADEMARK_DISCLAIMER}</footer>
       </aside>
       <main class="main" id="view"></main>
       <div class="toast" id="toast"></div>
